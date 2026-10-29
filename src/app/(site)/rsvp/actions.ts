@@ -1,6 +1,7 @@
 "use server";
 
-import { celebrations } from "@/content/wedding";
+import { z } from "zod";
+import { getSiteContent } from "@/lib/content/get";
 import { saveRsvp } from "@/lib/data/rsvp";
 import type { Answer } from "@/lib/data/types";
 import {
@@ -23,6 +24,7 @@ function oneOf<T extends string>(value: string, allowed: readonly T[]): T {
 
 export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<RsvpState> {
   const answers: RsvpValues["answers"] = {};
+  const { celebrations } = await getSiteContent();
   for (const c of celebrations) {
     const a = form.get(answerField(c.id));
     if (a === "yes" || a === "no") answers[c.id] = a as Answer;
@@ -31,6 +33,7 @@ export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<Rsvp
   const values: RsvpValues = {
     fullName: text(form, "fullName", 120),
     phone: text(form, "phone", 40),
+    email: text(form, "email", 200),
     partySize: oneOf(text(form, "partySize"), partySizes),
     answers,
     otherNames: text(form, "otherNames"),
@@ -46,6 +49,9 @@ export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<Rsvp
   } else if (values.phone.replace(/\D/g, "").length < 7) {
     errors.phone = "That number looks a little short. Could you check it?";
   }
+  if (values.email && !z.email().safeParse(values.email).success) {
+    errors.email = "That email doesn't look right. Could you check it?";
+  }
   if (Object.keys(answers).length === 0) {
     errors.answers = "Please let us know about at least one celebration.";
   }
@@ -57,6 +63,7 @@ export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<Rsvp
     await saveRsvp({
       fullName: values.fullName,
       phone: values.phone,
+      email: values.email || undefined,
       partySize: values.partySize,
       answers: values.answers,
       otherNames: values.otherNames || undefined,

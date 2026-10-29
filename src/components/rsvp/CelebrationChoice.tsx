@@ -1,6 +1,6 @@
 "use client";
 
-import type { Celebration } from "@/content/wedding";
+import type { Celebration } from "@/lib/content/schema";
 import type { Answer } from "@/lib/data/types";
 import { Icon } from "@/components/ui/Icon";
 import { answerField } from "./options";

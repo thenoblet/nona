@@ -1,9 +1,12 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { wedding } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { Icon } from "@/components/ui/Icon";
 import { Eyebrow } from "@/components/ui/Typography";
+import { getSiteContent } from "@/lib/content/get";
 import { RsvpForm } from "@/components/rsvp/RsvpForm";
 
 export const metadata: Metadata = {
@@ -35,7 +38,26 @@ export default function RsvpPage() {
           </p>
         </div>
       </PhoneHeader>
-      <RsvpForm />
+      <Suspense fallback={<FormSkeleton />}>
+        <RsvpFormLoader />
+      </Suspense>
     </main>
+  );
+}
+
+/** Read at request time, so celebrations edited in the admin show up without a rebuild. */
+async function RsvpFormLoader() {
+  await connection();
+  const { celebrations } = await getSiteContent();
+  return <RsvpForm celebrations={celebrations} />;
+}
+
+function FormSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading the reply form" className="mx-auto flex w-full max-w-xl flex-col gap-5 px-5 py-8 sm:px-8">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="h-13 animate-pulse rounded-full bg-blush" />
+      ))}
+    </div>
   );
 }

@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import { useEffect, useRef } from "react";
-import { celebrations, couple } from "@/content/wedding";
+import { couple } from "@/content/wedding";
+import type { Celebration } from "@/lib/content/schema";
 import { photos } from "@/content/images";
 import { PillLink } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
@@ -11,7 +12,15 @@ import type { RsvpValues } from "./options";
 const statusLabel = { yes: "Attending", no: "Not attending" } as const;
 
 /** Replaces the form once the reply is saved. */
-export function ReplySent({ values, onChange }: { values: RsvpValues; onChange: () => void }) {
+export function ReplySent({
+  celebrations,
+  values,
+  onChange,
+}: {
+  celebrations: Celebration[];
+  values: RsvpValues;
+  onChange: () => void;
+}) {
   const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const photo = photos.daisiesWrapped;
@@ -51,7 +60,10 @@ export function ReplySent({ values, onChange }: { values: RsvpValues; onChange: 
         Thank you
       </h2>
       <p className="animate-rise text-base leading-[1.7] font-light text-mocha" style={{ animationDelay: "300ms" }}>
-        Your reply is with us. We&apos;ve sent the details to your phone.
+        Your reply is with us.{" "}
+        {values.email
+          ? "We've emailed you the details."
+          : "We didn't get an email address, so no confirmation is coming, but your reply is safe with us."}
       </p>
 
       <ul

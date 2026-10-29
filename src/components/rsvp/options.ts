@@ -7,13 +7,14 @@ export const partySizes = ["Just me", "2 people", "3 people", "4 or more"] as co
 export type RsvpValues = {
   fullName: string;
   phone: string;
+  email: string;
   partySize: string;
   answers: Partial<Record<EventId, Answer>>;
   otherNames: string;
   song: string;
 };
 
-export type RsvpErrors = Partial<Record<"fullName" | "phone" | "answers" | "form", string>>;
+export type RsvpErrors = Partial<Record<"fullName" | "phone" | "email" | "answers" | "form", string>>;
 
 export type RsvpState = {
   status: "idle" | "error" | "sent";
@@ -24,6 +25,7 @@ export type RsvpState = {
 export const emptyValues: RsvpValues = {
   fullName: "",
   phone: "",
+  email: "",
   partySize: partySizes[0],
   answers: {},
   otherNames: "",
