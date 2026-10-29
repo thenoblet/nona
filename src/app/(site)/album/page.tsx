@@ -3,6 +3,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { couple } from "@/content/wedding";
+import { shareDefaults } from "@/lib/share";
 import { listMedia, SAMPLE_DEVICE } from "@/lib/data/media";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { PillLink, TextLink } from "@/components/ui/Button";
@@ -14,6 +15,12 @@ import { ShareMomentButton, UploadProgress, UploadProvider } from "@/components/
 export const metadata: Metadata = {
   title: "Album",
   description: "The shared photo and video album for Noblet and Nancy's wedding. No app, no sign-up.",
+  openGraph: {
+    ...shareDefaults,
+    title: "Capture it with us · Noblet & Nancy",
+    description: "Share your photos and videos from the wedding, straight from your phone. No app, no sign-up.",
+    url: "/album",
+  },
 };
 
 /** The shared album the table QR codes open. Phone layout first; the grid widens on larger screens. */

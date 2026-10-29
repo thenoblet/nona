@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { cormorant, jost, pinyon } from "./fonts";
 import { MusicProvider } from "@/components/music/MusicProvider";
+import { shareDefaults } from "@/lib/share";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,12 +12,14 @@ export const metadata: Metadata = {
   },
   description:
     "Together with their families, Noblet and Nancy invite you to celebrate the beginning of their forever. Saturday, 5 December 2026 · Tepa, Ashanti.",
+  // The preview image is the invitation card in opengraph-image.tsx.
   openGraph: {
-    title: "Noblet & Nancy · NONA'26",
-    description: "Saturday, 5 December 2026 · Tepa, Ashanti. Kindly reply by 23 November.",
-    images: ["/images/story/embrace-bw.jpg"],
-    type: "website",
+    ...shareDefaults,
+    title: "Noblet & Nancy · 5 December 2026",
+    description: "Together with their families, they invite you to celebrate the beginning of their forever. Tepa, Ashanti. Kindly reply by 23 November.",
+    url: "/",
   },
+  twitter: { card: "summary_large_image" },
 };
 
 export const viewport: Viewport = {

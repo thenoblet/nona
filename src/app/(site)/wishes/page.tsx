@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { listWishes } from "@/lib/data/wishes";
+import { shareDefaults } from "@/lib/share";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { Paper } from "@/components/ui/Paper";
 import { Reveal } from "@/components/ui/Reveal";
@@ -12,6 +13,12 @@ import { WishComposer } from "@/components/wishes/WishComposer";
 export const metadata: Metadata = {
   title: "Wishes",
   description: "Leave Noblet and Nancy a wish: words, a voice note or a short video.",
+  openGraph: {
+    ...shareDefaults,
+    title: "Leave us a wish · Noblet & Nancy",
+    description: "Words, a voice note or a short video. We'll treasure every one.",
+    url: "/wishes",
+  },
 };
 
 /** The guestbook: a composer on a tray band, then the wishes wall. */

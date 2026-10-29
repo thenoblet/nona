@@ -13,6 +13,12 @@ const nextConfig: NextConfig = {
     // Guest media will be served from R2 later, e.g.
     // remotePatterns: [new URL("https://media.nobletxnancy.com/**")],
   },
+  // The link preview cards are prerendered, but may be redrawn on the server after their
+  // cache lifetime, so the server build must carry the fonts they are drawn with.
+  outputFileTracingIncludes: {
+    "/opengraph-image": ["src/fonts/og/**/*"],
+    "/*/opengraph-image*": ["src/fonts/og/**/*"],
+  },
   // Files in public/ have no hash in their names, so Next sends max-age=0 and Cloudflare
   // asks the server again on every request. A week lets the Accra edge keep them; rename
   // a file (or purge Cloudflare) when it changes.

@@ -1,11 +1,21 @@
 import type { Metadata } from "next";
 import { wedding } from "@/content/wedding";
+import { shareDefaults } from "@/lib/share";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { Icon } from "@/components/ui/Icon";
 import { Eyebrow } from "@/components/ui/Typography";
 import { RsvpForm } from "@/components/rsvp/RsvpForm";
 
-export const metadata: Metadata = { title: "RSVP" };
+export const metadata: Metadata = {
+  title: "RSVP",
+  description: `We'd love to know if you can celebrate with us. Please reply by ${wedding.rsvpBy}; it only takes a minute.`,
+  openGraph: {
+    ...shareDefaults,
+    title: "Kindly respond · Noblet & Nancy",
+    description: `We'd love to know if you can celebrate with us. Please reply by ${wedding.rsvpBy}; it only takes a minute.`,
+    url: "/rsvp",
+  },
+};
 
 export default function RsvpPage() {
   return (
