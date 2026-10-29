@@ -4,17 +4,12 @@ import type { Answer } from "@/lib/data/types";
 /** Shared by the form and the server action, so both agree on the allowed values. */
 export const partySizes = ["Just me", "2 people", "3 people", "4 or more"] as const;
 
-export const meals = ["[Menu option one]", "[Menu option two]", "[Vegetarian option]"] as const;
-
 export type RsvpValues = {
   fullName: string;
   phone: string;
   partySize: string;
   answers: Partial<Record<EventId, Answer>>;
   otherNames: string;
-  meal: string;
-  dietary: string;
-  flight: string;
   song: string;
 };
 
@@ -32,9 +27,6 @@ export const emptyValues: RsvpValues = {
   partySize: partySizes[0],
   answers: {},
   otherNames: "",
-  meal: meals[0],
-  dietary: "",
-  flight: "",
   song: "",
 };
 

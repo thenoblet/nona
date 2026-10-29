@@ -9,9 +9,6 @@ export type RsvpInput = {
   partySize: string;
   answers: Partial<Record<EventId, Answer>>;
   otherNames?: string;
-  meal?: string;
-  dietary?: string;
-  flight?: string;
   song?: string;
 };
 

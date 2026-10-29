@@ -5,7 +5,6 @@ import { saveRsvp } from "@/lib/data/rsvp";
 import type { Answer } from "@/lib/data/types";
 import {
   answerField,
-  meals,
   partySizes,
   type RsvpErrors,
   type RsvpState,
@@ -35,9 +34,6 @@ export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<Rsvp
     partySize: oneOf(text(form, "partySize"), partySizes),
     answers,
     otherNames: text(form, "otherNames"),
-    meal: oneOf(text(form, "meal"), meals),
-    dietary: text(form, "dietary", 600),
-    flight: text(form, "flight", 120),
     song: text(form, "song", 120),
   };
 
@@ -64,9 +60,6 @@ export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<Rsvp
       partySize: values.partySize,
       answers: values.answers,
       otherNames: values.otherNames || undefined,
-      meal: values.meal,
-      dietary: values.dietary || undefined,
-      flight: values.flight || undefined,
       song: values.song || undefined,
     });
   } catch (err) {

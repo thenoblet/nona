@@ -3,11 +3,10 @@
 import { startTransition, useEffect, useRef, type FormEvent } from "react";
 import { celebrations, type EventId } from "@/content/wedding";
 import type { Answer } from "@/lib/data/types";
-import { Field, Select, TextArea, TextInput } from "@/components/ui/Field";
+import { Field, Select, TextInput } from "@/components/ui/Field";
 import { PillButton } from "@/components/ui/Button";
-import { Icon } from "@/components/ui/Icon";
 import { CelebrationChoice } from "./CelebrationChoice";
-import { meals, partySizes, type RsvpState, type RsvpValues } from "./options";
+import { partySizes, type RsvpState, type RsvpValues } from "./options";
 
 const column = "mx-auto w-full max-w-xl px-5 sm:px-8";
 const sectionTitle = "m-0 font-serif text-[26px] italic";
@@ -132,40 +131,6 @@ export function ReplyForm({
             type="text"
             placeholder="As they should appear on the seating card"
             defaultValue={values.otherNames}
-          />
-        </Field>
-        <Field id="meal" label="Dinner choice">
-          <Select id="meal" name="meal" defaultValue={values.meal}>
-            {meals.map((m) => (
-              <option key={m}>{m}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field id="dietary" label="Dietary notes">
-          <TextArea
-            id="dietary"
-            name="dietary"
-            rows={3}
-            placeholder="Anything our caterers should know"
-            defaultValue={values.dietary}
-          />
-        </Field>
-        <Field
-          id="flight"
-          label="Flying in? Your flight"
-          hint={
-            <>
-              <Icon name="plane" size={14} className="text-ember" />
-              We&apos;ll help arrange your airport pickup.
-            </>
-          }
-        >
-          <TextInput
-            id="flight"
-            name="flight"
-            type="text"
-            placeholder="Flight number and arrival time"
-            defaultValue={values.flight}
           />
         </Field>
         <Field id="song" label="A song that will get you dancing">

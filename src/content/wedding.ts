@@ -154,13 +154,13 @@ export const travel = [
     link: "Book a room",
   },
   {
-    icon: "plane",
+    icon: "pin",
     title: "Getting to Tepa",
-    text: "Flying in? Nearest airport: [Airport]. Add your flight to your reply and we'll help arrange a pickup.",
+    text: "Coming by road? [Directions to Tepa, how long the drive takes and where to park.]",
     link: "Travel details",
   },
   {
-    icon: "pin",
+    icon: "heart",
     title: "While you're here",
     text: "[Your favourite places to eat and things to see around Tepa]: our personal guide for guests staying a few extra days.",
     link: "Our local guide",
