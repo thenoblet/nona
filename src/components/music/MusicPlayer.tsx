@@ -10,8 +10,8 @@ function clock(t: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** Four bars that dance while music plays. */
-export function Bars({ playing }: { playing: boolean }) {
+/** Four bars that dance while music plays, and pulse softly while it loads. */
+export function Bars({ playing, loading = false }: { playing: boolean; loading?: boolean }) {
   const bars: [number, number][] = [
     [14, 0],
     [20, 150],
@@ -19,15 +19,15 @@ export function Bars({ playing }: { playing: boolean }) {
     [18, 450],
   ];
   return (
-    <span className="flex items-end gap-[3px]" aria-hidden>
+    <span className={`flex items-end gap-[3px] ${loading ? "animate-pulse" : ""}`} aria-hidden>
       {bars.map(([h, delay]) => (
         <span
           key={delay}
           className="block w-[3px] origin-bottom rounded-sm bg-ember"
           style={{
             height: h,
-            animation: playing ? `bar 900ms ease-in-out ${delay}ms infinite` : undefined,
-            transform: playing ? undefined : "scaleY(0.45)",
+            animation: playing && !loading ? `bar 900ms ease-in-out ${delay}ms infinite` : undefined,
+            transform: playing && !loading ? undefined : "scaleY(0.45)",
           }}
         />
       ))}
@@ -47,6 +47,9 @@ const closing = "duration-200 ease-[cubic-bezier(0.4,0,1,1)]";
 export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
   const music = useMusic();
   const [open, setOpen] = useState(false);
+  // Where the guest is dragging the seek bar. The audio only moves on release:
+  // seeking on every step re-downloads the song again and again on mobile data.
+  const [scrub, setScrub] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const toggleButton = useRef<HTMLButtonElement>(null);
   const song = songs[music.track];
@@ -80,7 +83,15 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
     toggleButton.current?.focus();
   }
 
-  const frac = music.duration > 0 ? Math.min(1, music.position / music.duration) : 0;
+  const shown = scrub ?? music.position;
+  const frac = music.duration > 0 ? Math.min(1, shown / music.duration) : 0;
+  const loading = music.playing && music.buffering;
+
+  function commitSeek() {
+    if (scrub === null) return;
+    music.seek(scrub);
+    setScrub(null);
+  }
 
   return (
     <div ref={root} data-music-player className="relative">
@@ -118,14 +129,19 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
               min={0}
               max={Math.round(music.duration)}
               step={1}
-              value={Math.floor(music.position)}
-              onChange={(e) => music.seek(Number(e.target.value))}
+              value={Math.floor(shown)}
+              onChange={(e) => setScrub(Number(e.target.value))}
+              onPointerUp={commitSeek}
+              onPointerCancel={commitSeek}
+              onTouchEnd={commitSeek}
+              onKeyUp={commitSeek}
+              onBlur={commitSeek}
               aria-label={`Position in ${song.title}`}
-              aria-valuetext={`${clock(music.position)} of ${clock(music.duration)}`}
+              aria-valuetext={`${clock(shown)} of ${clock(music.duration)}`}
             />
           </div>
           <div className="flex justify-between text-[11px] tracking-wide text-mocha">
-            <span>{clock(music.position)}</span>
+            <span>{clock(shown)}</span>
             <span>{clock(music.duration)}</span>
           </div>
           <div className="-mt-1 flex items-center justify-center gap-6">
@@ -177,7 +193,7 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
                   className={`flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[var(--radius-paper)] border-0 px-2 py-1.5 text-left transition-colors hover:bg-blush ${current ? "bg-blush" : "bg-transparent"}`}
                 >
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-halo text-ember">
-                    {on ? <Bars playing /> : <PlayGlyph size={11} />}
+                    {on ? <Bars playing loading={loading} /> : <PlayGlyph size={11} />}
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate font-serif text-[17px] leading-tight italic">{s.title}</span>
@@ -200,11 +216,11 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
           className="flex min-h-11 cursor-pointer items-center gap-2.5 border-0 bg-transparent pr-1.5 text-left sm:gap-3 sm:pr-3"
         >
           <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-halo sm:size-10">
-            <Bars playing={music.playing} />
+            <Bars playing={music.playing} loading={loading} />
           </span>
           <span className="dock-label flex min-w-0 flex-col">
             <span className="text-[10px] uppercase tracking-[0.18em] text-mocha sm:text-[11px]">
-              {music.playing ? "Now playing" : "Play our song"}
+              {loading ? "Loading…" : music.playing ? "Now playing" : "Play our song"}
             </span>
             <span className="hidden max-w-[260px] truncate font-serif text-lg leading-tight italic sm:block">
               {song.title} · {song.artist}

@@ -15,7 +15,7 @@ export const songs: Song[] = [
     artist: "Bill Withers & Grover Washington, Jr.",
     seconds: 235,
     sources: [
-      { src: "/audio/just-the-two-of-us.webm", type: "audio/webm" },
+      { src: "/audio/just-the-two-of-us.webm", type: 'audio/webm; codecs="opus"' },
       { src: "/audio/just-the-two-of-us.mp3", type: "audio/mpeg" },
     ],
   },
@@ -25,7 +25,7 @@ export const songs: Song[] = [
     artist: "Jeannine Zoe feat. Frank Edwards",
     seconds: 251,
     sources: [
-      { src: "/audio/im-so-in-love-with-you.webm", type: "audio/webm" },
+      { src: "/audio/im-so-in-love-with-you.webm", type: 'audio/webm; codecs="opus"' },
       { src: "/audio/im-so-in-love-with-you.mp3", type: "audio/mpeg" },
     ],
   },
@@ -35,7 +35,7 @@ export const songs: Song[] = [
     artist: "Sarkodie feat. Harmonize",
     seconds: 174,
     sources: [
-      { src: "/audio/i-wanna-love-you.webm", type: "audio/webm" },
+      { src: "/audio/i-wanna-love-you.webm", type: 'audio/webm; codecs="opus"' },
       { src: "/audio/i-wanna-love-you.mp3", type: "audio/mpeg" },
     ],
   },
