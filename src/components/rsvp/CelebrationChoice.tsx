@@ -2,13 +2,16 @@
 
 import type { Celebration } from "@/content/wedding";
 import type { Answer } from "@/lib/data/types";
-import { Segmented } from "@/components/ui/Segmented";
+import { Icon } from "@/components/ui/Icon";
 import { answerField } from "./options";
 
-const choices: { value: Answer; label: string; tone?: "white" | "mocha" }[] = [
-  { value: "yes", label: "Joyfully accept" },
-  { value: "no", label: "Regretfully decline", tone: "mocha" },
+/** `on` colours the chosen pill; `mark` colours its filled radio circle. */
+const choices: { value: Answer; label: string; on: string; mark: string }[] = [
+  { value: "yes", label: "Joyfully accept", on: "border-ember bg-ember text-cocoa", mark: "border-cocoa bg-cocoa text-white" },
+  { value: "no", label: "Regretfully decline", on: "border-mocha bg-mocha text-white", mark: "border-white bg-white text-mocha" },
 ];
+
+const settle = "ease-[cubic-bezier(0.16,1,0.3,1)]";
 
 /** The part before the first separator: "[Start time] · please be seated early" becomes "[Start time]". */
 const lead = (s: string, sep: string) => s.split(sep)[0].trim();
@@ -21,7 +24,10 @@ export function whenLine(c: Celebration) {
   return `${lead(c.time, " · ")} · ${withoutTown(c.place)}`;
 }
 
-/** One white card per celebration, with the accept / decline switch. */
+/**
+ * One white card per celebration, with accept and decline as two radio pills.
+ * Each pill shows an empty circle until chosen, so it reads as tappable from the start.
+ */
 export function CelebrationChoice({
   celebration: c,
   value,
@@ -48,13 +54,44 @@ export function CelebrationChoice({
           <span className="text-[13px] text-mocha">{whenLine(c)}</span>
         </div>
       </div>
-      <Segmented
-        options={choices}
-        value={value ?? null}
-        onChange={onChange}
-        label={`Will you join us for the ${c.name.toLowerCase()}?`}
-      />
-      <input type="hidden" name={answerField(c.id)} value={value ?? ""} />
+      <div role="radiogroup" aria-label={`Will you join us for the ${c.name.toLowerCase()}?`} className="grid gap-2 sm:grid-cols-2">
+        {choices.map((o) => {
+          const on = value === o.value;
+          return (
+            <label
+              key={o.value}
+              className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-full border px-4 text-sm transition-[background-color,border-color,color,box-shadow,translate] duration-200 active:translate-y-px has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ember ${
+                on
+                  ? `${o.on} font-medium shadow-[var(--shadow-seg)]`
+                  : "border-stone bg-white text-cocoa shadow-[0_1px_2px_rgb(61_41_39/0.08)] [@media(hover:hover)]:hover:border-mocha"
+              }`}
+            >
+              <input
+                type="radio"
+                name={answerField(c.id)}
+                value={o.value}
+                checked={on}
+                onChange={() => onChange(o.value)}
+                className="sr-only"
+              />
+              <span
+                aria-hidden
+                className={`flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${
+                  on ? o.mark : "border-stone bg-white"
+                }`}
+              >
+                <Icon
+                  name="check"
+                  size={12}
+                  strokeWidth={2.4}
+                  className={`transition-transform duration-300 ${settle} ${on ? "scale-100" : "scale-0"}`}
+                />
+              </span>
+              {o.label}
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
