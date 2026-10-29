@@ -6,13 +6,24 @@ export type Answer = "yes" | "no";
 export type RsvpInput = {
   fullName: string;
   phone: string;
+  email?: string;
   partySize: string;
   answers: Partial<Record<EventId, Answer>>;
   otherNames?: string;
   song?: string;
 };
 
-export type RsvpRecord = RsvpInput & { id: string; receivedAt: string };
+export type EmailStatus = "none" | "queued" | "sent" | "failed";
+
+export type RsvpRecord = RsvpInput & {
+  id: string;
+  receivedAt: string;
+  /** Set when a later reply replaced this one; null for a current reply. */
+  supersededAt: string | null;
+  emailStatus: EmailStatus;
+  /** Another current reply shares this phone or email under a different name. */
+  possibleDuplicate: boolean;
+};
 
 export type MediaKind = "photo" | "video";
 
