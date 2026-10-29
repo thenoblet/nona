@@ -17,6 +17,9 @@ RUN npm run build
 
 FROM node:22-alpine AS run
 LABEL org.opencontainers.image.source=https://github.com/thenoblet/nona
+# The commit this image was built from, reported by /api/healthz.
+ARG GIT_SHA=dev
+ENV APP_VERSION=$GIT_SHA
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
