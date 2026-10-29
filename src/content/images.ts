@@ -8,6 +8,8 @@ import earlyDays from "../../public/images/story/early-days.jpg";
 import chrysanthemumsWide from "../../public/images/flowers/chrysanthemums-wide.jpg";
 import chrysanthemumsPortrait from "../../public/images/flowers/chrysanthemums-portrait.jpg";
 import daisiesWrapped from "../../public/images/flowers/daisies-wrapped.jpg";
+import lilian from "../../public/images/party/lilian.jpg";
+import james from "../../public/images/party/james.jpg";
 
 export type Photo = { src: StaticImageData; alt: string; position?: string };
 
@@ -31,3 +33,9 @@ export const photos = {
     position: "center 45%",
   },
 } satisfies Record<string, Photo>;
+
+/** Wedding party portraits, keyed by the name in `party` (src/content/wedding.ts). */
+export const partyPhotos: Partial<Record<string, Photo>> = {
+  Lilian: { src: lilian, alt: "Lilian, maid of honour", position: "center 40%" },
+  James: { src: james, alt: "James, best man", position: "center 30%" },
+};

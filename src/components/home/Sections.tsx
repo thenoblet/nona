@@ -1,6 +1,6 @@
 import Image from "next/image";
 import { colours, couple, faq, gifts, party, travel, wedding } from "@/content/wedding";
-import { photos } from "@/content/images";
+import { partyPhotos, photos } from "@/content/images";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { Icon } from "@/components/ui/Icon";
@@ -43,13 +43,28 @@ export function Colours() {
 }
 
 function Portrait({ name, role, large }: { name: string; role: string; large?: boolean }) {
+  const photo = partyPhotos[name];
   const box = large ? "h-[200px] w-[150px] sm:h-[234px] sm:w-[176px]" : "h-[160px] w-[120px] sm:h-[186px] sm:w-[140px]";
   return (
     <figure className="m-0 flex flex-col items-center gap-2.5 text-center">
       <div className={`oval relative ${box}`}>
         <div aria-hidden className="oval-ring absolute top-[-8px] left-2 h-full w-full rounded-[50%] border border-ember" />
-        {/* TODO: replace with portraits of the wedding party. */}
-        <div role="img" aria-label={`Portrait of ${name}, placeholder`} className="absolute inset-0 rounded-[50%] bg-tile" />
+        {photo ? (
+          <div className="absolute inset-0 overflow-hidden rounded-[50%] bg-tile">
+            <Image
+              src={photo.src}
+              alt={photo.alt}
+              fill
+              sizes={large ? "176px" : "140px"}
+              placeholder="blur"
+              className="object-cover"
+              style={{ objectPosition: photo.position }}
+            />
+          </div>
+        ) : (
+          /* TODO: add the rest of the wedding party's portraits to partyPhotos. */
+          <div role="img" aria-label={`Portrait of ${name}, coming soon`} className="absolute inset-0 rounded-[50%] bg-tile" />
+        )}
       </div>
       <figcaption className="mt-2 flex flex-col gap-0.5">
         <span className={`font-serif italic ${large ? "text-[28px]" : "text-2xl"}`}>{name}</span>
