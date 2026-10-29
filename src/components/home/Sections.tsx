@@ -5,6 +5,7 @@ import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { Icon } from "@/components/ui/Icon";
 import { Reveal } from "@/components/ui/Reveal";
+import { SwipeRow } from "@/components/ui/SwipeRow";
 import { Eyebrow, Motto, SectionHeading } from "@/components/ui/Typography";
 import { QrCode } from "@/components/slideshow/QrCode";
 import { albumUrl, displayUrl, qrSvg } from "@/lib/qr";
@@ -107,23 +108,24 @@ export function Travel() {
         <Reveal>
           <SectionHeading eyebrow="For our travelling guests" title="Travel & stay" />
         </Reveal>
-        <div className="grid grid-cols-1 gap-x-8 gap-y-10 md:grid-cols-2 lg:grid-cols-3">
-          {travel.map((t, i) => (
-            <Reveal
-              as="article"
-              key={t.title}
-              className={`paper-card flex flex-col items-center gap-3.5 rounded-[var(--radius-paper)] bg-white px-6 pt-10 pb-7.5 text-center shadow-[var(--shadow-paper)] sm:px-7.5 ${i === 1 ? "lg:mt-4" : ""}`}
-              style={{ transform: `rotate(${travelTilts[i]})` }}
-            >
-              <Halo icon={t.icon} size="xl" />
-              <h3 className="mt-1 mb-0 font-serif text-[32px] font-normal italic">{t.title}</h3>
-              <p className="m-0 font-serif text-xl leading-relaxed text-mocha">{t.text}</p>
-              <TextLink href="#travel" className="mt-auto">
-                {t.link}
-              </TextLink>
-            </Reveal>
-          ))}
-        </div>
+        <Reveal>
+          <SwipeRow labels={travel.map((t) => t.title)}>
+            {travel.map((t, i) => (
+              <article
+                key={t.title}
+                className={`paper-card flex w-full flex-col items-center gap-3.5 rounded-[var(--radius-paper)] bg-white px-6 pt-10 pb-7.5 text-center shadow-[var(--shadow-paper)] sm:px-7.5 ${i === 1 ? "lg:mt-4" : ""}`}
+                style={{ transform: `rotate(${travelTilts[i]})` }}
+              >
+                <Halo icon={t.icon} size="xl" />
+                <h3 className="mt-1 mb-0 font-serif text-[32px] font-normal italic">{t.title}</h3>
+                <p className="m-0 font-serif text-xl leading-relaxed text-mocha">{t.text}</p>
+                <TextLink href="#travel" className="mt-auto">
+                  {t.link}
+                </TextLink>
+              </article>
+            ))}
+          </SwipeRow>
+        </Reveal>
       </div>
     </section>
   );
