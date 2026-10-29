@@ -12,6 +12,10 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
 
 # next.js
 /.next/
@@ -22,7 +26,21 @@
 
 # misc
 .DS_Store
+Thumbs.db
 *.pem
+*.log
+.eslintcache
+
+# editors
+.idea/
+.vscode/
+*.swp
+
+# local Postgres data, if docker compose is given a data volume
+/docker/postgres/data/
+
+# Claude Code personal settings (shared settings in .claude/ may be committed)
+.claude/settings.local.json
 
 # debug
 npm-debug.log*
@@ -45,3 +63,6 @@ next-env.d.ts
 
 # brainstorming mockups (superpowers visual companion)
 .superpowers/
+
+# superpowers specs and plans stay local, never committed
+docs/superpowers/

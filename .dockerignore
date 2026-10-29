@@ -1,9 +1,52 @@
+# Only what the image needs goes into the build context: package files, configs,
+# src/, public/ and the drizzle/ migrations. Everything else stays out, which keeps
+# builds fast and keeps local files (env, notes, mockups) out of a public image.
+
+# dependencies and build output (rebuilt inside the image)
 node_modules
 .next
+*.tsbuildinfo
+next-env.d.ts
+
+# git, CI and infrastructure
 .git
-npm-debug.log*
+.gitignore
+.github
+infra
+
+# secrets and local env files
 .env*
-!.env.example
+*.pem
+
+# tests and their output
+e2e
+test
+**/*.test.ts
+**/*.test.tsx
+vitest.config.ts
+playwright.config.ts
+coverage
+test-results
+playwright-report
+blob-report
+
+# local development
+docker-compose.yml
+docker/postgres
+
+# docs, design files and notes
+*.md
+docs
+design
+.superpowers
+.claude
+
+# editors, OS and logs
+.vscode
+.idea
+.DS_Store
+*.log
+
+# the image's own build files
 Dockerfile
 .dockerignore
-README.md
