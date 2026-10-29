@@ -79,7 +79,16 @@ Colours and shadows are Tailwind tokens in `src/app/globals.css` (`cocoa`, `moch
 
 ## Deploy (Dokploy)
 
-The `Dockerfile` builds a standalone Next.js server. In Dokploy, create an application from this
-repository with the Dockerfile build type, expose port `3000`, and set:
+The `Dockerfile` builds a standalone Next.js server. Nothing is built on the server: on every push
+to `main`, GitHub Actions (`.github/workflows/image.yml`) builds the image and pushes it to
+`ghcr.io/thenoblet/nona` as `:latest` and `:sha-<short>`.
 
-- `SITE_URL`: the public address, e.g. `https://nona26.com` (used in QR codes)
+In LuxBedding's Dokploy, the app runs from that Docker image on `nona-web-01`, with port `3000`, health
+check `GET /api/healthz`, and:
+
+- `SITE_URL`: the public address, `https://nobletxnancy.com` (used in QR codes and link previews;
+  also passed to the build, because static pages bake it in)
+
+To deploy automatically, put the Dokploy app's deploy URL in the repository secret `DOKPLOY_DEPLOY_URL`.
+To freeze deploys (the wedding week), blank that secret. To roll back, point the app at an earlier
+`:sha-` tag.

@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
   images: {
     formats: ["image/avif", "image/webp"],
     // Guest media will be served from CloudFront later, e.g.
-    // remotePatterns: [new URL("https://media.nona26.com/**")],
+    // remotePatterns: [new URL("https://media.nobletxnancy.com/**")],
   },
   turbopack: {
     rules: {
