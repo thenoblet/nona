@@ -52,11 +52,8 @@ export const venues = {
   },
 } as const;
 
-/** Landmarks guests can ask for on the way. */
-export const landmarks = [
-  { name: "Rexco", coords: { lat: 7.0165191, lng: -2.1471814 } },
-  // TODO: add Amel Junction once its pin is confirmed.
-] as const;
+/** Landmarks guests can ask for on the way. Shown as a note over the map, not as pins. */
+export const landmarks = ["Rexco", "Amel Junction"] as const;
 
 export type EventId = "ceremony" | "reception" | "thanks";
 

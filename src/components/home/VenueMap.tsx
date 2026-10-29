@@ -17,26 +17,25 @@ const IMAGERY = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imag
 
 const pinSvg = `<svg width="34" height="44" viewBox="-17 -44 34 44" aria-hidden="true"><path d="M0 0C0 0-16-14-16-27a16 16 0 0 1 32 0C16-14 0 0 0 0z" fill="#3D2927" stroke="#fff" stroke-width="2"/><circle cx="0" cy="-27" r="9.5" fill="#E87F39"/></svg>`;
 
-export type MapLandmark = { name: string; lat: number; lng: number };
-
 /**
- * A real satellite map of Tepa: a numbered pin for each place and a small marker per landmark.
+ * A real satellite map of Tepa with a numbered pin for each place, and an optional
+ * note laid over the top (the nearby landmarks).
  * Leaflet loads in the browser only; the frame keeps its size while it does.
  */
 export function VenueMap({
   places,
-  landmarks = [],
+  note,
   label,
 }: {
   places: MapPlace[];
-  landmarks?: MapLandmark[];
+  note?: { eyebrow: string; text: string };
   label: string;
 }) {
   const el = useRef<HTMLDivElement>(null);
-  const key = JSON.stringify([places, landmarks]);
+  const key = JSON.stringify(places);
 
   useEffect(() => {
-    const [list, marks]: [MapPlace[], MapLandmark[]] = JSON.parse(key);
+    const list: MapPlace[] = JSON.parse(key);
     let map: import("leaflet").Map | undefined;
     let cancelled = false;
 
@@ -73,16 +72,6 @@ export function VenueMap({
           );
         bounds.extend([p.lat, p.lng]);
       }
-      for (const m of marks) {
-        const icon = L.divIcon({
-          className: "nona-mark",
-          html: `<span class="nona-mark__dot"></span><span class="nona-mark__tag">${m.name}</span>`,
-          iconSize: [14, 14],
-          iconAnchor: [7, 7],
-        });
-        L.marker([m.lat, m.lng], { icon, title: m.name, alt: `Landmark: ${m.name}`, interactive: false }).addTo(map);
-        bounds.extend([m.lat, m.lng]);
-      }
       // Labels sit to the right of each marker, so leave more room on that side.
       map.fitBounds(bounds, { paddingTopLeft: [24, 60], paddingBottomRight: [110, 24], maxZoom: 18 });
     });
@@ -94,11 +83,19 @@ export function VenueMap({
   }, [key]);
 
   return (
-    <div
-      ref={el}
-      role="region"
-      aria-label={label}
-      className="nona-map aspect-[4/5] w-full overflow-hidden rounded-[calc(var(--radius-paper)-4px)] bg-tray sm:aspect-[5/4]"
-    />
+    <div className="relative">
+      <div
+        ref={el}
+        role="region"
+        aria-label={label}
+        className="nona-map aspect-[4/5] w-full overflow-hidden rounded-[calc(var(--radius-paper)-4px)] bg-tray sm:aspect-[5/4]"
+      />
+      {note ? (
+        <p className="pointer-events-none absolute right-3 bottom-8 z-[500] m-0 flex max-w-[70%] flex-col gap-0.5 rounded-[3px] bg-white/92 px-3.5 py-2.5 text-right shadow-[var(--shadow-paper)]">
+          <span className="text-[10px] uppercase tracking-[0.24em] text-mocha">{note.eyebrow}</span>
+          <span className="font-serif text-lg leading-tight text-cocoa italic">{note.text}</span>
+        </p>
+      ) : null}
+    </div>
   );
 }

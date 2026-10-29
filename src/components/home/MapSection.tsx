@@ -67,7 +67,7 @@ export function MapSection() {
           <SectionHeading
             eyebrow="Tepa · Ashanti"
             title="Finding your way"
-            lead="Two places, a minute apart, near Rexco and Amel Junction. Tap either one for turn-by-turn directions on your phone."
+            lead="Two places, a minute apart. Tap either one for turn-by-turn directions on your phone."
           />
         </Reveal>
         <div className="flex flex-col-reverse gap-10 lg:flex-row lg:items-center lg:gap-16">
@@ -80,8 +80,8 @@ export function MapSection() {
             <div className="paper-card rounded-[var(--radius-paper)] bg-white p-2 shadow-[var(--shadow-paper)] sm:p-3">
               <VenueMap
                 places={pins}
-                landmarks={landmarks.map((l) => ({ name: l.name, ...l.coords }))}
-                label="Satellite map of Tepa showing the church, the reception venue and nearby landmarks"
+                note={{ eyebrow: "Landmarks", text: landmarks.join(" · ") }}
+                label="Satellite map of Tepa showing the church and the reception venue"
               />
             </div>
           </Reveal>
