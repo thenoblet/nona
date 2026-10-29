@@ -1,0 +1,55 @@
+#cloud-config
+# nona-db-01: Postgres as a Dokploy database service, as a remote server of
+# LuxBedding's Dokploy. The data disk is mounted at /var/lib/docker BEFORE
+# Dokploy installs Docker, so every container volume lives on premium storage.
+# No public IP, no ufw: the NSGs are the gate.
+package_update: true
+package_upgrade: true
+packages:
+  - fail2ban
+  - unattended-upgrades
+  # sgdisk, for the late-attachment recovery in runcmd below.
+  - gdisk
+disk_setup:
+  /dev/disk/azure/scsi1/lun0:
+    table_type: gpt
+    layout: true
+    overwrite: false
+fs_setup:
+  - filesystem: ext4
+    device: /dev/disk/azure/scsi1/lun0
+    partition: auto
+mounts:
+  # docker.service must require and start after this mount, so a failed or
+  # racing mount can never let dockerd initialise on the OS disk.
+  - ["/dev/disk/azure/scsi1/lun0-part1", "/var/lib/docker", "ext4", "defaults,nofail,x-systemd.required-by=docker.service,x-systemd.before=docker.service", "0", "2"]
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-nona.conf
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
+      MaxAuthTries 3
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [sshd]
+      enabled = true
+      maxretry = 5
+      bantime = 1h
+runcmd:
+  # The data disk can arrive after first boot, in which case disk_setup ran
+  # against nothing. Wait for it and partition/format it ourselves if needed;
+  # a no-op when it was there all along.
+  - |
+    for _ in $(seq 1 60); do [ -e /dev/disk/azure/scsi1/lun0 ] && break; sleep 5; done
+    if [ -e /dev/disk/azure/scsi1/lun0 ] && [ ! -e /dev/disk/azure/scsi1/lun0-part1 ]; then
+      DISK=$(readlink -f /dev/disk/azure/scsi1/lun0)
+      sgdisk -n 1:0:0 -t 1:8300 "$DISK"
+      partprobe "$DISK" || true
+      udevadm settle
+      mkfs.ext4 -F -q "${DISK}1"
+    fi
+    systemctl daemon-reload
+    mkdir -p /var/lib/docker
+    systemctl start var-lib-docker.mount || mount /var/lib/docker || true
+  - sshd -t && systemctl restart ssh
+  - systemctl enable --now fail2ban

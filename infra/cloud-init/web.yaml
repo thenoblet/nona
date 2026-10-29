@@ -1,0 +1,26 @@
+#cloud-config
+# nona-web-01: Next.js app + worker, as a remote server of LuxBedding's Dokploy.
+# Dokploy installs Docker and Traefik itself when the server is set up.
+# No ufw (deliberate): the NSG is the gate, and Docker-published ports bypass
+# ufw anyway. Azure mounts the local temp disk at /mnt; it is the worker's
+# scratch space and is wiped on resize or deallocate.
+package_update: true
+package_upgrade: true
+packages:
+  - fail2ban
+  - unattended-upgrades
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-nona.conf
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
+      MaxAuthTries 3
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [sshd]
+      enabled = true
+      maxretry = 5
+      bantime = 1h
+runcmd:
+  - sshd -t && systemctl restart ssh
+  - systemctl enable --now fail2ban
