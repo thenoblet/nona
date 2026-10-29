@@ -13,7 +13,7 @@ const choices: { value: Answer; label: string; tone?: "white" | "mocha" }[] = [
 /** The part before the first separator: "[Start time] · please be seated early" becomes "[Start time]". */
 const lead = (s: string, sep: string) => s.split(sep)[0].trim();
 
-/** "[Start time] · [Nancy's church]": a short time and place for the card. */
+/** "[Start time] · Victory Worship Centre": a short time and place for the card. */
 export function whenLine(c: Celebration) {
   return `${lead(c.time, " · ")} · ${lead(c.place, ",")}`;
 }

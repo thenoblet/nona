@@ -47,7 +47,7 @@ public/
 ```
 
 **To change wording, dates, places or the wedding party, edit `src/content/wedding.ts`.**
-Anything still to confirm is in square brackets, like `[Nancy's church]` and `[Start time]`.
+Anything still to confirm is in square brackets, like `[Start time]` and `[Guest hotel]`.
 
 ## Stand-in data (to replace)
 

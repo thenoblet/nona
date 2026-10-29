@@ -30,10 +30,12 @@ export const wedding = {
 
 export const venues = {
   church: {
-    name: "[Nancy's church]",
-    address: "[Street address], Tepa",
+    name: "Victory Worship Centre",
+    denomination: "Assemblies of God",
+    address: "Assemblies of God · Tepa, Ashanti",
     gps: "[AS-0000-0000]",
-    mapsUrl: "#map",
+    // TODO: swap for the exact Google Maps pin once confirmed.
+    mapsUrl: "https://www.google.com/maps/search/?api=1&query=Assemblies+of+God+Victory+Worship+Centre+Tepa+Ghana",
   },
   reception: {
     name: "BN 111 Katakyie St",
@@ -75,6 +77,7 @@ export const celebrations: Celebration[] = [
     month: "December",
     time: "[Start time] · please be seated early",
     place: venues.church.name + ", Tepa",
+    placeDetail: venues.church.denomination,
     dress: "Formal · black tie optional",
     directionsUrl: "#map",
   },
@@ -100,6 +103,7 @@ export const celebrations: Celebration[] = [
     month: "December",
     time: "[Start time]",
     place: venues.church.name + ", Tepa",
+    placeDetail: venues.church.denomination,
     dress: "Your Sunday best",
     directionsUrl: "#map",
   },
