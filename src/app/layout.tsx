@@ -27,8 +27,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${cormorant.variable} ${jost.variable} ${pinyon.variable} antialiased`}>
-      <body className="min-h-dvh bg-white text-cocoa">
+    // data-scroll-behavior: in-page links glide, but a new page starts at the top straight away.
+    <html lang="en" data-scroll-behavior="smooth" className={`${cormorant.variable} ${jost.variable} ${pinyon.variable} antialiased`}>
+      {/* Browser extensions (Grammarly, password managers) add attributes to <body> before React loads. */}
+      <body className="min-h-dvh bg-white text-cocoa" suppressHydrationWarning>
         {/* Music lives here so it keeps playing from the landing page into the site. */}
         <MusicProvider>{children}</MusicProvider>
       </body>
