@@ -4,7 +4,7 @@ import { nowIndex } from "./ByDay";
 /** The rounded strip in the header: what's on right now, and where. */
 export function HappeningNow({ secondDay }: { secondDay: boolean }) {
   const item = schedule[nowIndex(secondDay)];
-  const place = item.place.split(",")[0];
+  const place = item.place.replace(/, Tepa$/, "");
   return (
     <div className="flex items-center gap-3.5 rounded-full border border-ember/50 px-5 py-3">
       <span className="live-dot" aria-hidden />

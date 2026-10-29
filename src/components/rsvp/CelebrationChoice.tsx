@@ -13,9 +13,12 @@ const choices: { value: Answer; label: string; tone?: "white" | "mocha" }[] = [
 /** The part before the first separator: "[Start time] · please be seated early" becomes "[Start time]". */
 const lead = (s: string, sep: string) => s.split(sep)[0].trim();
 
-/** "[Start time] · Victory Worship Centre": a short time and place for the card. */
+/** The place without its town: "BN 111 Katakyie St, Tepa" becomes "BN 111 Katakyie St". */
+const withoutTown = (s: string) => (s.includes(",") ? s.slice(0, s.lastIndexOf(",")).trim() : s);
+
+/** "[Start time] · Assemblies of God, Victory Worship Centre": a short time and place for the card. */
 export function whenLine(c: Celebration) {
-  return `${lead(c.time, " · ")} · ${lead(c.place, ",")}`;
+  return `${lead(c.time, " · ")} · ${withoutTown(c.place)}`;
 }
 
 /** One white card per celebration, with the accept / decline switch. */
