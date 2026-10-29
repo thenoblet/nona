@@ -78,7 +78,13 @@ const story = z.object({
 });
 
 export const sectionSchemas = {
-  celebrations: z.array(celebration).length(3, "There must be exactly three celebrations"),
+  celebrations: z
+    .array(celebration)
+    .length(3, "There must be exactly three celebrations")
+    .refine(
+      (items) => ["ceremony", "reception", "thanks"].every((id) => items.filter((c) => c.id === id).length === 1),
+      "Keep the white wedding, reception and thanksgiving, each once",
+    ),
   schedule: z
     .array(scheduleItem)
     .refine((items) => items.some((i) => i.day === "sat"), "Add at least one Saturday item")

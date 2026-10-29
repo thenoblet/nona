@@ -86,6 +86,11 @@ describe("validation", () => {
     await expectRejected("celebrations", value, "celebrations[0].name");
   });
 
+  it("rejects celebrations that repeat an id", async () => {
+    const value = celebrations().map((c) => ({ ...c, id: "ceremony" }));
+    await expectRejected("celebrations", value, "celebrations: Keep the white wedding, reception and thanksgiving, each once");
+  });
+
   it("rejects a bad start time with a readable message", async () => {
     const value = celebrations();
     value[0].startTime = "25:00";
