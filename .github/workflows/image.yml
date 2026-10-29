@@ -18,7 +18,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: nona
+          POSTGRES_PASSWORD: nona
+          POSTGRES_DB: nona
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nona"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: nona_test
+      POSTGRES_USER: nona
+      POSTGRES_PASSWORD: nona
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # The service container can't run the init SQL, so create the test database here.
+      - name: Create test database
+        run: psql -h localhost -U nona -d nona -c "CREATE DATABASE nona_test"
+        env:
+          PGPASSWORD: nona
+
+      - run: npm ci
+      # Generates next-env.d.ts and route types, which a fresh checkout lacks.
+      - run: npx next typegen
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm test
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     env:
       IMAGE: ghcr.io/${{ github.repository }}
