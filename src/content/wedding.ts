@@ -33,14 +33,16 @@ export const venues = {
     name: "Assemblies of God, Victory Worship Centre",
     address: "Tepa, Ashanti",
     gps: "[AS-0000-0000]",
-    // TODO: swap for the exact Google Maps pin once confirmed.
-    mapsUrl: "https://www.google.com/maps/search/?api=1&query=Assemblies+of+God+Victory+Worship+Centre+Tepa+Ghana",
+    coords: { lat: 7.019267, lng: -2.145361 },
+    mapsUrl: "https://www.google.com/maps/dir/?api=1&destination=7.019267,-2.145361",
   },
   reception: {
     name: "BN 111 Katakyie St",
     address: "Tepa, Ashanti",
     gps: "AS-0084-3317",
-    mapsUrl: "https://www.google.com/maps/search/?api=1&query=BN+111+Katakyie+St+Tepa+Ghana",
+    coords: { lat: 7.018556, lng: -2.145472 },
+    mapsUrl: "https://www.google.com/maps/dir/?api=1&destination=7.018556,-2.145472",
+    note: "About a minute's walk from the church",
   },
   hotel: {
     name: "[Guest hotel]",
@@ -49,6 +51,12 @@ export const venues = {
     mapsUrl: "#map",
   },
 } as const;
+
+/** Landmarks guests can ask for on the way. */
+export const landmarks = [
+  { name: "Rexco", coords: { lat: 7.0165191, lng: -2.1471814 } },
+  // TODO: add Amel Junction once its pin is confirmed.
+] as const;
 
 export type EventId = "ceremony" | "reception" | "thanks";
 
