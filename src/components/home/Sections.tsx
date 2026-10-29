@@ -43,8 +43,8 @@ export function Colours() {
   );
 }
 
-function Portrait({ name, role, large }: { name: string; role: string; large?: boolean }) {
-  const photo = partyPhotos[name];
+function Portrait({ id, name, role, large }: { id: string; name: string; role: string; large?: boolean }) {
+  const photo = partyPhotos[id];
   const box = large ? "h-[200px] w-[150px] sm:h-[234px] sm:w-[176px]" : "h-[160px] w-[120px] sm:h-[186px] sm:w-[140px]";
   return (
     <figure className="m-0 flex flex-col items-center gap-2.5 text-center">
@@ -86,12 +86,12 @@ export function Party() {
         </Reveal>
         <div className="flex flex-wrap justify-center gap-x-10 gap-y-10 sm:gap-x-18">
           {leads.map((p) => (
-            <Portrait key={p.name} name={p.name} role={p.role} large />
+            <Portrait key={p.id} id={p.id} name={p.name} role={p.role} large />
           ))}
         </div>
         <div className="grid grid-cols-2 justify-items-center gap-x-4 gap-y-10 sm:flex sm:flex-wrap sm:justify-center sm:gap-x-9">
           {rest.map((p) => (
-            <Portrait key={p.name} name={p.name} role={p.role} />
+            <Portrait key={p.id} id={p.id} name={p.name} role={p.role} />
           ))}
         </div>
       </div>
