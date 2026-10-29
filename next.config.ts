@@ -6,9 +6,22 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   images: {
-    formats: ["image/avif", "image/webp"],
-    // Guest media will be served from CloudFront later, e.g.
+    // WebP only. Cloudflare caches /_next/image at the edge, and its free plan keeps one
+    // copy per URL whatever the browser accepts, so an AVIF copy could reach iPhones
+    // on iOS 15 that can't show it. Every phone guests will have shows WebP.
+    formats: ["image/webp"],
+    // Guest media will be served from R2 later, e.g.
     // remotePatterns: [new URL("https://media.nobletxnancy.com/**")],
+  },
+  // Files in public/ have no hash in their names, so Next sends max-age=0 and Cloudflare
+  // asks the server again on every request. A week lets the Accra edge keep them; rename
+  // a file (or purge Cloudflare) when it changes.
+  async headers() {
+    const week = { key: "Cache-Control", value: "public, max-age=604800, stale-while-revalidate=86400" };
+    return [
+      { source: "/images/:path*", headers: [week] },
+      { source: "/audio/:path*", headers: [week] },
+    ];
   },
   turbopack: {
     rules: {
