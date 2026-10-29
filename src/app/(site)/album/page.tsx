@@ -5,12 +5,13 @@ import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
 import { listMedia, SAMPLE_DEVICE } from "@/lib/data/media";
+import { resolveMode } from "@/lib/mode";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { AlbumBrowser } from "@/components/album/AlbumBrowser";
 import { SharingAs } from "@/components/album/SharingAs";
-import { ShareMomentButton, UploadProgress, UploadProvider } from "@/components/album/Upload";
+import { ShareButtons, ShareButtonsSkeleton, UploadProgress, UploadProvider } from "@/components/album/Upload";
 
 export const metadata: Metadata = {
   title: "Album",
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
 };
 
 /** The shared album the table QR codes open. Phone layout first; the grid widens on larger screens. */
-export default function AlbumPage() {
+export default function AlbumPage({ searchParams }: PageProps<"/album">) {
   return (
     <main className="min-h-dvh bg-blush pb-28">
       <UploadProvider>
@@ -47,14 +48,17 @@ export default function AlbumPage() {
               <h1 className="m-0 font-script text-[54px] leading-[1.1] font-normal sm:text-6xl">Capture it with us</h1>
               <SharingAs />
             </div>
-            <ShareMomentButton />
+            <Suspense fallback={<ShareButtonsSkeleton />}>
+              <ShareChoices searchParams={searchParams} />
+            </Suspense>
             <p className="-mt-1 mb-0 text-center text-xs tracking-[0.04em] text-mist">
               Photos and videos · no app, no sign-up
             </p>
           </div>
         </PhoneHeader>
 
-        <div className="relative mx-auto -mt-3.5 w-full max-w-xl px-4 sm:px-8">
+        {/* Empty (and hidden) until the guest sends something. */}
+        <div className="relative mx-auto -mt-3.5 w-full max-w-xl px-4 empty:hidden sm:px-8">
           <UploadProgress />
         </div>
       </UploadProvider>
@@ -78,6 +82,13 @@ export default function AlbumPage() {
       </div>
     </main>
   );
+}
+
+/** Camera first on the wedding weekend, the gallery first before and after (see src/lib/mode.ts). */
+async function ShareChoices({ searchParams }: Pick<PageProps<"/album">, "searchParams">) {
+  await connection();
+  const { mode } = await searchParams;
+  return <ShareButtons cameraFirst={resolveMode(new Date(), mode) === "day"} />;
 }
 
 /** Read at request time so new uploads show up. */

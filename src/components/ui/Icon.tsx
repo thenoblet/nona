@@ -100,6 +100,13 @@ const paths = {
     </>
   ),
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  image: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <circle cx="9" cy="10" r="1.6" />
+      <path d="M4 17l5-5 4 4 3-3 4 4" />
+    </>
+  ),
 } as const;
 
 export type IconName = keyof typeof paths;
