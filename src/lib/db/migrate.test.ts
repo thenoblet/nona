@@ -18,4 +18,17 @@ describe("runMigrations", () => {
   it("lets two runs overlap", async () => {
     await expect(Promise.all([runMigrations(), runMigrations()])).resolves.toBeDefined();
   });
+
+  it("fails fast instead of waiting forever for a held lock", async () => {
+    const holder = postgres({ ...dbConfig(), max: 1 });
+    await holder`SELECT pg_advisory_lock(472026)`;
+    try {
+      const started = Date.now();
+      await expect(runMigrations()).rejects.toThrow();
+      expect(Date.now() - started).toBeLessThan(12_000);
+    } finally {
+      await holder`SELECT pg_advisory_unlock(472026)`;
+      await holder.end();
+    }
+  }, 20_000);
 });
