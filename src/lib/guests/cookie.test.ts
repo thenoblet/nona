@@ -10,8 +10,8 @@ import { browserCookies } from "../../../test/next-cookies";
 vi.mock("next/headers", () => import("../../../test/next-cookies"));
 
 import {
-  GUEST_COOKIE,
   ensureOwnGuest,
+  guestCookieName,
   ownGuestId,
   personalLink,
   readGuestIds,
@@ -29,7 +29,7 @@ function signedByServer(ids: string): string {
 }
 
 function sendCookie(ids: string[]) {
-  browserCookies.values.set(GUEST_COOKIE, signGuestIds(ids));
+  browserCookies.values.set(guestCookieName(), signGuestIds(ids));
 }
 
 async function guestCount(): Promise<number> {
@@ -105,7 +105,7 @@ describe("readGuestIds and ownGuestId", () => {
 
   it("know no one when the cookie was tampered with", async () => {
     const value = signGuestIds([randomUUID()]);
-    browserCookies.values.set(GUEST_COOKIE, `${randomUUID()}${value.slice(36)}`);
+    browserCookies.values.set(guestCookieName(), `${randomUUID()}${value.slice(36)}`);
     expect(await readGuestIds()).toEqual([]);
     expect(await ownGuestId()).toBeNull();
   });
@@ -118,7 +118,8 @@ describe("readGuestIds and ownGuestId", () => {
 });
 
 describe("the cookie", () => {
-  it("is httpOnly, SameSite=Lax, for the whole site, for two years, and not Secure outside production", async () => {
+  it("is nona_guest outside production: httpOnly, SameSite=Lax, for the whole site, for two years, not Secure", async () => {
+    expect(guestCookieName()).toBe("nona_guest");
     await ensureOwnGuest("Ama");
     expect(browserCookies.sets).toHaveLength(1);
     const [cookie] = browserCookies.sets;
@@ -127,11 +128,24 @@ describe("the cookie", () => {
     expect(cookie.options).toEqual({ httpOnly: true, secure: false, sameSite: "lax", path: "/", maxAge: TWO_YEARS_SECONDS });
   });
 
-  it("is Secure in production", async () => {
+  it("is __Host-nona_guest in production: Secure, Path=/ and no Domain, so no subdomain can set or read it", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("GUEST_COOKIE_SECRET", "a-production-secret-of-32-bytes-or-more");
+    expect(guestCookieName()).toBe("__Host-nona_guest");
     await ensureOwnGuest("Ama");
-    expect(browserCookies.sets[0].options.secure).toBe(true);
+    const [cookie] = browserCookies.sets;
+    expect(cookie.name).toBe("__Host-nona_guest");
+    expect(cookie.options).toEqual({ httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: TWO_YEARS_SECONDS });
+  });
+
+  it("is read by the same name it is written by, and the other environment's name is ignored", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GUEST_COOKIE_SECRET", "a-production-secret-of-32-bytes-or-more");
+    const ids = [randomUUID()];
+    browserCookies.values.set("nona_guest", signGuestIds(ids));
+    expect(await readGuestIds()).toEqual([]);
+    browserCookies.values.set("__Host-nona_guest", signGuestIds(ids));
+    expect(await readGuestIds()).toEqual(ids);
   });
 });
 
@@ -237,7 +251,7 @@ describe("ensureOwnGuest", () => {
 
   it("treats a tampered cookie as none", async () => {
     const existing = await createGuest("Yaw");
-    browserCookies.values.set(GUEST_COOKIE, `${existing.id}.forged`);
+    browserCookies.values.set(guestCookieName(), `${existing.id}.forged`);
     const guest = await ensureOwnGuest("Akosua");
     expect(guest.id).not.toBe(existing.id);
     expect(await readGuestIds()).toEqual([guest.id]);

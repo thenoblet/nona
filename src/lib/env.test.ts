@@ -137,11 +137,15 @@ describe("guestCookieSecret", () => {
     expect(() => guestCookieSecret({ NODE_ENV: "production", GUEST_COOKIE_SECRET: "Ɔ".repeat(15) })).toThrow();
   });
 
-  it("falls back to a fixed development value outside production, never inside it", () => {
+  it("falls back to a fixed value only in development and tests", () => {
     const development = guestCookieSecret({ NODE_ENV: "development" });
     expect(Buffer.byteLength(development)).toBeGreaterThanOrEqual(32);
     expect(guestCookieSecret({ NODE_ENV: "test" })).toBe(development);
-    expect(guestCookieSecret({})).toBe(development);
-    expect(() => guestCookieSecret({ NODE_ENV: "production" })).toThrow();
+  });
+
+  it("fails closed without one anywhere else, NODE_ENV unset or unexpected included", () => {
+    for (const NODE_ENV of [undefined, "", "staging", "Production", "dev"]) {
+      expect(() => guestCookieSecret({ NODE_ENV })).toThrow("Missing guest cookie setting: GUEST_COOKIE_SECRET");
+    }
   });
 });

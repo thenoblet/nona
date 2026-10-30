@@ -27,6 +27,15 @@ const nextConfig: NextConfig = {
     return [
       { source: "/images/:path*", headers: [week] },
       { source: "/audio/:path*", headers: [week] },
+      // A personal link's question names its guest: never in a shared cache, never in a search index.
+      // Next keeps a Cache-Control set here rather than writing its own.
+      {
+        source: "/my/:token/confirm",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
     ];
   },
   turbopack: {

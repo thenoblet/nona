@@ -7,9 +7,6 @@ import type { Guest } from "@/lib/data/types";
 import { guestCookieSecret } from "@/lib/env";
 import { siteUrl } from "@/lib/site-url";
 
-/** The cookie that recognises a guest's browser. */
-export const GUEST_COOKIE = "nona_guest";
-
 /** The browser's own guest plus up to nine opened through personal links. */
 export const MAX_GUEST_IDS = 10;
 
@@ -46,11 +43,24 @@ export function verifyGuestIds(value: string | undefined): string[] {
   return ids;
 }
 
+function inProduction(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+/**
+ * The name of the cookie that recognises a guest's browser, the one place it is named. Production
+ * uses the __Host- prefix: the browser then takes it only with Secure, Path=/ and no Domain, so no
+ * subdomain can set or read it. Local development runs over plain http, where a Secure cookie never
+ * comes back, so it uses the bare name.
+ */
+export function guestCookieName(): string {
+  return inProduction() ? "__Host-nona_guest" : "nona_guest";
+}
+
 async function writeGuestIds(ids: readonly string[]): Promise<void> {
-  (await cookies()).set(GUEST_COOKIE, signGuestIds(ids), {
+  (await cookies()).set(guestCookieName(), signGuestIds(ids), {
     httpOnly: true,
-    // Local development runs over plain http, where a Secure cookie would never come back.
-    secure: process.env.NODE_ENV === "production",
+    secure: inProduction(),
     sameSite: "lax",
     path: "/",
     maxAge: TWO_YEARS_SECONDS,
@@ -59,7 +69,7 @@ async function writeGuestIds(ids: readonly string[]): Promise<void> {
 
 /** Every guest this browser knows, its own first; none without a cookie or with a forged one. */
 export async function readGuestIds(): Promise<string[]> {
-  return verifyGuestIds((await cookies()).get(GUEST_COOKIE)?.value);
+  return verifyGuestIds((await cookies()).get(guestCookieName())?.value);
 }
 
 /** The browser's own guest id, which its uploads and rate limits use, or null. */
@@ -77,8 +87,9 @@ function withRemembered(ids: readonly string[], guestId: string): string[] {
 
 /**
  * Adds a guest opened through a personal link to this browser's list, so "My uploads" shows theirs
- * too. It never replaces the browser's own id; a browser without one takes this guest as its own.
- * Route handlers and server actions only, since it sets the cookie.
+ * too. It never replaces the browser's own id; a browser without one takes this guest as its own,
+ * which only the confirm page's "Yes, that's me" should ask for (GET /my/[token] never adopts a
+ * guest silently). Route handlers and server actions only, since it sets the cookie.
  */
 export async function rememberGuest(guestId: string): Promise<string[]> {
   if (!isUuid(guestId)) throw new Error("rememberGuest needs a guest id");

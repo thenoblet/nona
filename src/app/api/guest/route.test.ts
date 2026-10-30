@@ -20,7 +20,7 @@ vi.mock("@/lib/data/guests", async (importOriginal) => {
   };
 });
 
-import { readGuestIds, signGuestIds, GUEST_COOKIE } from "@/lib/guests/cookie";
+import { guestCookieName, readGuestIds, signGuestIds } from "@/lib/guests/cookie";
 import { POST } from "./route";
 
 const URL_BASE = "https://example.com/api/guest";
@@ -187,7 +187,7 @@ describe("POST /api/guest", () => {
   });
 
   it("starts a new own guest when the browser's cookie names one that is gone", async () => {
-    browserCookies.values.set(GUEST_COOKIE, signGuestIds([randomUUID()]));
+    browserCookies.values.set(guestCookieName(), signGuestIds([randomUUID()]));
     const response = await post({ displayName: "Akosua" });
     expect(response.status).toBe(200);
     const { guestId } = await response.json();

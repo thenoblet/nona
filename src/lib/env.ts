@@ -89,19 +89,21 @@ export function mediaBaseUrl(env: Env = process.env): string {
   return settings.MEDIA_BASE_URL.replace(/\/+$/, "");
 }
 
-// Development and tests only: never used when NODE_ENV is production.
+// Development and tests only: used only when NODE_ENV is exactly one of these.
 const DEVELOPMENT_GUEST_COOKIE_SECRET = "nona-development-only-guest-cookie-secret";
+const ENVIRONMENTS_WITH_DEVELOPMENT_SECRET = new Set(["development", "test"]);
 
 /**
- * The key that signs the guest cookie: GUEST_COOKIE_SECRET, at least 32 bytes. Production refuses
- * to run without it rather than sign with a known value; development and tests fall back to a fixed
- * one so they work without setup.
+ * The key that signs the guest cookie: GUEST_COOKIE_SECRET, at least 32 bytes. Only development and
+ * tests (next dev and vitest set NODE_ENV) fall back to a fixed one, so they work without setup.
+ * Anything else, production or an unset or unexpected NODE_ENV, refuses rather than sign with a
+ * value anyone can read in this repository.
  */
 export function guestCookieSecret(env: Env = process.env): string {
   const secret = env.GUEST_COOKIE_SECRET;
   if (!secret) {
-    if (env.NODE_ENV === "production") throw new Error("Missing guest cookie setting: GUEST_COOKIE_SECRET");
-    return DEVELOPMENT_GUEST_COOKIE_SECRET;
+    if (ENVIRONMENTS_WITH_DEVELOPMENT_SECRET.has(env.NODE_ENV ?? "")) return DEVELOPMENT_GUEST_COOKIE_SECRET;
+    throw new Error("Missing guest cookie setting: GUEST_COOKIE_SECRET");
   }
   if (Buffer.byteLength(secret, "utf8") < 32) throw new Error("GUEST_COOKIE_SECRET must be at least 32 bytes");
   return secret;

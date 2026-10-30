@@ -1,6 +1,7 @@
 import * as zod from "zod";
 import { ensureOwnGuest, ownGuestId } from "@/lib/guests/cookie";
 import { rateLimitedResponse, takeToken } from "@/lib/guests/rate-limit";
+import { readBodyText } from "@/lib/http/read-body";
 import { describeError } from "@/lib/log-error";
 
 // A guest's id and cookie must never sit in a shared cache such as Cloudflare's.
@@ -25,23 +26,8 @@ function isJson(request: Request): boolean {
 
 /** The body as JSON, an empty one as {}; never reads more than MAX_BODY_BYTES into memory. */
 async function readJson(request: Request): Promise<{ ok: true; value: unknown } | { ok: false; status: 400 | 413 }> {
-  if (Number(request.headers.get("content-length")) > MAX_BODY_BYTES) return { ok: false, status: 413 };
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  if (request.body) {
-    const reader = request.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_BODY_BYTES) {
-        await reader.cancel();
-        return { ok: false, status: 413 };
-      }
-      chunks.push(value);
-    }
-  }
-  const text = Buffer.concat(chunks).toString("utf8");
+  const text = await readBodyText(request, MAX_BODY_BYTES);
+  if (text === null) return { ok: false, status: 413 };
   if (!text.trim()) return { ok: true, value: {} };
   try {
     return { ok: true, value: JSON.parse(text) };

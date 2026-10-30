@@ -31,8 +31,9 @@ const TRACKED_AFTER_CLEANUP = MAX_TRACKED_BUCKETS * 0.8;
 // one app process, so a restart forgets them, which is fine for abuse caps.
 //
 // Each entry is `${bucket}:${guestId}` → the moment that bucket is full again (a generic cell rate
-// algorithm: one number per bucket, in whole milliseconds, so no rounding creeps in). A bucket
-// that is full again is the same as one never used. The Map's order is least recently used first.
+// algorithm: one number per bucket). takeToken floors `now`, so every stored moment is a whole
+// millisecond and no rounding creeps in at the limits. A bucket that is full again is the same as
+// one never used. The Map's order is least recently used first.
 const globalWithLimits = globalThis as typeof globalThis & { __nonaRateLimits?: Map<string, number> };
 
 function trackedBuckets(): Map<string, number> {
@@ -54,20 +55,22 @@ function forgetIdle(tracked: Map<string, number>, now: number): void {
 
 /**
  * Takes one request from the guest's bucket. Refused, it says how many seconds to wait, for the
- * 429's Retry-After. `now` is milliseconds on a monotonic clock; tests pass their own.
+ * 429's Retry-After. `now` is milliseconds on a monotonic clock (performance.now(), which has
+ * fractions; it is floored); tests pass their own.
  */
 export function takeToken(guestId: string, bucket: RateLimitBucket, now: number = performance.now()): RateLimitResult {
+  const nowMs = Math.floor(now);
   const { burst, refillEveryMs } = RATE_LIMITS[bucket];
   const tracked = trackedBuckets();
   const key = `${bucket}:${guestId}`;
   const previous = tracked.get(key);
-  if (previous === undefined && tracked.size >= MAX_TRACKED_BUCKETS) forgetIdle(tracked, now);
+  if (previous === undefined && tracked.size >= MAX_TRACKED_BUCKETS) forgetIdle(tracked, nowMs);
 
-  const fullAt = Math.max(previous ?? now, now);
+  const fullAt = Math.max(previous ?? nowMs, nowMs);
   // Delete, then set, to move the key to the end: the most recently used.
   tracked.delete(key);
   // Allowed while at least one request's worth has refilled: fullAt is at most burst - 1 steps away.
-  const waitMs = fullAt - now - (burst - 1) * refillEveryMs;
+  const waitMs = fullAt - nowMs - (burst - 1) * refillEveryMs;
   if (waitMs > 0) {
     tracked.set(key, fullAt);
     return { allowed: false, retryAfterSeconds: Math.ceil(waitMs / 1000) };

@@ -93,6 +93,14 @@ describe("takeToken", () => {
     }
   });
 
+  it("counts in whole milliseconds even when the clock gives fractions, as performance.now() does", () => {
+    const guestId = randomUUID();
+    expect(takeMany(guestId, "presign", 100, 0.9)).toBe(100);
+    expect(takeToken(guestId, "presign", 499.9).allowed).toBe(false);
+    expect(takeToken(guestId, "presign", 500.2).allowed).toBe(true);
+    expect(trackedBuckets().get(`presign:${guestId}`)).toBe(50_500);
+  });
+
   it("gives nothing back when the clock goes backwards", () => {
     const guestId = randomUUID();
     takeMany(guestId, "start", 100, 60_000);

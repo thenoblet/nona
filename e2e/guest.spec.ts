@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext, type BrowserContext } from "@playwright/test";
 import postgres from "postgres";
 import { TEST_DB_ENV } from "../test/env";
+
+// The e2e server is a production build, so the cookie carries the __Host- prefix.
+const COOKIE = "__Host-nona_guest";
 
 function testDb() {
   return postgres({
@@ -15,45 +18,138 @@ function testDb() {
   });
 }
 
-test("a personal link brings a guest to another phone", async ({ browser, baseURL }) => {
-  const firstPhone = await browser.newContext({ baseURL });
-  const secondPhone = await browser.newContext({ baseURL });
+/** Makes the phone's own guest through the API, as the uploader does, and returns its id and link token. */
+async function makeGuest(request: APIRequestContext, displayName: string): Promise<{ guestId: string; token: string }> {
+  const response = await request.post("/api/guest", { data: { displayName } });
+  expect(response.status()).toBe(200);
+  const { guestId } = await response.json();
   const sql = testDb();
   try {
-    const created = await firstPhone.request.post("/api/guest", { data: { displayName: "E2E Linked Guest" } });
+    const [{ link_token: token }] = await sql`SELECT link_token FROM guests WHERE id = ${guestId}`;
+    return { guestId, token };
+  } finally {
+    await sql.end();
+  }
+}
+
+async function ownGuestOf(phone: BrowserContext): Promise<string> {
+  return (await (await phone.request.post("/api/guest", { data: {} })).json()).guestId;
+}
+
+/** The guest ids in the phone's cookie, its own first. */
+async function cookieIds(phone: BrowserContext): Promise<string[]> {
+  const [cookie] = (await phone.cookies()).filter((stored) => stored.name === COOKIE);
+  return decodeURIComponent(cookie.value).split(".")[0].split(",");
+}
+
+test("the guest cookie is signed, httpOnly, Secure, Lax, __Host- and kept for two years", async ({ browser, baseURL }) => {
+  const phone = await browser.newContext({ baseURL });
+  try {
+    const created = await phone.request.post("/api/guest", { data: { displayName: "E2E Cookie Guest" } });
     expect(created.status()).toBe(200);
     expect(created.headers()["cache-control"]).toBe("private, no-store");
-    const { guestId } = await created.json();
-
-    // The production server's cookie: signed, httpOnly, Secure, Lax, for the whole site, for two years.
     const setCookie = created.headers()["set-cookie"];
-    expect(setCookie).toMatch(/^nona_guest=[0-9a-f-]{36}(%2C[0-9a-f-]{36})*\.[A-Za-z0-9_-]{43};/);
+    expect(setCookie).toMatch(/^__Host-nona_guest=[0-9a-f-]{36}(%2C[0-9a-f-]{36})*\.[A-Za-z0-9_-]{43};/);
     for (const flag of [/; HttpOnly/i, /; Secure/i, /; SameSite=Lax/i, /; Path=\//, /; Max-Age=63072000/]) {
       expect(setCookie).toMatch(flag);
     }
-    const [cookie] = (await firstPhone.cookies()).filter((stored) => stored.name === "nona_guest");
+    expect(setCookie).not.toMatch(/; Domain=/i);
+    const [cookie] = (await phone.cookies()).filter((stored) => stored.name === COOKIE);
     expect(cookie).toMatchObject({ httpOnly: true, secure: true, sameSite: "Lax", path: "/" });
 
     // The same phone asking again is the same guest.
-    expect((await (await firstPhone.request.post("/api/guest", { data: {} })).json()).guestId).toBe(guestId);
+    expect(await ownGuestOf(phone)).toBe((await created.json()).guestId);
+  } finally {
+    await phone.close();
+  }
+});
 
-    const [{ link_token: token }] = await sql`SELECT link_token FROM guests WHERE id = ${guestId}`;
+test("a phone without a guest is asked first, and \"Yes, that's me\" brings the guest to it", async ({ browser, baseURL }) => {
+  const firstPhone = await browser.newContext({ baseURL });
+  const secondPhone = await browser.newContext({ baseURL });
+  try {
+    const { guestId, token } = await makeGuest(firstPhone.request, "E2E Linked Guest");
+
     const redirect = await secondPhone.request.get(`/my/${token}`, { maxRedirects: 0 });
     expect(redirect.status()).toBe(302);
-    expect(redirect.headers()["location"]).toBe("/album?view=mine");
+    expect(redirect.headers()["location"]).toBe(`/my/${token}/confirm`);
     expect(redirect.headers()["cache-control"]).toBe("private, no-store");
+    expect(redirect.headers()["set-cookie"]).toBeUndefined();
 
-    // Opened in the second phone's browser, the link lands on its uploads, and that phone is now the guest.
     const page = await secondPhone.newPage();
-    await page.goto(`/my/${token}`);
+    const confirm = await page.goto(`/my/${token}`);
+    await expect(page).toHaveURL(new RegExp(`/my/${token}/confirm$`));
+    expect(confirm?.headers()["cache-control"]).toBe("private, no-store");
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+    await expect(page.getByRole("heading", { name: "Is this you, E2E Linked Guest?" })).toBeVisible();
+    await expect(page.getByText("This link keeps one guest's photos and videos together on any phone.")).toBeVisible();
+    expect(await secondPhone.cookies()).toEqual([]);
+
+    await page.getByRole("button", { name: "Yes, that's me" }).click();
     await expect(page).toHaveURL(/\/album\?view=mine$/);
-    expect((await (await secondPhone.request.post("/api/guest", { data: {} })).json()).guestId).toBe(guestId);
-    const [{ count }] = await sql`SELECT count(*)::int AS count FROM guests WHERE display_name = 'E2E Linked Guest'`;
-    expect(count).toBe(1);
+    expect(await ownGuestOf(secondPhone)).toBe(guestId);
   } finally {
-    await sql.end();
     await firstPhone.close();
     await secondPhone.close();
+  }
+});
+
+test("\"No, I'm someone else\" gives the phone its own guest and keeps the link's uploads beside it", async ({ browser, baseURL }) => {
+  const ownerPhone = await browser.newContext({ baseURL });
+  const otherPhone = await browser.newContext({ baseURL });
+  const sql = testDb();
+  try {
+    const owner = await makeGuest(ownerPhone.request, "E2E Link Owner");
+
+    const page = await otherPhone.newPage();
+    await page.goto(`/my/${owner.token}`);
+    await page.getByRole("button", { name: "No, I'm someone else" }).click();
+    await expect(page).toHaveURL(/\/album\?view=mine$/);
+
+    const ownId = await ownGuestOf(otherPhone);
+    expect(ownId).not.toBe(owner.guestId);
+    expect(await cookieIds(otherPhone)).toEqual([ownId, owner.guestId]);
+    const [{ display_name: ownerName }] = await sql`SELECT display_name FROM guests WHERE id = ${owner.guestId}`;
+    expect(ownerName).toBe("E2E Link Owner");
+  } finally {
+    await sql.end();
+    await ownerPhone.close();
+    await otherPhone.close();
+  }
+});
+
+test("a phone that has its own guest goes straight to its uploads, keeping its own guest first", async ({ browser, baseURL }) => {
+  const ownerPhone = await browser.newContext({ baseURL });
+  const otherPhone = await browser.newContext({ baseURL });
+  try {
+    const owner = await makeGuest(ownerPhone.request, "E2E Second Owner");
+    const other = await makeGuest(otherPhone.request, "E2E Other Guest");
+
+    const response = await otherPhone.request.get(`/my/${owner.token}`, { maxRedirects: 0 });
+    expect(response.status()).toBe(302);
+    expect(response.headers()["location"]).toBe("/album?view=mine");
+    expect(await cookieIds(otherPhone)).toEqual([other.guestId, owner.guestId]);
+  } finally {
+    await ownerPhone.close();
+    await otherPhone.close();
+  }
+});
+
+test("a choice posted from another site is refused and changes nothing", async ({ browser, baseURL }) => {
+  const ownerPhone = await browser.newContext({ baseURL });
+  const phone = await browser.newContext({ baseURL });
+  try {
+    const owner = await makeGuest(ownerPhone.request, "E2E Targeted Guest");
+    const crossSite: Record<string, string>[] = [{}, { Origin: "https://attacker.example" }];
+    for (const headers of crossSite) {
+      const response = await phone.request.post(`/my/${owner.token}`, { form: { choice: "yes" }, headers, maxRedirects: 0 });
+      expect(response.status()).toBe(403);
+      expect(response.headers()["set-cookie"]).toBeUndefined();
+    }
+    expect(await phone.cookies()).toEqual([]);
+  } finally {
+    await ownerPhone.close();
+    await phone.close();
   }
 });
 
