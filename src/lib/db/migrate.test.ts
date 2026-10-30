@@ -13,6 +13,37 @@ describe("runMigrations", () => {
     const names = rows.map((row) => row.table_name);
     expect(names).toContain("rsvps");
     expect(names).toContain("site_content");
+    for (const table of ["guests", "media", "wishes", "site_images", "upload_events", "settings"]) {
+      expect(names).toContain(table);
+    }
+  });
+
+  it("indexes the album's pages, each guest's uploads and resumable uploads", async () => {
+    await runMigrations();
+    const rows = await sql<{ indexdef: string }[]>`select indexdef from pg_indexes where tablename = 'media'`;
+    const columnLists = rows.map((row) => row.indexdef.replace(/^.* USING btree /, ""));
+    expect(columnLists).toContain(
+      "(purpose, status, listed_at DESC, id DESC) WHERE ((hidden_at IS NULL) AND (deleted_at IS NULL))",
+    );
+    expect(columnLists).toContain("(guest_id)");
+    expect(columnLists).toContain("(guest_id, size_bytes, file_fingerprint) WHERE (status = 'uploading'::text)");
+  });
+
+  it("lets the album read a page after its cursor in order from the index, without sorting", async () => {
+    await runMigrations();
+    const plan = await sql.begin(async (transaction) => {
+      // The test table is nearly empty, so make the planner show what it would do with a full one.
+      await transaction`set local enable_seqscan = off`;
+      return transaction<{ "QUERY PLAN": string }[]>`
+        explain select id from media
+        where purpose = 'album' and status = 'ready' and hidden_at is null and deleted_at is null
+          and (listed_at, id) < (now(), '00000000-0000-4000-8000-000000000000'::uuid)
+        order by listed_at desc, id desc
+        limit 30`;
+    });
+    const steps = plan.map((row) => row["QUERY PLAN"]).join("\n");
+    expect(steps).toContain("media_album_cursor_idx");
+    expect(steps).not.toContain("Sort");
   });
 
   it("lets two runs overlap", async () => {

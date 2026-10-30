@@ -64,18 +64,18 @@ longer changes it on the site. Anything still to confirm is in square brackets, 
 
 ## Data: Postgres, and what is still a stand-in
 
-RSVPs and the site's editable content (times, venues, text) are stored in Postgres. Schema
-migrations (`drizzle/`) run at server start. Confirmation emails go out through Resend from a
-pg-boss job queue, never in the request itself. A reply whose confirmation never reached the queue
-(at most three a day go to one address, or the server restarted at the wrong moment) shows as
-"Not sent"; when the queue starts, it tries the last day's again.
+RSVPs, the site's editable content (times, venues, text) and written wishes are stored in
+Postgres, beside the tables the album will use: guests, media, site images, upload events and
+settings (`src/lib/db/schema.ts`). Schema migrations (`drizzle/`) run at server start.
+Confirmation emails go out through Resend from a pg-boss job queue, never in the request itself.
+A reply whose confirmation never reached the queue (at most three a day go to one address, or the
+server restarted at the wrong moment) shows as "Not sent"; when the queue starts, it tries the
+last day's again.
 
-Two files in `src/lib/data/` are still stubs with their final function signatures, so the pages
-won't change when the real backend arrives:
-
-- `media.ts`: a fixed set of sample photos. Next: Postgres rows pointing at objects in Cloudflare R2.
-- `wishes.ts`: sample wishes plus any sent while the server runs. Next: Postgres, with voice and
-  video in R2.
+The album is still a stub with its final function signatures, so the pages won't change when the
+real backend arrives: `listMedia` and `mediaStats` in `src/lib/data/media.ts` return a fixed set
+of sample photos. Next: the media rows, with their files in Cloudflare R2. Voice and video wishes
+are next too.
 
 Search for `TODO` to find the other placeholders: uploads (presigned multipart to R2), downloads
 (per-celebration zips, built by a separate media worker), voice and video recording, the device
@@ -104,6 +104,7 @@ npm install
 cp .env.example .env.local      # local settings; the Postgres and MinIO values match docker compose
 docker compose up -d db minio   # local Postgres, and MinIO standing in for R2
 npm run storage:init            # creates MinIO's two buckets (safe to run again)
+npm run seed                    # optional: a sample guest, their photos and a few wishes (safe to run again)
 npm run dev                     # http://localhost:3000
 npm run lint
 npm run build

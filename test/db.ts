@@ -9,7 +9,7 @@ export async function resetDb(): Promise<void> {
   }
   const sql = postgres({ ...config, max: 1 });
   try {
-    await sql`TRUNCATE rsvps, rsvp_flag_dismissals, site_content`;
+    await sql`TRUNCATE rsvps, rsvp_flag_dismissals, site_content, guests, media, wishes, site_images, upload_events, settings`;
   } finally {
     await sql.end();
   }
