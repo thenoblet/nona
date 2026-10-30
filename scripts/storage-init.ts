@@ -4,13 +4,13 @@
  *
  *   docker compose up -d minio && npm run storage:init
  *
- * It uses the R2_* settings from the environment, falling back to docker compose's MinIO for any
- * that are unset. It refuses R2 itself: there, the buckets, CORS and public domain are made in
- * Cloudflare.
+ * It waits up to 30 s for a MinIO that is still starting. It uses the R2_* settings from the
+ * environment, falling back to docker compose's MinIO for any that are unset. It refuses R2 itself:
+ * there, the buckets, CORS and public domain are made in Cloudflare.
  */
 import { CreateBucketCommand, PutBucketPolicyCommand } from "@aws-sdk/client-s3";
 import { storageConfig } from "@/lib/env";
-import { createStorageClient } from "@/lib/storage/client";
+import { createStorageClient, withDeadline } from "@/lib/storage/client";
 
 // docker compose's MinIO, with MinIO's well-known default keys (not secrets).
 const LOCAL_MINIO = {
@@ -29,9 +29,28 @@ function settingsWithLocalFallback(): Record<string, string | undefined> {
   return settings;
 }
 
+/** Waits for MinIO's liveness check to answer 200, as it does once MinIO is serving requests. */
+async function waitForMinio(endpoint: string): Promise<void> {
+  const started = performance.now();
+  for (;;) {
+    try {
+      const response = await fetch(new URL("/minio/health/live", endpoint), {
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (response.ok) return;
+    } catch {
+      // Not listening yet.
+    }
+    if (performance.now() - started > 30_000) {
+      throw new Error(`MinIO at ${endpoint} wasn't ready after 30 s`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 async function createBucketIfMissing(client: ReturnType<typeof createStorageClient>, bucket: string) {
   try {
-    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+    await client.send(new CreateBucketCommand({ Bucket: bucket }), withDeadline());
     console.log(`${bucket}: created`);
   } catch (error) {
     if (error instanceof Error && error.name === "BucketAlreadyOwnedByYou") {
@@ -52,6 +71,7 @@ async function main() {
 
   const client = createStorageClient(config);
   try {
+    await waitForMinio(config.endpoint);
     await createBucketIfMissing(client, config.privateBucket);
     await createBucketIfMissing(client, config.publicBucket);
     const anyoneMayRead = {
@@ -67,6 +87,7 @@ async function main() {
     };
     await client.send(
       new PutBucketPolicyCommand({ Bucket: config.publicBucket, Policy: JSON.stringify(anyoneMayRead) }),
+      withDeadline(),
     );
     console.log(`${config.publicBucket}: anyone can read its objects`);
   } catch (error) {

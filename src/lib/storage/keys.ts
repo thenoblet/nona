@@ -59,6 +59,24 @@ export function manifestKey(mediaId: string): string {
   return `manifests/${safePart("mediaId", mediaId)}.json`;
 }
 
+// The shapes the builders above make, so an operation can refuse a key meant for elsewhere.
+const ORIGINAL_KEY = /^originals\/[A-Za-z0-9_-]+\.[A-Za-z0-9]+$/;
+const DERIVED_KEY = new RegExp(
+  `^derived/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/(${DERIVED_VARIANTS.join("|")})\\.[A-Za-z0-9]+$`,
+);
+
+/** The key, if originalKey could have made it; throws otherwise. */
+export function assertOriginalKey(key: string): string {
+  if (!ORIGINAL_KEY.test(key)) throw new Error(`Refusing ${JSON.stringify(key)}: not an originals/ key`);
+  return key;
+}
+
+/** The key, if derivedKey could have made it; throws otherwise. */
+export function assertDerivedKey(key: string): string {
+  if (!DERIVED_KEY.test(key)) throw new Error(`Refusing ${JSON.stringify(key)}: not a derived/ key`);
+  return key;
+}
+
 /** The address anyone can load a public-bucket key from: MEDIA_BASE_URL plus the key. */
 export function publicUrl(key: string, env: Record<string, string | undefined> = process.env): string {
   return `${mediaBaseUrl(env)}/${key}`;

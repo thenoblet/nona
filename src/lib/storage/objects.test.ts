@@ -1,16 +1,19 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import { DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { storageConfig } from "@/lib/env";
 import { storageClient } from "./client";
-import { derivedKey, originalKey, publicUrl } from "./keys";
+import { derivedKey, manifestKey, originalKey, publicUrl } from "./keys";
+import { fitOriginalMetadata, METADATA_TEXT_BYTES, type OriginalMetadata } from "./metadata";
 import {
   abortMultipart,
   completeMultipart,
   deletePublicObjects,
+  DOWNLOAD_URL_SECONDS,
   headOriginal,
   listUploadedParts,
+  PLAYBACK_URL_SECONDS,
   presignGet,
   presignParts,
   putPublicObject,
@@ -40,6 +43,17 @@ function newOriginalKey(extension = "jpg"): string {
   const key = originalKey(randomUUID(), extension);
   createdOriginals.push(key);
   return key;
+}
+
+/** The metadata Task 7 writes for a guest's upload. */
+function guestUpload(overrides: Partial<OriginalMetadata> = {}): OriginalMetadata {
+  return {
+    guestId: randomUUID(),
+    uploaderName: "Ama",
+    originalFilename: "IMG_0001.JPG",
+    startedAt: new Date("2026-12-05T15:04:05.000Z"),
+    ...overrides,
+  };
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -89,12 +103,7 @@ async function putPartFromBrowser(url: string, bytes: Buffer): Promise<string> {
 }
 
 /** Uploads a whole small file as a one-part multipart upload, as every upload is. */
-async function uploadWhole(
-  key: string,
-  contentType: string,
-  metadata: Record<string, string>,
-  bytes: Buffer,
-) {
+async function uploadWhole(key: string, contentType: string, metadata: OriginalMetadata, bytes: Buffer) {
   const uploadId = await startMultipart(key, contentType, metadata);
   const [part] = await presignParts(key, uploadId, [1]);
   const etag = await putPartFromBrowser(part.url, bytes);
@@ -107,7 +116,7 @@ describe("a multipart upload", () => {
     const firstPart = randomBytes(FIVE_MEBIBYTES);
     const lastPart = randomBytes(1000);
 
-    const uploadId = await startMultipart(key, "video/mp4", {});
+    const uploadId = await startMultipart(key, "video/mp4", guestUpload());
     const urls = await presignParts(key, uploadId, [1, 2]);
     expect(urls.map((entry) => entry.partNumber)).toEqual([1, 2]);
     const firstEtag = await putPartFromBrowser(urls[0].url, firstPart);
@@ -132,7 +141,7 @@ describe("a multipart upload", () => {
 
   it("presigns at most 20 parts at a time, each for an hour, signed for the host alone", async () => {
     const key = newOriginalKey();
-    const uploadId = await startMultipart(key, "image/jpeg", {});
+    const uploadId = await startMultipart(key, "image/jpeg", guestUpload());
     const partNumbers = Array.from({ length: 20 }, (_value, index) => index + 1);
 
     const urls = await presignParts(key, uploadId, partNumbers);
@@ -157,7 +166,7 @@ describe("a multipart upload", () => {
 
   it("aborts, and aborting again is fine", async () => {
     const key = newOriginalKey();
-    const uploadId = await startMultipart(key, "image/jpeg", {});
+    const uploadId = await startMultipart(key, "image/jpeg", guestUpload());
     await abortMultipart(key, uploadId);
     await expect(listUploadedParts(key, uploadId)).rejects.toMatchObject({ name: "NoSuchUpload" });
     await expect(abortMultipart(key, uploadId)).resolves.toBeUndefined();
@@ -167,12 +176,10 @@ describe("a multipart upload", () => {
 describe("headOriginal", () => {
   it("reads back the original's metadata, with names and filenames in any script", async () => {
     const key = newOriginalKey("heic");
-    const metadata = {
-      "guest-id": randomUUID(),
-      "uploader-name": "Ama Ɔdɔ & Kwame 😊",
-      "original-filename": "IMG_0001 (copy) 100% é.HEIC",
-      "started-at": "2026-12-05T15:04:05.000Z",
-    };
+    const metadata = guestUpload({
+      uploaderName: "Ama Ɔdɔ & Kwame 😊",
+      originalFilename: "IMG_0001 (copy) 100% é.HEIC",
+    });
     await uploadWhole(key, "image/heic", metadata, randomBytes(2048));
 
     expect(await headOriginal(key)).toEqual({
@@ -184,16 +191,47 @@ describe("headOriginal", () => {
     });
   });
 
-  it("is null when there is no such original", async () => {
-    expect(await headOriginal(originalKey(randomUUID(), "jpg"))).toBeNull();
+  it("keeps a long name and filename to S3's metadata limit, cut between characters", async () => {
+    // Encoded, Ɔ is 6 bytes and an emoji 12: in full these are 2,400 and 2,412 bytes, and S3
+    // refuses more than 2 KB in all.
+    const metadata = guestUpload({
+      uploaderName: "Ɔ".repeat(400),
+      originalFilename: `${"😊".repeat(200)}.jpg`,
+    });
+    const fitted = fitOriginalMetadata(metadata);
+    expect(fitted.uploaderName).toBe("Ɔ".repeat(Math.floor(METADATA_TEXT_BYTES / 6)));
+    expect(fitted.originalFilename).toBe("😊".repeat(Math.floor(METADATA_TEXT_BYTES / 12)));
+
+    const key = newOriginalKey();
+    await uploadWhole(key, "image/jpeg", metadata, randomBytes(64));
+    expect((await headOriginal(key))?.metadata).toEqual(fitted);
   });
 
-  it("refuses a metadata name that S3 would lower-case or mangle", async () => {
-    for (const name of ["guestId", "guest id", "", "gäst"]) {
-      await expect(startMultipart(newOriginalKey(), "image/jpeg", { [name]: "value" })).rejects.toThrow(
-        "metadata",
+  it("keeps no guest id for an upload that isn't a guest's, and no name when none was given", async () => {
+    const key = newOriginalKey();
+    const metadata = guestUpload({ guestId: null, uploaderName: "" });
+    await uploadWhole(key, "image/jpeg", metadata, randomBytes(64));
+    expect((await headOriginal(key))?.metadata).toEqual(metadata);
+  });
+
+  it("refuses a guest id that isn't plain letters, digits, - and _", async () => {
+    for (const guestId of ["", "guest id", "gäst", "a/b", "x".repeat(129)]) {
+      await expect(startMultipart(newOriginalKey(), "image/jpeg", guestUpload({ guestId }))).rejects.toThrow(
+        "guest id",
       );
     }
+  });
+
+  it("reads no metadata from an original that startMultipart didn't start", async () => {
+    const key = newOriginalKey();
+    await storageClient().send(
+      new PutObjectCommand({ Bucket: storageConfig().privateBucket, Key: key, Body: "bytes" }),
+    );
+    expect(await headOriginal(key)).toMatchObject({ size: 5, metadata: null });
+  });
+
+  it("is null when there is no such original", async () => {
+    expect(await headOriginal(originalKey(randomUUID(), "jpg"))).toBeNull();
   });
 });
 
@@ -201,12 +239,12 @@ describe("presignGet", () => {
   const bytes = randomBytes(512);
   const key = newOriginalKey();
 
-  beforeAll(() => uploadWhole(key, "image/jpeg", {}, bytes));
+  beforeAll(() => uploadWhole(key, "image/jpeg", guestUpload(), bytes));
 
   it("names the download with the filename it is given", async () => {
     const url = await presignGet(key, {
       filename: "NONA26-reception-ab12cd.jpg",
-      expiresInSeconds: 6 * 3600,
+      expiresInSeconds: DOWNLOAD_URL_SECONDS,
     });
     expect(new URL(url).searchParams.get("X-Amz-Expires")).toBe("21600");
 
@@ -227,7 +265,7 @@ describe("presignGet", () => {
   });
 
   it("leaves a link without a filename to play in the page", async () => {
-    const url = await presignGet(key, { expiresInSeconds: 2 * 3600 });
+    const url = await presignGet(key, { expiresInSeconds: PLAYBACK_URL_SECONDS });
     expect(new URL(url).searchParams.get("X-Amz-Expires")).toBe("7200");
     const response = await fetch(url);
     expect(response.status).toBe(200);
@@ -237,6 +275,13 @@ describe("presignGet", () => {
   it("refuses a lifetime outside one second to seven days", async () => {
     for (const expiresInSeconds of [0, -1, 1.5, 7 * 24 * 3600 + 1]) {
       await expect(presignGet(key, { expiresInSeconds })).rejects.toThrow("expiresInSeconds");
+    }
+  });
+
+  it("presigns originals only, never a manifest or a derived file", async () => {
+    const mediaId = randomUUID();
+    for (const elsewhere of [manifestKey(mediaId), derivedKey(mediaId, "content-hash", "view", "webp")]) {
+      await expect(presignGet(elsewhere, { expiresInSeconds: 60 })).rejects.toThrow("originals/");
     }
   });
 });
@@ -282,5 +327,30 @@ describe("public objects", () => {
 
   it("deleting none is a no-op", async () => {
     await expect(deletePublicObjects([])).resolves.toBeUndefined();
+  });
+});
+
+describe("every operation", () => {
+  it("refuses a key from the wrong place before it calls R2", async () => {
+    const mediaId = randomUUID();
+    const original = originalKey(mediaId, "jpg");
+    const derived = derivedKey(mediaId, "content-hash", "thumb", "webp");
+    const manifest = manifestKey(mediaId);
+    const notOriginals = [derived, manifest, "originals/../manifests/x.json", "zips/all.zip"];
+    const notDerived = [original, manifest, "derived/x.webp"];
+
+    for (const key of notOriginals) {
+      await expect(startMultipart(key, "image/jpeg", guestUpload()), key).rejects.toThrow("originals/");
+      await expect(presignParts(key, "upload-id", [1]), key).rejects.toThrow("originals/");
+      await expect(listUploadedParts(key, "upload-id"), key).rejects.toThrow("originals/");
+      await expect(completeMultipart(key, "upload-id", []), key).rejects.toThrow("originals/");
+      await expect(abortMultipart(key, "upload-id"), key).rejects.toThrow("originals/");
+      await expect(headOriginal(key), key).rejects.toThrow("originals/");
+      await expect(readOriginalStream(key), key).rejects.toThrow("originals/");
+    }
+    for (const key of notDerived) {
+      await expect(putPublicObject(key, "bytes", "text/plain"), key).rejects.toThrow("derived/");
+      await expect(deletePublicObjects([derived, key]), key).rejects.toThrow("derived/");
+    }
   });
 });

@@ -31,6 +31,13 @@ services:
     # A volume, not the container's own layer: MinIO's renames fail on overlayfs.
     volumes:
       - minio-data:/data
+    # Healthy once MinIO answers (`docker compose up -d --wait minio` waits for it). The image
+    # ships MinIO's own client, mc, whose built-in `local` alias is this server.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
 volumes:
   minio-data:

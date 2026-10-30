@@ -101,7 +101,7 @@ Set the laptop itself never to sleep as well: the wake lock only holds while the
 
 ```bash
 npm install
-cp .env.example .env.local      # local settings; the Postgres values match docker compose
+cp .env.example .env.local      # local settings; the Postgres and MinIO values match docker compose
 docker compose up -d db minio   # local Postgres, and MinIO standing in for R2
 npm run storage:init            # creates MinIO's two buckets (safe to run again)
 npm run dev                     # http://localhost:3000

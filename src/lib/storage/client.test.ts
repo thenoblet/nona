@@ -59,6 +59,12 @@ describe("storageClient", () => {
 });
 
 describe("createStorageClient", () => {
+  it("makes two attempts in all, so a silent R2 can't hold a call for three request timeouts", async () => {
+    const client = createStorageClient(storageConfig());
+    expect(await client.config.maxAttempts()).toBe(2);
+    client.destroy();
+  });
+
   it("cuts off a request that gets no answer within 10 seconds", async () => {
     const client = createStorageClient({ ...storageConfig(), endpoint: `http://127.0.0.1:${port}` });
     // The client's own HTTP handler, so the SDK's retries don't multiply the wait.

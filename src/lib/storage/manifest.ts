@@ -3,7 +3,7 @@ import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import * as zod from "zod";
 import { EVENT_IDS, type EventId } from "@/lib/content/schema";
 import { storageConfig } from "@/lib/env";
-import { storageClient } from "./client";
+import { storageClient, withDeadline, type CallOptions } from "./client";
 import { manifestKey } from "./keys";
 
 /**
@@ -21,6 +21,9 @@ export type MediaManifest = {
   deletedAt: Date | null;
 };
 
+/** A manifest as read back, with the time it was last written. */
+export type StoredManifest = MediaManifest & { updatedAt: Date };
+
 const MANIFEST_VERSION = 1;
 
 const isoTime = zod.iso.datetime().transform((value) => new Date(value));
@@ -34,10 +37,15 @@ const storedManifest = zod.object({
   hiddenBy: zod.string().nullable(),
   removedByUploader: zod.boolean(),
   deletedAt: isoTime.nullable(),
+  updatedAt: isoTime,
 });
 
-/** Replaces the item's manifest with this one. */
-export async function writeManifest(mediaId: string, manifest: MediaManifest): Promise<void> {
+/** Replaces the item's manifest with this one, stamped with the time of writing. */
+export async function writeManifest(
+  mediaId: string,
+  manifest: MediaManifest,
+  options?: CallOptions,
+): Promise<void> {
   const key = manifestKey(mediaId);
   const stored = {
     version: MANIFEST_VERSION,
@@ -48,6 +56,7 @@ export async function writeManifest(mediaId: string, manifest: MediaManifest): P
     hiddenBy: manifest.hiddenBy,
     removedByUploader: manifest.removedByUploader,
     deletedAt: manifest.deletedAt?.toISOString() ?? null,
+    updatedAt: new Date().toISOString(),
   };
   await storageClient().send(
     new PutObjectCommand({
@@ -56,15 +65,22 @@ export async function writeManifest(mediaId: string, manifest: MediaManifest): P
       Body: JSON.stringify(stored),
       ContentType: "application/json",
     }),
+    withDeadline(options),
   );
 }
 
-/** The item's manifest, or null when none has been written. */
-export async function readManifest(mediaId: string): Promise<MediaManifest | null> {
+/**
+ * The item's manifest, or null when none has been written. Throws when the file names another
+ * item, so a manifest copied to the wrong key is never taken for this one.
+ */
+export async function readManifest(mediaId: string, options?: CallOptions): Promise<StoredManifest | null> {
+  const key = manifestKey(mediaId);
   let text: string | undefined;
   try {
+    // The deadline covers reading the body too.
     const response = await storageClient().send(
-      new GetObjectCommand({ Bucket: storageConfig().privateBucket, Key: manifestKey(mediaId) }),
+      new GetObjectCommand({ Bucket: storageConfig().privateBucket, Key: key }),
+      withDeadline(options),
     );
     text = await response.Body?.transformToString();
   } catch (error) {
@@ -72,6 +88,9 @@ export async function readManifest(mediaId: string): Promise<MediaManifest | nul
     throw error;
   }
   const stored = storedManifest.parse(JSON.parse(text ?? "null"));
+  if (stored.mediaId !== mediaId) {
+    throw new Error(`The manifest at ${key} is for ${JSON.stringify(stored.mediaId)}, not ${mediaId}`);
+  }
   return {
     celebration: stored.celebration,
     celebrationSetByAdmin: stored.celebrationSetByAdmin,
@@ -79,5 +98,6 @@ export async function readManifest(mediaId: string): Promise<MediaManifest | nul
     hiddenBy: stored.hiddenBy,
     removedByUploader: stored.removedByUploader,
     deletedAt: stored.deletedAt,
+    updatedAt: stored.updatedAt,
   };
 }

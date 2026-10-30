@@ -4,10 +4,13 @@ import { storageConfig, type StorageConfig } from "@/lib/env";
 
 /**
  * An S3 client for R2 (MinIO locally).
- * - Connecting is cut off after 5 s, and a request whose answer hasn't begun 10 s after it started
- *   (sending its body included). The SDK only logs a breached requestTimeout unless
- *   throwOnRequestTimeout is set, so it is. It retries a timed-out request (three attempts in all).
- *   A response body that stalls later is cut off by cutOffWhenIdle.
+ * - Each attempt: connecting is cut off after 5 s, and an attempt whose answer hasn't begun 10 s
+ *   after it started (sending its body included). The SDK only logs a breached requestTimeout
+ *   unless throwOnRequestTimeout is set, so it is. That timeout stops once the answer's headers
+ *   arrive, so it doesn't cover the body: withDeadline (a whole call) and cutOffWhenIdle (a
+ *   download) do.
+ * - Two attempts in all, so a call against a silent R2 gives up after about 20 s, or at its 15 s
+ *   deadline, whichever comes first.
  * - Path-style addresses (endpoint/bucket/key), which both MinIO and R2 accept.
  * - Checksums only where S3 requires them: a presigned part URL then carries no checksum
  *   parameter, so the phone's PUT needs nothing but the bytes.
@@ -20,6 +23,7 @@ export function createStorageClient(config: StorageConfig): S3Client {
     forcePathStyle: true,
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
+    maxAttempts: 2,
     requestHandler: {
       connectionTimeout: 5_000,
       requestTimeout: 10_000,
@@ -36,6 +40,21 @@ const globalWithStorage = globalThis as typeof globalThis & { __nonaStorage?: S3
 export function storageClient(): S3Client {
   globalWithStorage.__nonaStorage ??= createStorageClient(storageConfig());
   return globalWithStorage.__nonaStorage;
+}
+
+/** How long a storage call that isn't a stream may take in all, by default. */
+export const CALL_DEADLINE_MILLISECONDS = 15_000;
+
+/** Every storage call takes an optional signal; aborting it ends the call. */
+export type CallOptions = { signal?: AbortSignal };
+
+/**
+ * The send options for a call that isn't a stream: the caller's signal, or else a 15 s deadline
+ * for the whole call, covering the answer's headers and body and the retry. A route that makes
+ * several calls can pass one signal to share a single budget between them.
+ */
+export function withDeadline(options: CallOptions = {}): { abortSignal: AbortSignal } {
+  return { abortSignal: options.signal ?? AbortSignal.timeout(CALL_DEADLINE_MILLISECONDS) };
 }
 
 /**

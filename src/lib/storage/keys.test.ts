@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { DERIVED_VARIANTS, derivedKey, manifestKey, originalKey, publicUrl } from "./keys";
+import {
+  assertDerivedKey,
+  assertOriginalKey,
+  DERIVED_VARIANTS,
+  derivedKey,
+  manifestKey,
+  originalKey,
+  publicUrl,
+} from "./keys";
 
 const mediaId = "0b9f5c1e-7d1a-4a57-9a43-2f1c3e8d6b20";
 const contentHash = "9f86d081884c7d659a2feaa0c55ad015";
@@ -86,5 +94,38 @@ describe("publicUrl", () => {
 
   it("reads MEDIA_BASE_URL from the environment by default", () => {
     expect(publicUrl("derived/a/b/view.webp")).toBe(`${process.env.MEDIA_BASE_URL}/derived/a/b/view.webp`);
+  });
+});
+
+describe("assertOriginalKey and assertDerivedKey", () => {
+  const original = originalKey(mediaId, "heic");
+  const derived = derivedKey(mediaId, contentHash, "poster-view", "webp");
+
+  it("accept the keys the builders make", () => {
+    expect(assertOriginalKey(original)).toBe(original);
+    expect(assertDerivedKey(derived)).toBe(derived);
+  });
+
+  it("refuse a key from anywhere else", () => {
+    for (const key of [
+      derived,
+      manifestKey(mediaId),
+      "originals/a/b.jpg",
+      "originals/../x.jpg",
+      "zips/a.zip",
+      "",
+    ]) {
+      expect(() => assertOriginalKey(key), key).toThrow("originals/");
+    }
+    for (const key of [
+      original,
+      manifestKey(mediaId),
+      `derived/${mediaId}/${contentHash}/original.jpg`,
+      `derived/${mediaId}/thumb.webp`,
+      `derived/${mediaId}/../${contentHash}/thumb.webp`,
+      "",
+    ]) {
+      expect(() => assertDerivedKey(key), key).toThrow("derived/");
+    }
   });
 });

@@ -78,7 +78,7 @@ jobs:
             cgr.dev/chainguard/minio@sha256:3b6e40c30ecd5cea627e382ff0b82ca841f58c52294578787043ee80c8ef7c82 \
             server /data
           for attempt in $(seq 1 30); do
-            if curl -fs -o /dev/null http://localhost:9000/minio/health/live; then exit 0; fi
+            if curl -fs --max-time 2 -o /dev/null http://localhost:9000/minio/health/live; then exit 0; fi
             sleep 1
           done
           echo "MinIO did not become ready in 30 s"
