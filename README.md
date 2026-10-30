@@ -46,6 +46,7 @@ src/
     db/ content/       Postgres client, schema, migrations; editable site content
     data/              rsvp.ts (Postgres), media.ts and wishes.ts (stand-ins, see below)
     email/ jobs/       confirmation emails (Resend), sent from a pg-boss job queue
+    storage/           Cloudflare R2 (MinIO locally): object keys, multipart uploads, manifests
     calendar/          calendar files for each celebration
     qr.ts              album QR codes
   fonts/               self-hosted fonts (no request to Google)
@@ -100,9 +101,10 @@ Set the laptop itself never to sleep as well: the wake lock only holds while the
 
 ```bash
 npm install
-cp .env.example .env.local   # local settings; the Postgres values match docker compose
-docker compose up -d db      # local Postgres
-npm run dev                  # http://localhost:3000
+cp .env.example .env.local      # local settings; the Postgres values match docker compose
+docker compose up -d db minio   # local Postgres, and MinIO standing in for R2
+npm run storage:init            # creates MinIO's two buckets (safe to run again)
+npm run dev                     # http://localhost:3000
 npm run lint
 npm run build
 ```
@@ -110,8 +112,9 @@ npm run build
 ### Tests
 
 ```bash
-docker compose up -d db
-npm test             # Vitest, against the nona_test database
+docker compose up -d db minio
+npm run storage:init
+npm test             # Vitest, against the nona_test database and MinIO
 npm run test:e2e     # Playwright, against a production build on port 3100
 ```
 

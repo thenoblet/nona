@@ -1,9 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import { TEST_DB_ENV } from "./test/env";
+import { TEST_DB_ENV, TEST_STORAGE_ENV } from "./test/env";
 
 // globalSetup runs in the main process and doesn't see test.env, so set it here.
-Object.assign(process.env, TEST_DB_ENV);
+Object.assign(process.env, TEST_DB_ENV, TEST_STORAGE_ENV);
 
 const fromRoot = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 

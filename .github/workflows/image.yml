@@ -46,6 +46,13 @@ jobs:
       POSTGRES_DB: nona_test
       POSTGRES_USER: nona
       POSTGRES_PASSWORD: nona
+      # The MinIO started below, with MinIO's well-known default keys (not secrets).
+      R2_ENDPOINT: http://localhost:9000
+      R2_ACCESS_KEY_ID: minioadmin
+      R2_SECRET_ACCESS_KEY: minioadmin
+      R2_PRIVATE_BUCKET: nona-private
+      R2_PUBLIC_BUCKET: nona-public
+      MEDIA_BASE_URL: http://localhost:9000/nona-public
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -60,7 +67,27 @@ jobs:
         env:
           PGPASSWORD: nona
 
+      # MinIO stands in for R2. A service container can't be given MinIO's `server /data`
+      # command, so it starts here: the image pinned in docker-compose.yml, on a volume because
+      # MinIO's renames fail on the container's own overlay layer.
+      - name: Start MinIO
+        run: |
+          docker run --detach --name minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$R2_ACCESS_KEY_ID" --env MINIO_ROOT_PASSWORD="$R2_SECRET_ACCESS_KEY" \
+            --volume minio-data:/data \
+            cgr.dev/chainguard/minio@sha256:3b6e40c30ecd5cea627e382ff0b82ca841f58c52294578787043ee80c8ef7c82 \
+            server /data
+          for attempt in $(seq 1 30); do
+            if curl -fs -o /dev/null http://localhost:9000/minio/health/live; then exit 0; fi
+            sleep 1
+          done
+          echo "MinIO did not become ready in 30 s"
+          docker logs minio
+          exit 1
+
       - run: npm ci
+      # Creates MinIO's two buckets and makes the public one readable by anyone.
+      - run: npm run storage:init
       # Generates next-env.d.ts and route types, which a fresh checkout lacks.
       - run: npx next typegen
       - run: npx tsc --noEmit
