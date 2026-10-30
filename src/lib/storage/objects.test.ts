@@ -1,9 +1,11 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
-import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { storageConfig } from "@/lib/env";
-import { storageClient } from "./client";
+import { createStorageClient, storageClient } from "./client";
 import { derivedKey, manifestKey, originalKey, publicUrl } from "./keys";
 import { fitOriginalMetadata, METADATA_TEXT_BYTES, type OriginalMetadata } from "./metadata";
 import {
@@ -198,12 +200,56 @@ describe("a multipart upload", () => {
     expect((await headOriginal(key))?.size).toBe(FIVE_MEBIBYTES + 1000);
   }, 30_000);
 
-  it("aborts, and aborting again is fine", async () => {
+  it("aborts, after which the upload can't be completed, and aborting again is fine", async () => {
     const key = newOriginalKey();
     const uploadId = await startMultipart(key, "image/jpeg", guestUpload());
-    await abortMultipart(key, uploadId);
+    const [part] = await presignParts(key, uploadId, [{ partNumber: 1, size: 2048 }]);
+    const etag = await putPartFromBrowser(part.url, randomBytes(2048));
+
+    expect(await abortMultipart(key, uploadId)).toBe("aborted");
     await expect(listUploadedParts(key, uploadId)).rejects.toMatchObject({ name: "NoSuchUpload" });
-    await expect(abortMultipart(key, uploadId)).resolves.toBeUndefined();
+    // What a cancel relies on: once the abort returns, no complete can make the original.
+    await expect(completeMultipart(key, uploadId, [{ partNumber: 1, etag }])).rejects.toMatchObject({
+      name: "NoSuchUpload",
+    });
+    expect(await headOriginal(key)).toBeNull();
+    expect(["aborted", "gone"]).toContain(await abortMultipart(key, uploadId));
+  });
+
+  it("leaves the original of an upload already completed as it is, whatever the abort answers", async () => {
+    // MinIO accepts the abort ("aborted"); a store may say NoSuchUpload ("gone"). Either way,
+    // the original stays, so a cancel checks for it rather than trusting the answer.
+    const key = newOriginalKey();
+    const uploadId = await startMultipart(key, "image/jpeg", guestUpload());
+    const [part] = await presignParts(key, uploadId, [{ partNumber: 1, size: 2048 }]);
+    const etag = await putPartFromBrowser(part.url, randomBytes(2048));
+    await completeMultipart(key, uploadId, [{ partNumber: 1, etag }]);
+    expect(["aborted", "gone"]).toContain(await abortMultipart(key, uploadId));
+    expect((await headOriginal(key))?.size).toBe(2048);
+  });
+
+  it("says gone when the store answers NoSuchUpload, and throws on any other error", async () => {
+    // A stand-in store whose every answer is the error named in the path's upload id.
+    const answering = createServer((request, response) => {
+      const code = new URL(request.url ?? "/", "http://localhost").searchParams.get("uploadId");
+      response.writeHead(code === "NoSuchUpload" ? 404 : 500, { "content-type": "application/xml" });
+      response.end(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>m</Message></Error>`);
+    });
+    await new Promise<void>((resolve) => answering.listen(0, "127.0.0.1", resolve));
+    const { port } = answering.address() as AddressInfo;
+    const globalWithStorage = globalThis as { __nonaStorage?: S3Client };
+    const realClient = globalWithStorage.__nonaStorage;
+    globalWithStorage.__nonaStorage = createStorageClient({ ...storageConfig(), endpoint: `http://127.0.0.1:${port}` });
+    try {
+      const key = newOriginalKey();
+      expect(await abortMultipart(key, "NoSuchUpload")).toBe("gone");
+      await expect(abortMultipart(key, "InternalError")).rejects.toMatchObject({ name: "InternalError" });
+    } finally {
+      globalWithStorage.__nonaStorage?.destroy();
+      globalWithStorage.__nonaStorage = realClient;
+      answering.closeAllConnections();
+      await new Promise((resolve) => answering.close(resolve));
+    }
   });
 });
 

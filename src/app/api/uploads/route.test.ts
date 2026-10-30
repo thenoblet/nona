@@ -116,7 +116,14 @@ function smallFile(overrides: Partial<StartBody> = {}): StartBody {
   return photo({ size: 4000, ...overrides });
 }
 
-const start = (body: unknown) => startRoute(jsonRequest("/api/uploads", "POST", body));
+/** Every upload the tests started, so afterEach clears what each left in MinIO, row or no row. */
+const startedUploads: Session[] = [];
+
+async function start(body: unknown): Promise<Response> {
+  const response = await startRoute(jsonRequest("/api/uploads", "POST", body));
+  if (response.status === 200) startedUploads.push(await response.clone().json());
+  return response;
+}
 const presign = (mediaId: string, partNumbers: unknown) =>
   presignRoute(jsonRequest(`/api/uploads/${mediaId}/parts`, "POST", { partNumbers }), routeContext(mediaId));
 const listParts = (mediaId: string) =>
@@ -193,17 +200,19 @@ async function otherBrowser(displayName = "Kofi Mensah"): Promise<CookieJar> {
   return jar;
 }
 
-/** Removes what the tests left in MinIO: unfinished uploads, originals and manifests. */
+/**
+ * Removes what the tests left in MinIO: unfinished uploads, originals and manifests, both of the
+ * rows still there and of every upload started (a cancel or a race deletes its row, not its files).
+ */
 async function cleanUpStorage(): Promise<void> {
   const rows = await getDb()
-    .select({ id: media.id, key: media.originalKey, status: media.status, uploadId: media.multipartUploadId })
+    .select({ mediaId: media.id, key: media.originalKey, uploadId: media.multipartUploadId })
     .from(media);
+  const uploads = [...rows, ...startedUploads.splice(0)];
   await Promise.all(
-    rows
-      .filter((row) => row.status === "uploading" && row.uploadId)
-      .map((row) => abortMultipart(row.key, row.uploadId ?? "").catch(() => {})),
+    uploads.map((upload) => (upload.uploadId ? abortMultipart(upload.key, upload.uploadId).catch(() => {}) : null)),
   );
-  const keys = rows.flatMap((row) => [row.key, manifestKey(row.id)]);
+  const keys = [...new Set(uploads.flatMap((upload) => [upload.key, manifestKey(upload.mediaId)]))];
   for (let index = 0; index < keys.length; index += 1000) {
     await storageClient().send(
       new DeleteObjectsCommand({
@@ -348,6 +357,7 @@ describe("an upload, start to finish", () => {
       expect(await response.json()).toEqual({ error: "no-guest" });
     }
     expect(browserCookies.sets).toEqual([]);
+    expect(forged.sets).toEqual([]);
     expect(await getDb().select().from(guests)).toEqual([]);
     expect(await mediaCount()).toBe(0);
   });
@@ -604,43 +614,100 @@ describe("completing", () => {
     expect(await jobsFor(MEDIA_QUEUES.photo, session.mediaId)).toHaveLength(1);
   });
 
-  it("answers 404 missing when the guest cancels while R2 completes it, queueing nothing", async () => {
-    await signIn();
-    const body = smallFile();
-    const session = await startSession(body);
-    const parts = await sendParts(session, randomBytes(body.size), [1]);
-    // The cancel lands between R2 joining the parts and the row being marked.
-    let cancelled: Response | undefined;
-    const middleware = "cancelAsTheUploadCompletes";
+  /** Runs `during` inside R2's CompleteMultipartUpload, before R2 joins the parts or just after. */
+  async function aroundTheJoin<TResult>(
+    when: "before" | "after",
+    during: () => Promise<void>,
+    request: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const middleware = `${when}TheJoin`;
     storageClient().middlewareStack.add(
       (next, context) => async (args) => {
+        const joining = context.commandName === "CompleteMultipartUploadCommand";
+        if (joining && when === "before") await during();
         const result = await next(args);
-        if (context.commandName === "CompleteMultipartUploadCommand") cancelled = await cancel(session.mediaId);
+        if (joining && when === "after") await during();
         return result;
       },
       { step: "initialize", name: middleware },
     );
-    let response: Response;
     try {
-      response = await complete(session.mediaId, parts);
+      return await request();
     } finally {
       storageClient().middlewareStack.remove(middleware);
-      // The original R2 made has no row left to clean it up by.
-      await storageClient().send(
-        new DeleteObjectsCommand({
-          Bucket: storageConfig().privateBucket,
-          Delete: { Objects: [{ Key: session.key }], Quiet: true },
-        }),
-      );
     }
+  }
+
+  it("Ruling Y: a complete R2 has joined wins over a cancel that lands meanwhile, so no original is left without its row", async () => {
+    await signIn();
+    const body = smallFile();
+    const session = await startSession(body);
+    const parts = await sendParts(session, randomBytes(body.size), [1]);
+    let cancelled: Response | undefined;
+
+    const response = await aroundTheJoin(
+      "after",
+      async () => {
+        cancelled = await cancel(session.mediaId);
+      },
+      () => complete(session.mediaId, parts),
+    );
+    expect(cancelled?.status).toBe(409);
+    expect(await cancelled?.json()).toMatchObject({ error: "already-uploaded" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ mediaId: session.mediaId, status: "uploaded" });
+    await afterResponse();
+    expect((await mediaRow(session.mediaId)).status).toBe("uploaded");
+    expect(await jobsFor(MEDIA_QUEUES.photo, session.mediaId)).toHaveLength(1);
+    expect((await headOriginal(session.key))?.size).toBe(body.size);
+  });
+
+  it("deletes the row when the cancel's abort lands first, and the complete then answers upload-missing", async () => {
+    await signIn();
+    const body = smallFile();
+    const session = await startSession(body);
+    const parts = await sendParts(session, randomBytes(body.size), [1]);
+    let cancelled: Response | undefined;
+
+    const response = await aroundTheJoin(
+      "before",
+      async () => {
+        cancelled = await cancel(session.mediaId);
+      },
+      () => complete(session.mediaId, parts),
+    );
     expect(cancelled?.status).toBe(200);
+    expect(await cancelled?.json()).toEqual({ mediaId: session.mediaId, cancelled: true });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toBe("upload-missing");
+    await afterResponse();
+    expect(await mediaRow(session.mediaId)).toBeUndefined();
+    expect(await headOriginal(session.key)).toBeNull();
+    expect(await jobsFor(MEDIA_QUEUES.photo, session.mediaId)).toHaveLength(0);
+  });
+
+  it("answers 404 missing, queueing nothing and warning of the original left behind, when the row goes from under a complete", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await signIn();
+    const body = smallFile();
+    const session = await startSession(body);
+    const parts = await sendParts(session, randomBytes(body.size), [1]);
+
+    const response = await aroundTheJoin(
+      "after",
+      async () => {
+        await getDb().delete(media).where(eq(media.id, session.mediaId));
+      },
+      () => complete(session.mediaId, parts),
+    );
     expect(response.status).toBe(404);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(await response.json()).toEqual({ error: "missing" });
     await afterResponse();
-    expect(await mediaRow(session.mediaId)).toBeUndefined();
     expect(await jobsFor(MEDIA_QUEUES.photo, session.mediaId)).toHaveLength(0);
     expect(await eventsFor(session.mediaId)).toEqual([]);
+    expect(warned).toHaveBeenCalledOnce();
+    expect(String(warned.mock.calls[0][0])).toContain(session.key);
   });
 
   it("still succeeds when the job can't be queued, leaving the item for the sweeper", async () => {

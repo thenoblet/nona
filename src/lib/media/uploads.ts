@@ -140,14 +140,28 @@ function bytesHeld(parts: UploadedPart[]): number {
 }
 
 /**
+ * Aborts an unfinished upload and deletes its row, unless it turns out to have finished: no
+ * original may ever exist without its row (Ruling Y), or a rebuild from R2 would bring back a file
+ * the guest cancelled, and nothing could delete it. Once the abort returns, no complete of it can
+ * succeed, so the original is there now or never: if it is (a complete R2 joined first), the row
+ * stays, for that complete to mark; if not, the row goes. The original is checked whatever the
+ * abort answered, since a store may accept an abort of an upload it has already completed (MinIO
+ * does). True when the row was deleted.
+ */
+async function abortAndDelete(upload: UploadRow, uploadId: string, signal: AbortSignal | undefined): Promise<boolean> {
+  await abortMultipart(upload.originalKey, uploadId, { signal });
+  if (await headOriginal(upload.originalKey, { signal })) return false;
+  return deleteUnfinishedUpload(upload.id);
+}
+
+/**
  * Drops an upload whose parts hold more than it declared: its multipart upload (and the bytes
  * with it) and its row. The part URLs bind each part's size, so this takes R2 letting a PUT of
  * another length through; it stops a client storing past the limits until the 7-day rule.
  */
 async function discardOverfilled(upload: UploadRow, uploadId: string, options: UploadOptions): Promise<void> {
   console.error(`[uploads] ${upload.id} holds more than it declared; aborting it`);
-  await abortMultipart(upload.originalKey, uploadId, { signal: options.signal });
-  await deleteUnfinishedUpload(upload.id);
+  await abortAndDelete(upload, uploadId, options.signal);
 }
 
 function errorName(error: unknown): string | undefined {
@@ -186,15 +200,18 @@ async function announceUploaded(upload: UploadRow): Promise<void> {
 
 /**
  * Marks a verified upload `uploaded`; the call that changes it queues the job, after the response.
- * A row left as it was is `uploaded` already (another complete marked it first), or `missing`: the
- * guest cancelled it while R2 joined its parts, and it is gone.
+ * A row left as it was is `uploaded` already (another complete marked it first), or `missing`: its
+ * row is gone, though R2 has joined its original. A cancel never deletes the row of an upload R2
+ * has joined (abortAndDelete), so this is a defence; the warning keeps the orphan's key on record.
  */
 async function finishUpload(upload: UploadRow, options: UploadOptions): Promise<"uploaded" | "missing"> {
   if (await markUploaded(upload.id)) {
     options.defer(() => announceUploaded(upload));
     return "uploaded";
   }
-  return (await findUpload(upload.id)) ? "uploaded" : "missing";
+  if (await findUpload(upload.id)) return "uploaded";
+  console.warn(`[uploads] ${upload.originalKey} was joined after its row was deleted: an original with no row`);
+  return "missing";
 }
 
 /**
@@ -333,7 +350,8 @@ export async function resumeUpload(upload: UploadRow, options: UploadOptions): P
   } else {
     const parts = await partsSoFar(upload, upload.multipartUploadId, options);
     if (!parts) {
-      await deleteUnfinishedUpload(upload.id);
+      // Nothing to carry on. The row goes only if no original was made (Ruling Y).
+      if (!(await headOriginal(upload.originalKey, { signal: options.signal }))) await deleteUnfinishedUpload(upload.id);
       return null;
     }
     session = toSession(upload, upload.multipartUploadId, parts);
@@ -420,12 +438,11 @@ export async function completeUpload(upload: UploadRow, options: UploadOptions):
 
 /**
  * Cancels an unfinished upload at the guest's request: aborts its multipart upload, then deletes
- * its row (its events stay). False when it finished meanwhile, which leaves it as it is. Nothing
- * else aborts uploads: R2's 7-day rule clears the abandoned ones.
+ * its row (its events stay). False when it finished meanwhile (a complete R2 joined first), which
+ * leaves it as it is, to be removed like any finished upload. Nothing else aborts uploads: R2's
+ * 7-day rule clears the abandoned ones.
  */
 export async function cancelUpload(upload: UploadRow, options: { signal?: AbortSignal }): Promise<boolean> {
-  if (upload.multipartUploadId) {
-    await abortMultipart(upload.originalKey, upload.multipartUploadId, { signal: options.signal });
-  }
-  return deleteUnfinishedUpload(upload.id);
+  if (!upload.multipartUploadId) return deleteUnfinishedUpload(upload.id);
+  return abortAndDelete(upload, upload.multipartUploadId, options.signal);
 }

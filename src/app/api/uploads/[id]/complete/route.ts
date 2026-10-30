@@ -49,10 +49,12 @@ const completeRequest = zod.object({
  * - Parts holding more than declared (the part URLs bind each size, so only if R2 let one through):
  *   the upload is aborted and its row deleted, 409 `size-mismatch`.
  * - Already completed (a repeat, or two at once): the same answer, with one job queued.
- * - Cancelled while R2 joined the parts (the row is gone): 404 `missing`, and nothing is queued.
- * - The upload gone with no original made (aborted or expired): 409 `upload-missing`.
- * It runs to the end even if the phone drops meanwhile (Ruling V), within a 40 s budget.
+ * - Its row gone while R2 joined the parts: 404 `missing`, and nothing is queued. (A cancel never
+ *   deletes the row of an upload R2 has joined, so this is a defence.)
+ * - The upload gone with no original made (cancelled first, aborted or expired): 409 `upload-missing`.
  * - 403 for an upload that isn't this browser's, or an album upload past the 24 hours after a close.
+ *
+ * It runs to the end even if the phone drops meanwhile (Ruling V), within a 40 s budget.
  */
 export async function POST(request: Request, { params }: UploadContext) {
   const { id } = await params;
@@ -73,7 +75,7 @@ export async function POST(request: Request, { params }: UploadContext) {
       case "uploaded":
         return jsonResponse({ mediaId: upload.id, status: "uploaded" });
       case "missing":
-        // Cancelled while it completed: the row is gone, and nothing is queued.
+        // The row went while R2 joined the parts: nothing is queued (finishUpload logs the original).
         return errorResponse(404, "missing");
       case "incomplete":
         return errorResponse(

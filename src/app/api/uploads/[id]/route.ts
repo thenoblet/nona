@@ -14,8 +14,9 @@ import {
  * Cancels this browser's unfinished upload when the guest taps "Cancel": aborts its multipart
  * upload and deletes its row, answering `{ mediaId, cancelled: true }`. Nothing else aborts
  * uploads (R2's 7-day rule clears abandoned ones), so a phone that loses its connection can always
- * carry on. 409 `already-uploaded` for a finished upload, which "Remove my upload" hides instead;
- * 403 for an upload that isn't this browser's.
+ * carry on. 409 `already-uploaded` for a finished upload, including one a complete joined while
+ * this ran (its row stays, so no original is ever left without one), which "Remove my upload"
+ * hides instead; 403 for an upload that isn't this browser's.
  */
 export async function DELETE(request: Request, { params }: UploadContext) {
   const { id } = await params;

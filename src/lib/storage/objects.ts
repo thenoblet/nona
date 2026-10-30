@@ -184,8 +184,20 @@ export async function completeMultipart(
   );
 }
 
-/** Drops an unfinished upload and its parts. An upload that is already gone counts as aborted. */
-export async function abortMultipart(key: string, uploadId: string, options?: CallOptions): Promise<void> {
+/**
+ * Drops an unfinished upload and its parts. Either way, once this returns no CompleteMultipartUpload
+ * of it can succeed (the store takes one call on an upload at a time), so the original either
+ * exists now or never will:
+ * - `aborted`: the store accepted the abort. That doesn't prove the upload was still unfinished:
+ *   MinIO accepts an abort of any upload id, one already completed included.
+ * - `gone`: the store answered NoSuchUpload: it was completed, aborted or expired before.
+ * To know whether it had been completed, check for its original after this (headOriginal).
+ */
+export async function abortMultipart(
+  key: string,
+  uploadId: string,
+  options?: CallOptions,
+): Promise<"aborted" | "gone"> {
   try {
     await storageClient().send(
       new AbortMultipartUploadCommand({
@@ -195,8 +207,10 @@ export async function abortMultipart(key: string, uploadId: string, options?: Ca
       }),
       withDeadline(options),
     );
+    return "aborted";
   } catch (error) {
     if (errorName(error) !== "NoSuchUpload") throw error;
+    return "gone";
   }
 }
 
