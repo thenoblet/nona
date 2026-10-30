@@ -128,3 +128,37 @@ describe("wedding party ids", () => {
     ]);
   });
 });
+
+describe("RSVP settings", () => {
+  const settings = () => structuredClone(contentDefaults.rsvp);
+
+  it("refuse a reply-by date on or after the wedding", () => {
+    expect(problems("rsvp", { ...settings(), replyBy: "2026-12-05" })).toEqual(["rsvp.replyBy: Use a date before the wedding"]);
+    expect(problems("rsvp", { ...settings(), replyBy: "2027-01-10" })).toEqual(["rsvp.replyBy: Use a date before the wedding"]);
+    expect(problems("rsvp", { ...settings(), replyBy: "2026-12-04" })).toEqual([]);
+  });
+
+  it("refuse a reply-by date that is not a real one, with only its own message", () => {
+    expect(problems("rsvp", { ...settings(), replyBy: "2026-11-31" })).toEqual(["rsvp.replyBy: Not a real date"]);
+    expect(problems("rsvp", { ...settings(), replyBy: "20 November" })).not.toContain("rsvp.replyBy: Use a date before the wedding");
+    expect(problems("rsvp", { ...settings(), replyBy: "20 November" })).toContain("rsvp.replyBy: Use a date like 2026-12-05");
+  });
+
+  it("refuse an empty closed message, and one over 300 characters", () => {
+    expect(problems("rsvp", { ...settings(), closedMessage: "" })).toEqual(["rsvp.closedMessage: Cannot be empty"]);
+    expect(problems("rsvp", { ...settings(), closedMessage: "  \n " })).toEqual(["rsvp.closedMessage: Cannot be empty"]);
+    expect(problems("rsvp", { ...settings(), closedMessage: "a".repeat(301) })).toEqual([
+      "rsvp.closedMessage: Use at most 300 characters",
+    ]);
+    expect(problems("rsvp", { ...settings(), closedMessage: "a".repeat(300) })).toEqual([]);
+  });
+
+  it("start open, asking for replies by 20 November", () => {
+    expect(contentDefaults.rsvp).toEqual({
+      open: true,
+      replyBy: "2026-11-20",
+      closedMessage:
+        "Replies are now closed. Thank you to everyone who let us know! If your plans have changed, please message Noblet or Nancy directly.",
+    });
+  });
+});

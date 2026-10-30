@@ -1,4 +1,5 @@
 import * as zod from "zod";
+import { wedding } from "@/content/wedding";
 import { TIME_PATTERN } from "./times";
 
 /** The celebrations are fixed: their wording is editable, but exactly these three exist. */
@@ -15,13 +16,14 @@ const link = zod
   .regex(/^\S*$/, noSpace)
   .regex(/^(https:\/\/\S+|#\S*)$/, "Use an https:// link or an in-page anchor starting with #");
 const time = zod.string().regex(TIME_PATTERN, "Use a 24-hour time like 14:30");
+function isRealDate(value: string): boolean {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
 const date = zod
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-05")
-  .refine((value) => {
-    const parsed = new Date(`${value}T00:00:00Z`);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-  }, "Not a real date");
+  .refine(isRealDate, "Not a real date");
 
 const celebration = zod
   .object({
@@ -100,6 +102,16 @@ const story = zod.object({
   forever: zod.object({ when: line, title: line, text }),
 });
 
+/** The first day of the wedding weekend, "2026-12-05". */
+const weddingDay = wedding.weekendStart.slice(0, 10);
+
+const rsvp = zod.object({
+  open: zod.boolean(),
+  // Days written YYYY-MM-DD sort as text. A date that isn't real already has its own message.
+  replyBy: date.refine((value) => !isRealDate(value) || value < weddingDay, "Use a date before the wedding"),
+  closedMessage: text.max(300, "Use at most 300 characters"),
+});
+
 export const sectionSchemas = {
   celebrations: zod
     .array(celebration)
@@ -139,6 +151,8 @@ export const sectionSchemas = {
       .pipe(zod.url({ protocol: /^https$/, error: "Use an https:// link, or leave it empty" }))
       .nullable(),
   }),
+  // Edited on the Replies page (/admin/rsvps), not among the site text.
+  rsvp,
 } as const;
 
 export type SectionKey = keyof typeof sectionSchemas;
@@ -155,6 +169,7 @@ export type TravelItem = zod.infer<typeof travelItem>;
 export type GiftItem = zod.infer<typeof giftItem>;
 export type Story = zod.infer<typeof story>;
 export type LiveStream = SiteContent["liveStream"];
+export type RsvpSettings = SiteContent["rsvp"];
 
 /** Human-readable messages that name the field, e.g. `celebrations[0].startTime: Use a 24-hour time like 14:30`. */
 export function formatIssues(error: zod.ZodError, root = ""): string[] {

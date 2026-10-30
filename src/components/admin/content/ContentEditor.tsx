@@ -13,8 +13,14 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import { restoreVersionAction, saveSectionAction } from "@/app/admin/content/actions";
-import { EDITOR_FIELDS, MAX_SECTION_BYTES, parseIssues, TOO_LONG, type SaveState } from "@/lib/admin/content";
-import type { SectionKey } from "@/lib/content/schema";
+import {
+  EDITOR_FIELDS,
+  MAX_SECTION_BYTES,
+  parseIssues,
+  TOO_LONG,
+  type ContentSectionKey,
+  type SaveState,
+} from "@/lib/admin/content";
 import { getAt, insertAt, moveItem, pathKey, removeAt, setAt, type Path } from "./editing";
 import { fieldsInOrder, sectionSpecs, type FieldSpec, type ListSpec, type SectionSpec } from "./fields";
 import { setUnsavedChanges } from "./unsaved";
@@ -29,7 +35,7 @@ const noProblems: Problems = { fields: new Map(), general: [], message: null };
 /** After a render, focus moves here: a list item's control, or the first problem after a failed save. */
 type FocusTarget = { item: string; control: "first" | "group" | "up" | "down" } | { add: true } | { problems: true };
 
-function problemsFrom(sectionKey: SectionKey, spec: SectionSpec, value: unknown, errors: string[]): Problems {
+function problemsFrom(sectionKey: ContentSectionKey, spec: SectionSpec, value: unknown, errors: string[]): Problems {
   const shown = new Set(fieldsInOrder(spec, value).map((field) => field.path));
   const problems: Problems = { fields: new Map(), general: [], message: null };
   for (const issue of parseIssues(sectionKey, errors)) {
@@ -64,7 +70,7 @@ export function ContentEditor({
   version,
   versions,
 }: {
-  sectionKey: SectionKey;
+  sectionKey: ContentSectionKey;
   label: string;
   value: unknown;
   version: number;

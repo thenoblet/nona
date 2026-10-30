@@ -7,7 +7,8 @@ export type { Celebration, EventId, PartyMember, ScheduleItem };
  * `colours` straight from this file. The rest (celebrations, venues, landmarks, story, party,
  * travel, gifts, FAQ, live stream and schedule) is the built-in text: the site shows it until a
  * section is saved in the admin (/admin/content), and whenever the database can't be reached.
- * Once a section is saved there, changing it here no longer changes the site.
+ * Once a section is saved there, changing it here no longer changes the site. The RSVP settings
+ * work the same way, saved on the admin's Replies page (/admin/rsvps).
  * Square brackets mark details still to confirm.
  */
 
@@ -26,7 +27,8 @@ export const wedding = {
   dateShort: "05 · 12 · 2026",
   town: "Tepa",
   region: "Ashanti",
-  rsvpBy: "20 November",
+  /** The reply-by date until the couple set one in the admin; pages read `rsvp.replyBy`. */
+  rsvpBy: "2026-11-20",
   /** The wedding weekend starts at midnight on 5 Dec (Ghana is GMT all year). */
   weekendStart: "2026-12-05T00:00:00Z",
   /** The thank-you version starts at midnight on 7 Dec. */
@@ -196,6 +198,14 @@ export const faq = [
 
 /** The live-stream link; null until the couple add it. */
 export const liveStream: { url: string | null } = { url: null };
+
+/** Replies are open until the couple close them; while closed, /rsvp shows this message instead of the form. */
+export const rsvp = {
+  open: true,
+  replyBy: wedding.rsvpBy,
+  closedMessage:
+    "Replies are now closed. Thank you to everyone who let us know! If your plans have changed, please message Noblet or Nancy directly.",
+};
 
 export const schedule: ScheduleItem[] = [
   { time: "[Time]", title: "Guests arrive", place: venues.church.name + ", Tepa", day: "sat" },

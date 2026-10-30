@@ -2,7 +2,9 @@
 
 import { after } from "next/server";
 import * as zod from "zod";
-import { getSiteContent } from "@/lib/content/get";
+import { contentDefaults } from "@/lib/content/defaults";
+import { getSiteContentOrThrow } from "@/lib/content/get";
+import type { SiteContent } from "@/lib/content/schema";
 import { saveRsvp } from "@/lib/data/rsvp";
 import { queueRsvpConfirmation } from "@/lib/jobs/rsvp-confirmation";
 import { describeError } from "@/lib/log-error";
@@ -14,6 +16,8 @@ import {
   type RsvpState,
   type RsvpValues,
 } from "@/components/rsvp/options";
+
+const TRY_AGAIN = "Sorry, your reply didn't reach us. Please try again in a moment.";
 
 /** Trimmed text from the form, capped so nobody can post a novel. */
 function text(form: FormData, key: string, max = 300) {
@@ -31,9 +35,18 @@ export async function submitRsvp(
   _prev: RsvpState,
   form: FormData,
 ): Promise<RsvpState> {
+  // Whether replies are open comes from the database itself, never from the built-in text pages
+  // fall back to during an outage (in which replies are open). If it can't be read, the guest is
+  // asked to try again, and is not told that replies have closed.
+  let content: SiteContent | null = null;
+  try {
+    content = await getSiteContentOrThrow();
+  } catch (error) {
+    console.error("RSVP could not check whether replies are open:", describeError(error));
+  }
+  // The celebrations' ids are fixed, so the built-in ones read the answers back into the form.
   const answers: RsvpValues["answers"] = {};
-  const { celebrations } = await getSiteContent();
-  for (const celebration of celebrations) {
+  for (const celebration of (content ?? contentDefaults).celebrations) {
     const answer = form.get(answerField(celebration.id));
     if (answer === "yes" || answer === "no") answers[celebration.id] = answer as Answer;
   }
@@ -47,6 +60,15 @@ export async function submitRsvp(
     otherNames: text(form, "otherNames"),
     song: text(form, "song", 120),
   };
+
+  if (!content) {
+    return { status: "error", values, errors: { form: TRY_AGAIN } };
+  }
+  // A phone may have had the form open since before the couple closed replies: the form keeps
+  // what was typed, and shows the closed message instead of saving.
+  if (!content.rsvp.open) {
+    return { status: "error", values, errors: { form: content.rsvp.closedMessage } };
+  }
 
   const errors: RsvpErrors = {};
   if (values.fullName.length < 2) {
@@ -85,9 +107,7 @@ export async function submitRsvp(
     return {
       status: "error",
       values,
-      errors: {
-        form: "Sorry, your reply didn't reach us. Please try again in a moment.",
-      },
+      errors: { form: TRY_AGAIN },
     };
   }
 

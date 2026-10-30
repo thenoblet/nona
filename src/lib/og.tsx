@@ -9,7 +9,8 @@ import sharp from "sharp";
  * Link preview cards (WhatsApp, iMessage, Facebook, X): one of the couple's photos
  * under a cocoa wash, a thin ember frame like the invitation card, and the script
  * title centred, so WhatsApp's square crop of the middle still reads.
- * Rendered once at build time. The preview renderer reads TTF only, so
+ * Rendered once at build time, or, for a card that shows text saved in the admin (the RSVP
+ * card's reply-by date), once per text on its first request. The preview renderer reads TTF only, so
  * src/fonts/og/ holds TTF subsets of the site's own fonts. The renderer supports a subset
  * of CSS: no `inset` shorthand, so layers use top/right/bottom/left.
  */
@@ -86,7 +87,7 @@ export async function previewCard(card: PreviewCard) {
   return new Response(await renderJpeg(card), { headers: { "Content-Type": ogContentType } });
 }
 
-/** Cached so the cards are still prerendered at build time despite the async conversion. */
+/** Cached so the cards are still prerendered at build time despite the async conversion, and drawn once per text. */
 async function renderJpeg(card: PreviewCard) {
   "use cache";
   cacheLife("max");
