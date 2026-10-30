@@ -117,6 +117,21 @@ npm run test:e2e     # Playwright, against a production build on port 3100
 
 Without `RESEND_API_KEY`, development only logs the email instead of sending it.
 
+### Email preview
+
+```bash
+npm run email:preview   # http://localhost:3030, the templates in src/emails with sample replies
+```
+
+The preview tooling pins exact versions, so upgrade it as a set:
+
+- `react-email` and `@react-email/ui` must stay on the same exact version.
+- `@react-email/ui` pins an exact `next`. When upgrading Next, bump `next`, `eslint-config-next`,
+  `react-email` and `@react-email/ui` together, to a `react-email` release whose `@react-email/ui`
+  pins that `next`.
+- `@react-email/render`, which renders the real emails, is pinned too: `react-email` accepts any
+  version from 2.2.0 up, and a new one could change the html guests receive.
+
 Built with Next.js 16 (App Router, Cache Components), React 19, TypeScript and Tailwind CSS 4.
 Colours and shadows are Tailwind tokens in `src/app/globals.css` (`cocoa`, `mocha`, `ember`,
 `blush`, `tray`, `halo`, `hairline`, ...).
@@ -135,7 +150,7 @@ in this repository.
 |---|---|
 | `SITE_URL` | The public address, `https://nobletxnancy.com`, without a trailing slash. Used in QR codes, emails, calendar files and link previews; also passed to the build, because static pages bake it in. |
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | The database on the private network. Without them the site shows its built-in text, but replies, the admin and emails are off. |
-| `RESEND_API_KEY` | Sends the confirmation emails. Without it a confirmation ends "Failed" in the admin; it never claims to have sent. |
+| `RESEND_API_KEY` | Sends the confirmation emails. Without it, or once Resend's daily limit is reached, a confirmation shows "Sending" in the admin for about 24 to 28 hours of retries, then ends "Failed"; it never claims to have sent. |
 | `EMAIL_FROM` | The sender: a name and an address on a domain verified in Resend. Optional; it defaults to the RSVP address in `src/lib/email/send.ts`. |
 | `EMAIL_REPLY_TO` | Where a guest's reply to the email goes. Several addresses, separated by commas, all receive it. |
 | `CF_ACCESS_TEAM_DOMAIN` | The Cloudflare Access team domain as a bare host (`<team>.cloudflareaccess.com`, without `https://`). |
