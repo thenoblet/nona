@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const startUp = vi.hoisted(() => ({
-  configured: true,
-  migrations: vi.fn(async () => {}),
-  jobs: vi.fn(async () => {}),
-}));
+const startUp = vi.hoisted(() => {
+  const jobs = vi.fn(async () => {});
+  return {
+    configured: true,
+    migrations: vi.fn(async () => {}),
+    jobs,
+    /** The job queue module every test loads in place of the real one, which would start pg-boss. */
+    standInJobs: () => ({ startJobs: jobs }),
+  };
+});
 
 vi.mock("@/lib/env", () => ({ isDbConfigured: () => startUp.configured }));
 vi.mock("@/lib/db/migrate", () => ({ runMigrations: startUp.migrations }));
-vi.mock("@/lib/jobs/boss", () => ({ startJobs: startUp.jobs }));
+vi.mock("@/lib/jobs/boss", () => startUp.standInJobs());
 
 /** A fresh copy of the file, so each test's mocks apply to its imports. */
 async function loadRegister() {
@@ -25,7 +30,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.doUnmock("@/lib/jobs/boss");
+  // A test may swap the job queue module for one that fails to load: the next one gets the stand-in back.
+  vi.doMock("@/lib/jobs/boss", () => startUp.standInJobs());
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -56,5 +62,11 @@ describe("register", () => {
     const register = await loadRegister();
     await expect(register()).resolves.toBeUndefined();
     expect(log).toHaveBeenCalled();
+  });
+
+  it("gives every test the stand-in job queue, never the real one", async () => {
+    const register = await loadRegister();
+    await register();
+    await vi.waitFor(() => expect(startUp.jobs).toHaveBeenCalledOnce());
   });
 });
