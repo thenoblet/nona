@@ -104,7 +104,7 @@ async function AlbumMedia() {
 
 function GridSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading the album" className="pt-5.5">
+    <div role="status" aria-busy="true" aria-label="Loading the album" className="pt-5.5">
       <div className="h-11 w-3/4 rounded-full bg-tray" />
       <div className="mt-3.5 h-13 rounded-full bg-tray sm:max-w-md" />
       <div className="mt-17 grid grid-cols-3 gap-1.5 md:grid-cols-4 lg:grid-cols-5">

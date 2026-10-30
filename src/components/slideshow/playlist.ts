@@ -102,7 +102,8 @@ export function viewPlaylist(playlist: Playlist): PlaylistView {
  * Points the playlist at slides that can still be shown, and forgets what is no longer on
  * screen, so its sets never outgrow the three photos mounted at once. A move the timer was
  * waiting for is dropped when the current slide changes, and made at once when the photo now
- * next has already loaded (no load event will come for it).
+ * next has already loaded (no load event will come for it). With fewer than two photos there is
+ * nothing to pause, so a pause ends: the TV plays as soon as the next photos arrive.
  */
 function settle(playlist: Playlist): Playlist {
   const view = viewPlaylist(playlist);
@@ -118,6 +119,7 @@ function settle(playlist: Playlist): Playlist {
     // A slide that takes the place of one that failed or went away fades in, with its own time.
     entrance: currentChanged ? "fade" : playlist.entrance,
     due: currentChanged ? false : playlist.due,
+    paused: view.playable.length < 2 ? false : playlist.paused,
   };
   if (settled.due && !settled.paused && view.next && settled.loaded.has(view.next.id)) return move(settled, 1, "fade");
   return settled;
@@ -166,6 +168,8 @@ export function playlistReducer(playlist: Playlist, action: PlaylistAction): Pla
       return settle({ ...playlist, slides: action.slides, failed: new Set() });
 
     case "toggle-pause":
+      // Like the phone bar, which offers no pause with fewer than two photos.
+      if (viewPlaylist(playlist).playable.length < 2) return playlist;
       return { ...playlist, paused: !playlist.paused, due: false };
   }
 }

@@ -42,9 +42,10 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
   const content = await getSiteContent();
   const { celebrations, schedule, venues, landmarks, story, party, travel, gifts } = content;
   const faq = visibleFaq(content);
-  const live = liveStreamState(content, new Date());
   const params = await searchParams;
+  // One moment for the whole page, so the version, the schedule and the live stream agree.
   const now = new Date();
+  const live = liveStreamState(content, now);
   const mode: Mode = resolveMode(now, params.mode);
   const secondDay = mode === "day" && isSecondDay(now);
   const current = schedule[nowIndex(schedule, secondDay)];

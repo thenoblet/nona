@@ -105,7 +105,7 @@ function TodayLayout({ dayLabel: dayLabelSlot, happeningNow, orderOfDay, quickAc
 
 function OrderSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading the order of the day" className="flex flex-col gap-3 border-t border-hairline pt-4">
+    <div role="status" aria-busy="true" aria-label="Loading the order of the day" className="flex flex-col gap-3 border-t border-hairline pt-4">
       {[0, 1, 2, 3].map((row) => (
         <div key={row} className="h-14 animate-pulse rounded-[var(--radius-paper)] bg-blush" />
       ))}

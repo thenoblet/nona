@@ -55,7 +55,7 @@ async function RsvpFormLoader() {
 
 function FormSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading the reply form" className="mx-auto flex w-full max-w-xl flex-col gap-5 px-5 py-8 sm:px-8">
+    <div role="status" aria-busy="true" aria-label="Loading the reply form" className="mx-auto flex w-full max-w-xl flex-col gap-5 px-5 py-8 sm:px-8">
       {[0, 1, 2, 3].map((row) => (
         <div key={row} className="h-13 animate-pulse rounded-full bg-blush" />
       ))}

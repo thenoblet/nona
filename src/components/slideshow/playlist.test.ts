@@ -107,6 +107,26 @@ describe("the timer", () => {
     expect(currentId(playlist)).toBe("b");
     expect(playlist.paused).toBe(true);
   });
+
+  it("can't be paused with fewer than two photos, so the first photos to arrive play", () => {
+    for (const start of [startPlaylist([]), startPlaylist(slides("a"))]) {
+      const pressed = run(start, { type: "toggle-pause" });
+      expect(pressed.paused).toBe(false);
+      expect(run(pressed, { type: "replaced", slides: slides("a", "b") }).paused).toBe(false);
+    }
+  });
+
+  it("counts only the photos that can be shown", () => {
+    const oneLeft = run(startPlaylist(slides("a", "b")), { type: "failed", id: "b" }, { type: "toggle-pause" });
+    expect(oneLeft.paused).toBe(false);
+  });
+
+  it("plays again when the photos drop below two", () => {
+    const paused = run(startPlaylist(slides("a", "b", "c")), { type: "toggle-pause" });
+    expect(run(paused, { type: "replaced", slides: slides("a") }).paused).toBe(false);
+    expect(run(paused, { type: "failed", id: "b" }).paused).toBe(true);
+    expect(run(paused, { type: "failed", id: "b" }, { type: "failed", id: "c" }).paused).toBe(false);
+  });
 });
 
 describe("a photo that fails to load", () => {

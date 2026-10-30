@@ -3,13 +3,16 @@ import type { Venue } from "@/lib/content/schema";
 import { Halo } from "@/components/ui/Halo";
 import type { IconName } from "@/components/ui/Icon";
 
-type Tile = { href: string; label: string; icon: IconName; primary?: boolean; external?: boolean };
+/** `note` tells screen readers where an outside link goes. */
+type Tile = { href: string; label: string; icon: IconName; primary?: boolean; external?: { note: string } };
 
 function tilesFor(reception: Venue, liveUrl: string | null): Tile[] {
   return [
     { href: "/album", label: "Share photos", icon: "camera", primary: true },
-    ...(liveUrl ? [{ href: liveUrl, label: "Watch live", icon: "video" as const, external: true }] : []),
-    { href: reception.mapsUrl, label: "Directions", icon: "pin", external: true },
+    ...(liveUrl
+      ? [{ href: liveUrl, label: "Watch live", icon: "video" as const, external: { note: "(opens the live stream)" } }]
+      : []),
+    { href: reception.mapsUrl, label: "Directions", icon: "pin", external: { note: "(opens Google Maps)" } },
     { href: "/wishes", label: "Leave a wish", icon: "heart" },
   ];
 }
@@ -34,20 +37,24 @@ export function QuickActions({ reception, liveUrl }: { reception: Venue; liveUrl
   const tiles = tilesFor(reception, liveUrl);
   return (
     <ul className="grid grid-cols-2 gap-3">
-      {tiles.map((tile, index) => (
-        <li key={tile.label} className={`flex ${tiles.length % 2 === 1 && index === tiles.length - 1 ? "col-span-2" : ""}`}>
-          {tile.external ? (
-            <a href={tile.href} target="_blank" rel="noopener noreferrer" className={`${tileClass} w-full`}>
-              <TileBody tile={tile} />
-              <span className="sr-only">{tile.label === "Watch live" ? "(opens the live stream)" : "(opens Google Maps)"}</span>
-            </a>
-          ) : (
-            <Link href={tile.href} className={`${tileClass} w-full`}>
-              <TileBody tile={tile} />
-            </Link>
-          )}
-        </li>
-      ))}
+      {tiles.map((tile, index) => {
+        // An odd tile out at the end takes the whole row, so the grid stays even.
+        const spansRow = tiles.length % 2 === 1 && index === tiles.length - 1;
+        return (
+          <li key={tile.label} className={`flex ${spansRow ? "col-span-2" : ""}`}>
+            {tile.external ? (
+              <a href={tile.href} target="_blank" rel="noopener noreferrer" className={`${tileClass} w-full`}>
+                <TileBody tile={tile} />
+                <span className="sr-only">{tile.external.note}</span>
+              </a>
+            ) : (
+              <Link href={tile.href} className={`${tileClass} w-full`}>
+                <TileBody tile={tile} />
+              </Link>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
