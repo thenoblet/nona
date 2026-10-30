@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   countByFilter,
-  emailStatusLabels,
+  emailStatusLabel,
   matchesFilter,
   matchesSearch,
   replyFilters,
@@ -157,7 +157,7 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
                   })}
                   <td data-label="Email">
                     <span className={`admin-badge admin-badge-${badgeTone[row.emailStatus]}`}>
-                      {emailStatusLabels[row.emailStatus]}
+                      {emailStatusLabel(row)}
                     </span>
                   </td>
                   <td className="admin-replied admin-num" data-label="Replied">

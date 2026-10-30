@@ -1,7 +1,7 @@
 import { PgBoss } from "pg-boss";
 import { dbConfig } from "@/lib/env";
 import { describeError } from "@/lib/log-error";
-import { handleRsvpConfirmation } from "./rsvp-confirmation";
+import { handleRsvpConfirmation, requeueUnsentConfirmations } from "./rsvp-confirmation";
 
 export const QUEUES = { rsvpConfirmation: "email-rsvp-confirmation" } as const;
 
@@ -52,4 +52,7 @@ export async function startJobs(): Promise<void> {
       }
     },
   );
+  // Replies whose confirmation never reached the queue (the cap, a failed enqueue, or a restart
+  // before after() ran) get another chance.
+  await requeueUnsentConfirmations();
 }

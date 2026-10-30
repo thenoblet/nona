@@ -3,6 +3,7 @@ import type { RsvpRecord } from "@/lib/data/types";
 import {
   celebrationDay,
   countByFilter,
+  emailStatusLabel,
   flagNote,
   matchesFilter,
   matchesSearch,
@@ -241,5 +242,20 @@ describe("replyCsvRows", () => {
     expect(rows[2][10]).toBe("No email");
     expect(rows[2][11]).toBe("");
     expect(rows).toHaveLength(3);
+  });
+
+  it("says Not sent for a reply with an email and no confirmation queued", () => {
+    const rows = replyCsvRows([reply({ id: "efua", fullName: "Efua Mensah", email: "efua@example.com" })], celebrations);
+    expect(rows[1][10]).toBe("Not sent");
+  });
+});
+
+describe("emailStatusLabel", () => {
+  it("tells a reply without an email from one whose confirmation was never queued", () => {
+    expect(emailStatusLabel({ emailStatus: "none" })).toBe("No email");
+    expect(emailStatusLabel({ email: "efua@example.com", emailStatus: "none" })).toBe("Not sent");
+    expect(emailStatusLabel({ email: "efua@example.com", emailStatus: "queued" })).toBe("Sending");
+    expect(emailStatusLabel({ email: "efua@example.com", emailStatus: "sent" })).toBe("Sent");
+    expect(emailStatusLabel({ email: "efua@example.com", emailStatus: "failed" })).toBe("Failed");
   });
 });

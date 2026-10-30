@@ -318,6 +318,27 @@ export async function setEmailStatus(id: string, status: RsvpRecord["emailStatus
 }
 
 /**
+ * Current replies from the last 24 hours with an email but no confirmation queued, oldest first:
+ * the daily cap held them back, their job could not be queued, or the server restarted before
+ * it was. The job queue offers them to the daily cap again when it starts.
+ */
+export async function unsentConfirmationIds(): Promise<string[]> {
+  const rows = await getDb()
+    .select({ id: rsvps.id })
+    .from(rsvps)
+    .where(
+      and(
+        isNotNull(rsvps.email),
+        eq(rsvps.emailStatus, "none"),
+        isNull(rsvps.supersededAt),
+        gt(rsvps.receivedAt, sql`now() - interval '24 hours'`),
+      ),
+    )
+    .orderBy(rsvps.receivedAt, rsvps.id);
+  return rows.map((row) => row.id);
+}
+
+/**
  * Mark a reply queued and enqueue its job as one step, holding a lock per email address, so
  * replies sent at the same instant cannot pass the daily cap together. If `enqueue` throws, the
  * status change rolls back: a reply is never queued without a job.

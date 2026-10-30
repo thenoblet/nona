@@ -20,7 +20,7 @@ Mobile-first: every page is designed for a phone, then widened for larger screen
 | `/slideshow` | Guests' newest photos. On the venue TV (and any landscape screen): the photo, a QR code to the album and the latest thumbnails. On a phone held upright: the photo full screen; swipe or tap the sides to move, with pause, close and "Add yours". |
 | `/print/table-card?table=7` | Printable A5 QR card for each table. |
 | `/admin` | The couple's admin, behind Cloudflare Access. Opens on the replies. |
-| `/admin/rsvps` | Every current reply, with totals per celebration, search, filters, each reply's email status and the replies to check ("Keep this one", "Keep both"). |
+| `/admin/rsvps` | Every current reply, with totals per celebration, search, filters, each reply's confirmation email ("Sent", "Sending", "Not sent", "Failed" or "No email") and the replies to check ("Keep this one", "Keep both"). |
 | `/admin/rsvps.csv` | The replies as a spreadsheet (CSV), times in Accra. |
 | `/admin/content/[section]` | Edit the site's times, venues and text, one section at a time (`celebrations`, `schedule`, `venues`, `landmarks`, `faq`, `travel`, `gifts`, `party`, `story`, `live-stream`), with every saved version kept for undo. |
 
@@ -65,7 +65,9 @@ longer changes it on the site. Anything still to confirm is in square brackets, 
 
 RSVPs and the site's editable content (times, venues, text) are stored in Postgres. Schema
 migrations (`drizzle/`) run at server start. Confirmation emails go out through Resend from a
-pg-boss job queue, never in the request itself.
+pg-boss job queue, never in the request itself. A reply whose confirmation never reached the queue
+(at most three a day go to one address, or the server restarted at the wrong moment) shows as
+"Not sent"; when the queue starts, it tries the last day's again.
 
 Two files in `src/lib/data/` are still stubs with their final function signatures, so the pages
 won't change when the real backend arrives:

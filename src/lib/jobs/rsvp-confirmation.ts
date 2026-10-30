@@ -3,6 +3,7 @@ import {
   getRsvp,
   queueWithinDailyLimit,
   setEmailStatus,
+  unsentConfirmationIds,
 } from "@/lib/data/rsvp";
 import { describeError } from "@/lib/log-error";
 import { renderRsvpConfirmation } from "@/lib/email/rsvp-confirmation";
@@ -13,17 +14,22 @@ import { getBoss, QUEUES } from "./boss";
 
 const DAILY_LIMIT = 3;
 
-/** Queue the confirmation. Never throws: the reply is already saved. */
-export async function queueRsvpConfirmation(rsvpId: string): Promise<void> {
+/**
+ * Queue the confirmation; true when a job was queued. Never throws: the reply is already saved,
+ * and one left unqueued shows as "Not sent" until the queue's next start tries it again.
+ */
+export async function queueRsvpConfirmation(rsvpId: string): Promise<boolean> {
   try {
     const rsvp = await getRsvp(rsvpId);
-    if (!rsvp?.email) return;
-    await queueWithinDailyLimit(
+    if (!rsvp?.email) return false;
+    // Started before the transaction, so a queue that is slow to start never holds the email's
+    // lock or a pooled connection while it does.
+    const boss = await getBoss();
+    return await queueWithinDailyLimit(
       rsvpId,
       emailKey(rsvp.email),
       DAILY_LIMIT,
       async () => {
-        const boss = await getBoss();
         await boss.send(QUEUES.rsvpConfirmation, { rsvpId });
       },
     );
@@ -32,6 +38,24 @@ export async function queueRsvpConfirmation(rsvpId: string): Promise<void> {
       "Could not queue the RSVP confirmation:",
       describeError(error),
     );
+    return false;
+  }
+}
+
+/**
+ * When the job queue starts: queue the confirmations of the last day's replies that have an email
+ * but nothing queued, each through the daily cap. Never throws.
+ */
+export async function requeueUnsentConfirmations(): Promise<void> {
+  try {
+    const ids = await unsentConfirmationIds();
+    let queued = 0;
+    for (const id of ids) {
+      if (await queueRsvpConfirmation(id)) queued += 1;
+    }
+    if (ids.length > 0) console.info(`Queued ${queued} of ${ids.length} RSVP confirmations not sent before`);
+  } catch (error) {
+    console.error("Could not queue the unsent RSVP confirmations:", describeError(error));
   }
 }
 

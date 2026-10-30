@@ -66,7 +66,7 @@ export function ReplySent({
       <p className="animate-rise text-base leading-[1.7] font-light text-mocha" style={{ animationDelay: "300ms" }}>
         Your reply is with us.{" "}
         {values.email
-          ? "We've emailed you the details."
+          ? "We'll email you the details."
           : "We didn't get an email address, so no confirmation is coming, but your reply is safe with us."}
       </p>
 

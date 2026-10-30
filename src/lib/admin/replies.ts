@@ -8,12 +8,22 @@ import { phoneKey } from "@/lib/rsvp/normalize";
 export type CelebrationColumn = { id: EventId; name: string };
 
 /** Always shown as words: a colour alone never carries the status. */
-export const emailStatusLabels: Record<EmailStatus, string> = {
+const emailStatusLabels: Record<EmailStatus, string> = {
   sent: "Sent",
   queued: "Sending",
   failed: "Failed",
   none: "No email",
 };
+
+/**
+ * The confirmation's status in words. A reply with an email but nothing queued says "Not sent":
+ * the daily cap held it back, its job could not be queued, or the server restarted first. The
+ * job queue tries those from the last day again when it starts.
+ */
+export function emailStatusLabel(reply: { email?: string; emailStatus: EmailStatus }): string {
+  if (reply.emailStatus === "none" && reply.email) return "Not sent";
+  return emailStatusLabels[reply.emailStatus];
+}
 
 // Ghana keeps GMT all year, so a day is always 24 hours there.
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -227,7 +237,7 @@ export function replyCsvRows(replies: RsvpRecord[], celebrations: CelebrationCol
         reply.otherNames ?? "",
         reply.song ?? "",
         `${accraDate(received)} ${accraTime(received)}`,
-        emailStatusLabels[reply.emailStatus],
+        emailStatusLabel(reply),
         reply.flags.map(flagWords).join("; "),
       ];
     }),
