@@ -49,7 +49,8 @@ export default function RsvpPage() {
 async function RsvpFormLoader() {
   await connection();
   const { celebrations } = await getSiteContent();
-  return <RsvpForm celebrations={celebrations} />;
+  const siteUrl = (process.env.SITE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+  return <RsvpForm celebrations={celebrations} siteUrl={siteUrl} />;
 }
 
 function FormSkeleton() {

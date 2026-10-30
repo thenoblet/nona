@@ -1,5 +1,5 @@
 import { celebrations, type Celebration } from "@/content/wedding";
-import { PillLink, TextLink } from "@/components/ui/Button";
+import { PillAnchor, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { Reveal } from "@/components/ui/Reveal";
 import { SectionHeading } from "@/components/ui/Typography";
@@ -44,10 +44,9 @@ function CelebrationCard({ c, index }: { c: Celebration; index: number }) {
         <Detail icon="dress">{c.dress}</Detail>
       </div>
       <div className="mt-auto flex flex-wrap items-center justify-center gap-x-5.5 gap-y-2 pt-2.5">
-        {/* TODO: generate .ics calendar files per celebration. */}
-        <PillLink href="#celebrations" variant="cocoa">
+        <PillAnchor href={`/calendar?events=${c.id}`} download variant="cocoa">
           Add to calendar
-        </PillLink>
+        </PillAnchor>
         <TextLink href={c.directionsUrl}>Directions</TextLink>
       </div>
     </Reveal>

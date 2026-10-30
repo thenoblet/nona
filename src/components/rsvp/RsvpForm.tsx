@@ -10,14 +10,14 @@ import { ReplyForm } from "./ReplyForm";
 import { ReplySent } from "./ReplySent";
 
 /** The RSVP flow: the form, then the thank-you with a summary. */
-export function RsvpForm({ celebrations }: { celebrations: Celebration[] }) {
+export function RsvpForm({ celebrations, siteUrl }: { celebrations: Celebration[]; siteUrl: string }) {
   const [state, dispatch, pending] = useActionState(submitRsvp, initialRsvpState);
   const [answers, setAnswers] = useState<RsvpValues["answers"]>({});
   // "Change my reply" hides this saved reply and brings the form back with its values.
   const [reopened, setReopened] = useState<RsvpState | null>(null);
 
   if (state.status === "sent" && reopened !== state) {
-    return <ReplySent celebrations={celebrations} values={state.values} onChange={() => setReopened(state)} />;
+    return <ReplySent celebrations={celebrations} siteUrl={siteUrl} values={state.values} onChange={() => setReopened(state)} />;
   }
 
   return (

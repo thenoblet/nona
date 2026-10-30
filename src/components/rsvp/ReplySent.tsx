@@ -3,9 +3,10 @@
 import Image from "next/image";
 import { useEffect, useRef } from "react";
 import { couple } from "@/content/wedding";
+import { celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
 import type { Celebration } from "@/lib/content/schema";
 import { photos } from "@/content/images";
-import { PillLink } from "@/components/ui/Button";
+import { PillAnchor } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import type { RsvpValues } from "./options";
 
@@ -14,16 +15,19 @@ const statusLabel = { yes: "Attending", no: "Not attending" } as const;
 /** Replaces the form once the reply is saved. */
 export function ReplySent({
   celebrations,
+  siteUrl,
   values,
   onChange,
 }: {
   celebrations: Celebration[];
+  siteUrl: string;
   values: RsvpValues;
   onChange: () => void;
 }) {
   const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const photo = photos.daisiesWrapped;
+  const accepted = celebrations.filter((c) => values.answers[c.id] === "yes");
 
   // The form was long; bring the thank-you into view and announce it.
   useEffect(() => {
@@ -93,13 +97,35 @@ export function ReplySent({
         })}
       </ul>
 
-      {/* TODO: link to a real .ics file (or Google Calendar) for the celebrations they accepted. */}
-      <PillLink href="#" variant="cocoa" className="mt-2.5">
-        <span className="inline-flex items-center gap-2.5">
-          <Icon name="calendar" size={15} className="text-ember" />
-          Add to my calendar
-        </span>
-      </PillLink>
+      {accepted.length > 0 ? (
+        <>
+          <PillAnchor
+            href={`/calendar?events=${accepted.map((c) => c.id).join(",")}`}
+            download
+            variant="cocoa"
+            className="mt-2.5"
+          >
+            <span className="inline-flex items-center gap-2.5">
+              <Icon name="calendar" size={15} className="text-ember" />
+              Add to my calendar
+            </span>
+          </PillAnchor>
+          <ul aria-label="Google Calendar links" className="flex flex-wrap items-center justify-center gap-x-5.5">
+            {accepted.map((c) => (
+              <li key={c.id}>
+                <a
+                  href={googleCalendarUrl(celebrationEvent(c, siteUrl))}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ember-link inline-flex min-h-11 items-center py-3 text-xs uppercase tracking-[0.18em] text-cocoa no-underline"
+                >
+                  {c.name} on Google Calendar
+                </a>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
       <button
         type="button"
         onClick={onChange}
