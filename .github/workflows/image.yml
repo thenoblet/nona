@@ -1,6 +1,7 @@
 # Builds the production image on every push to main and pushes it to GHCR.
 # Dokploy pulls the image; nothing is built on the server.
-# A manual run on any other branch runs the tests only: only main builds :latest and deploys.
+# Pull requests into main and manual runs on other branches run the tests only:
+# only main builds :latest and deploys.
 # To freeze deploys (e.g. the wedding week), blank the DOKPLOY_DEPLOY_URL secret.
 
 name: Image
@@ -8,13 +9,16 @@ name: Image
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # Each job asks for what it needs; nothing by default.
 permissions: {}
 
+# One run at a time per branch or pull request, so main's deploys stay in order.
 concurrency:
-  group: image
+  group: image-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
