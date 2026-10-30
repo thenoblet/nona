@@ -73,7 +73,7 @@ describe("buildIcs", () => {
 
   it("escapes commas, semicolons, backslashes and newlines", () => {
     const e = { ...celebrationEvent(base, site), description: "a,b;c\\d\ne" };
-    expect(buildIcs([e], now)).toContain("DESCRIPTION:a\\,b\;c\\\\d\\ne\r\n");
+    expect(buildIcs([e], now)).toContain("DESCRIPTION:a\\,b\\;c\\\\d\\ne\r\n");
   });
 });
 
