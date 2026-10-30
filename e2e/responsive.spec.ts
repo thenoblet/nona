@@ -17,6 +17,7 @@ const pages: { path: string; marker: (page: Page) => Locator }[] = [
   { path: "/today", marker: heading(/the day/) },
   { path: "/wishes", marker: heading(/Leave us a wish/) },
   { path: "/admin/rsvps", marker: (page) => page.getByText("This page is for the couple.") },
+  { path: "/admin/content/celebrations", marker: (page) => page.getByText("This page is for the couple.") },
 ];
 
 for (const { path, marker } of pages) {

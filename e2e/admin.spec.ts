@@ -29,3 +29,28 @@ test("without Cloudflare Access the admin shows no replies and refuses the CSV",
   expect(admin.status()).toBe(307);
   expect(admin.headers()["location"]).toBe("/admin/rsvps");
 });
+
+test("without Cloudflare Access the site text pages show only their shell", async ({ request }) => {
+  const content = await request.get("/admin/content", { maxRedirects: 0 });
+  expect(content.status()).toBe(307);
+  expect(content.headers()["location"]).toBe("/admin/content/celebrations");
+
+  // Global setup saved a question; neither it nor the built-in text reaches the page.
+  const faq = await (await request.get("/admin/content/faq")).text();
+  expect(faq).toContain("This page is for the couple.");
+  expect(faq).toContain("Questions");
+  expect(faq).not.toContain("E2E unique question");
+  expect(faq).not.toContain("Can I bring a plus-one?");
+
+  const celebrations = await (await request.get("/admin/content/celebrations")).text();
+  expect(celebrations).toContain("This page is for the couple.");
+  expect(celebrations).not.toContain("Evening glamour");
+  expect(celebrations).not.toContain("Formal · black tie optional");
+
+  // An unknown section gets notFound(). Its page streams after the admin's static top bar, so, as
+  // Next documents for streamed pages, the status stays 200 and the not-found page says noindex.
+  const unknown = await (await request.get("/admin/content/not-a-section")).text();
+  expect(unknown).toContain("This page could not be found.");
+  expect(unknown).toContain('<meta name="robots" content="noindex"/>');
+  expect(unknown).not.toContain("This page is for the couple.");
+});

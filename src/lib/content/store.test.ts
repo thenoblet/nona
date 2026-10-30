@@ -4,7 +4,7 @@ import { resetDb } from "../../../test/db";
 import { dbConfig } from "@/lib/env";
 import { contentDefaults } from "./defaults";
 import { sectionKeys, sectionSchemas } from "./schema";
-import { contentOrDefaults, listVersions, readSiteContent, restoreVersion, saveSection } from "./store";
+import { contentOrDefaults, listVersions, readSection, readSiteContent, restoreVersion, saveSection } from "./store";
 
 const sql = postgres({ ...dbConfig(), max: 1 });
 afterAll(() => sql.end());
@@ -67,6 +67,51 @@ describe("versions", () => {
 
   it("refuses to restore a version that does not exist", async () => {
     expect((await restoreVersion("faq", 9, "test")).ok).toBe(false);
+  });
+});
+
+describe("saving from a loaded version", () => {
+  it("saves when the loaded version is still the newest, including none saved yet", async () => {
+    expect(await saveSection("faq", faqA, "test", { baseVersion: 0 })).toEqual({ ok: true, version: 1 });
+    expect(await saveSection("faq", faqB, "test", { baseVersion: 1 })).toEqual({ ok: true, version: 2 });
+  });
+
+  it("refuses when someone saved since, says who and when, and saves nothing", async () => {
+    await saveSection("faq", faqA, "nancy@example.com");
+    const result = await saveSection("faq", faqB, "noblet@example.com", { baseVersion: 0 });
+    expect(result).toEqual({
+      ok: false,
+      errors: [expect.any(String)],
+      newer: { version: 1, savedBy: "nancy@example.com", savedAt: expect.any(Date) },
+    });
+    expect((await listVersions("faq")).map((entry) => entry.version)).toEqual([1]);
+  });
+
+  it("lets only one of two saves from the same version through", async () => {
+    const results = await Promise.all([
+      saveSection("faq", faqA, "nancy@example.com", { baseVersion: 0 }),
+      saveSection("faq", faqB, "noblet@example.com", { baseVersion: 0 }),
+    ]);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(await listVersions("faq")).toHaveLength(1);
+  });
+});
+
+describe("readSection", () => {
+  it("gives the built-in text as version 0 when nothing is saved", async () => {
+    expect(await readSection("faq")).toEqual({ value: contentDefaults.faq, version: 0 });
+  });
+
+  it("gives the newest saved value with its version", async () => {
+    await saveSection("faq", faqA, "test");
+    await saveSection("faq", faqB, "test");
+    expect(await readSection("faq")).toEqual({ value: faqB, version: 2 });
+  });
+
+  it("gives the built-in text, with the stored version, when the newest row has a bad shape", async () => {
+    await sql`insert into site_content (key, version, value, saved_by) values ('faq', 4, ${sql.json({ nope: 1 })}, 'test')`;
+    expect(await readSection("faq")).toEqual({ value: contentDefaults.faq, version: 4 });
+    expect(console.error).toHaveBeenCalled();
   });
 });
 

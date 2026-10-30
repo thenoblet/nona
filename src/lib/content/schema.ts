@@ -39,11 +39,17 @@ const scheduleItem = z.object({
   day: z.enum(["sat", "sun"]),
 });
 
+const coordinate = (limit: number, example: string) =>
+  z
+    .number({ error: `Use a number like ${example}` })
+    .min(-limit, `Use a number from -${limit} to ${limit}`)
+    .max(limit, `Use a number from -${limit} to ${limit}`);
+
 const venue = z.object({
   name: text,
   address: text,
   gps: text,
-  coords: z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).optional(),
+  coords: z.object({ lat: coordinate(90, "7.019267"), lng: coordinate(180, "-2.145361") }).optional(),
   mapsUrl: link,
   note: text.optional(),
 });
@@ -96,7 +102,9 @@ export const sectionSchemas = {
   gifts: z.array(giftItem),
   party: z.array(partyMember),
   story,
-  liveStream: z.object({ url: z.url({ protocol: /^https$/ }).nullable() }),
+  liveStream: z.object({
+    url: z.url({ protocol: /^https$/, error: "Use an https:// link, or leave it empty" }).nullable(),
+  }),
 } as const;
 
 export type SectionKey = keyof typeof sectionSchemas;
