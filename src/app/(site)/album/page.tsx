@@ -97,6 +97,8 @@ async function AlbumMedia() {
   await connection();
   const [{ celebrations }, items] = await Promise.all([getSiteContent(), listMedia()]);
   // TODO: identify this phone with a device cookie instead of the sample device.
+  // TODO: ask for the latest list every 30 s, as the slideshow does (pollSlides in
+  // src/components/slideshow/feed.ts), so new uploads appear without a reload.
   return <AlbumBrowser celebrations={celebrations} items={items} myDevice={SAMPLE_DEVICE} />;
 }
 

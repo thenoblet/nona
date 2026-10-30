@@ -19,6 +19,10 @@ Mobile-first: every page is designed for a phone, then widened for larger screen
 | `/open` | Envelope opener, an optional phone entry with a wax seal. |
 | `/slideshow` | Guests' newest photos. On the venue TV (and any landscape screen): the photo, a QR code to the album and the latest thumbnails. On a phone held upright: the photo full screen; swipe or tap the sides to move, with pause, close and "Add yours". |
 | `/print/table-card?table=7` | Printable A5 QR card for each table. |
+| `/admin` | The couple's admin, behind Cloudflare Access. Opens on the replies. |
+| `/admin/rsvps` | Every current reply, with totals per celebration, search, filters, each reply's email status and the replies to check ("Keep this one", "Keep both"). |
+| `/admin/rsvps.csv` | The replies as a spreadsheet (CSV), times in Accra. |
+| `/admin/content/[section]` | Edit the site's times, venues and text, one section at a time (`celebrations`, `schedule`, `venues`, `landmarks`, `faq`, `travel`, `gifts`, `party`, `story`, `live-stream`), with every saved version kept for undo. |
 
 ### Previewing the homepage versions
 
@@ -50,8 +54,12 @@ public/
   audio/               the three songs, .webm + .mp3 (mp3 for older iPhones)
 ```
 
-**To change wording, dates, places or the wedding party, edit `src/content/wedding.ts`.**
-Anything still to confirm is in square brackets, like `[Start time]` and `[Guest hotel]`.
+**The couple change times, venues and text in the admin (`/admin/content`).** A saved section
+shows on the site within seconds. `src/content/wedding.ts` holds the built-in text: the site
+shows it for a section until that section is first saved in the admin, and for every section
+whenever the database can't be reached. Once a section has been saved, editing `wedding.ts` no
+longer changes it on the site. Anything still to confirm is in square brackets, like
+`[Start time]` and `[Guest hotel]`.
 
 ## Data: Postgres, and what is still a stand-in
 
@@ -68,8 +76,8 @@ won't change when the real backend arrives:
 
 Search for `TODO` to find the other placeholders: uploads (presigned multipart to R2), downloads
 (per-celebration zips, built by a separate media worker), voice and video recording, the device
-cookie for "My uploads", and live updates for the album (it will poll every 30 s, as the slideshow
-already does).
+cookie for "My uploads", and live updates for the album (`src/app/(site)/album/page.tsx`: it will
+poll every 30 s, as the slideshow already does).
 
 When guest media is served from R2, add its host to `images.remotePatterns` in `next.config.ts`.
 
@@ -118,10 +126,30 @@ to `main`, GitHub Actions (`.github/workflows/image.yml`) builds the image and p
 `ghcr.io/thenoblet/nona` as `:latest` and `:sha-<short>`.
 
 In LuxBedding's Dokploy, the app runs from that Docker image on `nona-web-01`, with port `3000`, health
-check `GET /api/healthz`, and:
+check `GET /api/healthz`, and these environment variables. Their values live in Dokploy only, never
+in this repository.
 
-- `SITE_URL`: the public address, `https://nobletxnancy.com` (used in QR codes and link previews;
-  also passed to the build, because static pages bake it in)
+| Variable | What it is |
+|---|---|
+| `SITE_URL` | The public address, `https://nobletxnancy.com`, without a trailing slash. Used in QR codes, emails, calendar files and link previews; also passed to the build, because static pages bake it in. |
+| `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | The database on the private network. Without them the site shows its built-in text, but replies, the admin and emails are off. |
+| `RESEND_API_KEY` | Sends the confirmation emails. Without it a confirmation ends "Failed" in the admin; it never claims to have sent. |
+| `EMAIL_FROM` | The sender: a name and an address on a domain verified in Resend. Optional; it defaults to the RSVP address in `src/lib/email/send.ts`. |
+| `EMAIL_REPLY_TO` | Where a guest's reply to the email goes. Several addresses, separated by commas, all receive it. |
+| `CF_ACCESS_TEAM_DOMAIN` | The Cloudflare Access team domain as a bare host (`<team>.cloudflareaccess.com`, without `https://`). |
+| `CF_ACCESS_AUD` | The Access application's audience tag. With either of these two missing, the admin refuses everyone. |
+
+**Never set `ADMIN_DEV_EMAIL` or `ALLOW_MODE_PREVIEW` in production.** The first stands in for a
+signed-in admin on a developer's machine; the second lets anyone preview the wedding-weekend and
+thank-you versions of the homepage before their dates.
+
+The admin is reachable only through a Cloudflare Access application that covers `/admin` and
+everything under it (`/admin*`), allowing only the couple. The app checks the signed Access token
+on every admin page, download and action itself, so a request that reaches the server some other
+way gets nothing.
+
+The database is backed up every night at 02:30 UTC by Dokploy, to a private Cloudflare R2 bucket.
+Backups are kept forever.
 
 To deploy automatically, put the Dokploy app's deploy URL in the repository secret `DOKPLOY_DEPLOY_URL`.
 To freeze deploys (the wedding week), blank that secret. To roll back, point the app at an earlier
