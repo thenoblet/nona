@@ -62,20 +62,27 @@ describe("renderRsvpConfirmation", () => {
     expect(none.ics).toBeNull();
   });
 
-  it.each(["Ama Owusu", "Akosua Ɔfori"])("greets %s by name", (name) => {
-    const mail = renderRsvpConfirmation(
-      record({ [first.id]: "yes" }, name),
-      contentDefaults,
-      "https://example.com",
-    );
-    expect(mail.text).toContain(`Dear ${name},`);
-    expect(mail.html).toContain(`Dear ${name},`);
-  });
+  it.each(["Ama Owusu", "Akosua Ɔfori", "J. Doe", "Kwame Mensah Jr."])(
+    "greets %s by name",
+    (name) => {
+      const mail = renderRsvpConfirmation(
+        record({ [first.id]: "yes" }, name),
+        contentDefaults,
+        "https://example.com",
+      );
+      expect(mail.text).toContain(`Dear ${name},`);
+      expect(mail.html).toContain(`Dear ${name},`);
+    },
+  );
 
   it.each([
     "see http://evil.test",
     "visit www.evil.test",
     "a@evil.test",
+    "bit.ly",
+    "evil.com",
+    "a.b.c",
+    "пример.рф",
     "A".repeat(61),
   ])("greets a guest whose name is %s as a guest", (name) => {
     const mail = renderRsvpConfirmation(

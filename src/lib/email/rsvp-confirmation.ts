@@ -11,10 +11,9 @@ const escapeHtml = (value: string) =>
 
 /** Only a plain name is echoed back: the address is unverified, so a link must not ride along. */
 function greetingName(fullName: string): string {
+  // A period only ends an initial or suffix ("J. Doe", "Jr."), so "bit.ly" is not a name.
   const plain =
-    fullName.length <= 60 &&
-    /^[\p{L}\p{M} '.-]+$/u.test(fullName) &&
-    !/www\./i.test(fullName);
+    fullName.length <= 60 && /^(?:[\p{L}\p{M}' -]|\.(?= |$))+$/u.test(fullName);
   return plain ? fullName : "guest";
 }
 
