@@ -38,8 +38,12 @@ export type JobReport = { sizeBytes?: number; kind?: string };
 
 export type MediaJobHandler = (job: MediaJob) => Promise<JobReport | void>;
 
-/** One handler for each queue; media.convert's serves both its on-demand and its backlog workers. */
-export type MediaHandlers = Record<WorkQueueName, MediaJobHandler>;
+/**
+ * Each queue's handler; media.convert's serves both its on-demand and its backlog workers. A queue
+ * with none yet (its task hasn't shipped) gets no workers: its jobs wait in the queue, unfailed,
+ * for the release that brings its handler (Ruling AA).
+ */
+export type MediaHandlers = Partial<Record<WorkQueueName, MediaJobHandler>>;
 
 /** A short reason an uploader is shown, which the album turns into plain words. */
 const FAILURE_REASON = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -61,11 +65,6 @@ export class PermanentJobError extends Error {
     super(message);
   }
 }
-
-/** The handler of a queue whose processing a later task adds: it fails the job for good, saying so. */
-export const notImplementedYet: MediaJobHandler = async (job) => {
-  throw new PermanentJobError("not-implemented", `${job.queue} has no handler yet`);
-};
 
 /** The item a job is about, when its data names one. */
 function mediaIdOf(data: unknown): string | null {
@@ -157,7 +156,8 @@ export type QueueWorkers = {
 };
 
 /**
- * Starts the workers for every media queue, each at its concurrency, and media.dead's handler.
+ * Starts the workers for every media queue that has a handler, each at its concurrency, and
+ * media.dead's handler. A queue with no handler gets none, and is named once in the log.
  * media.convert has two: on-demand (priority 20 and up) always, and the backlog (below 20) while
  * the convert_backlog switch is on. While it is off, backlog jobs wait in the queue, unfailed.
  */
@@ -170,20 +170,33 @@ export async function startQueueWorkers(
   const polling: WorkOptions =
     options.pollingIntervalSeconds === undefined ? {} : { pollingIntervalSeconds: options.pollingIntervalSeconds };
 
-  const work = (queue: WorkQueueName, localConcurrency: number, priorities: WorkOptions = {}) =>
+  const work = (queue: WorkQueueName, handler: MediaJobHandler, localConcurrency: number, priorities: WorkOptions = {}) =>
     boss.work<Record<string, unknown>, JobResult[], WorkOptions & { perJobResults: true }>(
       queue,
       { ...polling, ...priorities, localConcurrency, perJobResults: true },
-      runJobs(queue, handlers[queue]),
+      runJobs(queue, handler),
     );
 
-  await work(MEDIA_QUEUES.photo, concurrency.photo);
-  await work(MEDIA_QUEUES.jpeg, concurrency.jpeg);
-  await work(MEDIA_QUEUES.poster, concurrency.poster);
-  await work(MEDIA_QUEUES.wish, concurrency.wish);
-  await work(MEDIA_QUEUES.visibility, concurrency.visibility);
-  await work(MEDIA_QUEUES.card, concurrency.card);
-  await work(MEDIA_QUEUES.convert, concurrency.convertOnDemand, { minPriority: CONVERT_PRIORITY.onDemand });
+  const queues: [WorkQueueName, number][] = [
+    [MEDIA_QUEUES.photo, concurrency.photo],
+    [MEDIA_QUEUES.jpeg, concurrency.jpeg],
+    [MEDIA_QUEUES.poster, concurrency.poster],
+    [MEDIA_QUEUES.wish, concurrency.wish],
+    [MEDIA_QUEUES.visibility, concurrency.visibility],
+    [MEDIA_QUEUES.card, concurrency.card],
+  ];
+  for (const [queue, localConcurrency] of queues) {
+    const handler = handlers[queue];
+    if (handler) await work(queue, handler, localConcurrency);
+  }
+  const convert = handlers[MEDIA_QUEUES.convert];
+  if (convert) {
+    await work(MEDIA_QUEUES.convert, convert, concurrency.convertOnDemand, { minPriority: CONVERT_PRIORITY.onDemand });
+  }
+  const waiting = [...queues.map(([queue]) => queue), MEDIA_QUEUES.convert].filter((queue) => !handlers[queue]);
+  if (waiting.length > 0) {
+    console.log(`[worker] no handler yet for ${waiting.join(", ")}: their jobs wait in the queue`);
+  }
   await boss.work<Record<string, unknown>, void, WorkOptions & { includeMetadata: true }>(
     MEDIA_QUEUES.dead,
     { ...polling, localConcurrency: 1, includeMetadata: true },
@@ -196,10 +209,10 @@ export async function startQueueWorkers(
   let following = Promise.resolve();
 
   const followSwitchNow = async () => {
-    if (stopped) return;
+    if (stopped || !convert) return;
     const backlogOn = (await getSetting("convert_backlog", SETTING_DEFAULTS.convert_backlog)) === true;
     if (backlogOn && backlogWorkId === null) {
-      backlogWorkId = await work(MEDIA_QUEUES.convert, concurrency.convertBacklog, {
+      backlogWorkId = await work(MEDIA_QUEUES.convert, convert, concurrency.convertBacklog, {
         maxPriority: CONVERT_PRIORITY.onDemand - 1,
       });
       console.log("[worker] backlog conversions on");

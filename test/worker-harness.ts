@@ -10,7 +10,6 @@ import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { errorMessage } from "@/lib/log-error";
 import { workerConfig } from "@/worker/config";
 import { runningProcessIds, runProcess } from "@/worker/processes";
-import { notImplementedYet } from "@/worker/queues";
 import { runWorker } from "@/worker/runtime";
 
 const queueSchema = process.env.HARNESS_QUEUE_SCHEMA;
@@ -36,16 +35,10 @@ await runWorker({
           ...["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "600"],
           ...["-c:v", "libx264", "-preset", "ultrafast", "-threads", "1", "-f", "null", "-"],
         ],
-        { signal: job.signal, timeoutMilliseconds: 15 * 60_000, background: true },
+        { signal: job.signal, timeoutMilliseconds: 15 * 60_000, priority: "background" },
       );
       console.log(JSON.stringify({ processIds: runningProcessIds() }));
       await converting;
     },
-    [MEDIA_QUEUES.jpeg]: notImplementedYet,
-    [MEDIA_QUEUES.poster]: notImplementedYet,
-    [MEDIA_QUEUES.wish]: notImplementedYet,
-    [MEDIA_QUEUES.convert]: notImplementedYet,
-    [MEDIA_QUEUES.visibility]: notImplementedYet,
-    [MEDIA_QUEUES.card]: notImplementedYet,
   },
 });

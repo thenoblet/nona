@@ -19,10 +19,11 @@ export type ProcessOptions = {
   /** Kills the program once it has run this long. */
   timeoutMilliseconds: number;
   /**
-   * Runs it under `nice -n 19`, so it takes only the CPU photos leave: conversions and other long
-   * video work. A photo's own tools run at the worker's priority.
+   * Required, so no call can forget it. `background` runs it under `nice -n 19`, so it takes only
+   * the CPU photos leave: conversions and other long video work. `foreground` runs it at the
+   * worker's own priority: a photo's tools (heif-dec), which must stay fast.
    */
-  background?: boolean;
+  priority: "background" | "foreground";
   cwd?: string;
 };
 
@@ -61,7 +62,8 @@ export function runProcess(command: string, args: readonly string[], options: Pr
   if (stopping) return Promise.reject(new ProcessError(command, "stopping", null, ""));
   if (options.signal.aborted) return Promise.reject(new ProcessError(command, "aborted", null, ""));
 
-  const [file, fileArgs] = options.background ? ["nice", ["-n", "19", command, ...args]] : [command, [...args]];
+  const [file, fileArgs] =
+    options.priority === "background" ? ["nice", ["-n", "19", command, ...args]] : [command, [...args]];
   // `nice` replaces itself with the program, so the child's pid is the program's.
   const child = spawn(file, fileArgs, { cwd: options.cwd, stdio: ["ignore", "pipe", "pipe"], shell: false });
 

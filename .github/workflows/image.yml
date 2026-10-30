@@ -157,8 +157,9 @@ jobs:
           target: test
           load: true
           tags: nona-worker-test
-          cache-from: type=gha,scope=worker
-          cache-to: type=gha,scope=worker,mode=max
+          # Each worker build keeps its own cache: one shared scope would have each overwrite the other's.
+          cache-from: type=gha,scope=worker-test
+          cache-to: type=gha,scope=worker-test,mode=max
 
       # Creates MinIO's two buckets, then runs npm run test:worker.
       - run: docker run --rm --network host nona-worker-test npm run storage:init
@@ -251,8 +252,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GIT_SHA=${{ github.sha }}
-          cache-from: type=gha,scope=worker
-          cache-to: type=gha,scope=worker,mode=max
+          cache-from: type=gha,scope=worker-run
+          cache-to: type=gha,scope=worker-run,mode=max
 
       - name: Tell Dokploy to deploy the worker
         if: env.DOKPLOY_WORKER_DEPLOY_URL != ''

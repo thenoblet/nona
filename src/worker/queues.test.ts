@@ -13,7 +13,6 @@ import { resetDb } from "../../test/db";
 import { dropBossSchema, startTestBoss } from "../../test/uploads";
 import { runProcess } from "./processes";
 import {
-  notImplementedYet,
   PermanentJobError,
   startQueueWorkers,
   type MediaHandlers,
@@ -36,22 +35,9 @@ const ONE_EACH = {
   convertBacklog: 1,
 };
 
-/** Every queue's placeholder, with the ones a test needs replaced. */
-function handlers(overrides: Partial<MediaHandlers>): MediaHandlers {
-  return {
-    [MEDIA_QUEUES.photo]: notImplementedYet,
-    [MEDIA_QUEUES.jpeg]: notImplementedYet,
-    [MEDIA_QUEUES.poster]: notImplementedYet,
-    [MEDIA_QUEUES.wish]: notImplementedYet,
-    [MEDIA_QUEUES.convert]: notImplementedYet,
-    [MEDIA_QUEUES.visibility]: notImplementedYet,
-    [MEDIA_QUEUES.card]: notImplementedYet,
-    ...overrides,
-  };
-}
-
-async function start(overrides: Partial<MediaHandlers>, concurrency = ONE_EACH): Promise<QueueWorkers> {
-  workers = await startQueueWorkers(boss, handlers(overrides), concurrency, { pollingIntervalSeconds: 0.5 });
+/** Starts the workers for the queues a test gives handlers; the others have none, as in production until their task. */
+async function start(handlers: MediaHandlers, concurrency = ONE_EACH): Promise<QueueWorkers> {
+  workers = await startQueueWorkers(boss, handlers, concurrency, { pollingIntervalSeconds: 0.5 });
   return workers;
 }
 
@@ -189,13 +175,22 @@ describe("a job that fails for good", () => {
     expect(await readItem(mediaId)).toMatchObject({ status: "ready" });
   });
 
-  it("is not yet done by the queues later tasks fill: their placeholder fails for good, saying so", async () => {
-    await start({});
+});
+
+describe("a queue with no handler yet (Ruling AA)", () => {
+  it("leaves its job waiting, unfailed, for the release that brings its handler, and says so once at start", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    // Only visibility has a handler, so the photo queue has none.
+    await start({ [MEDIA_QUEUES.visibility]: async () => {} });
+    expect(log.mock.calls.map((call) => call.join(" ")).join("\n")).toMatch(/no handler yet for .*media\.photo/);
+
     const mediaId = await insertItem();
-    await boss.send(MEDIA_QUEUES.photo, { mediaId });
-    await eventually(async () =>
-      expect(await readItem(mediaId)).toMatchObject({ status: "failed", failureReason: "not-implemented" }),
-    );
+    const jobId = await boss.send(MEDIA_QUEUES.photo, { mediaId });
+    // Several of the test's half-second polls, and the dead letter queue's.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+
+    expect(await jobState(MEDIA_QUEUES.photo, jobId ?? "")).toBe("created");
+    expect(await readItem(mediaId)).toMatchObject({ status: "uploaded", failureReason: null });
   });
 });
 
@@ -240,6 +235,9 @@ describe("the conversion workers", () => {
 
 describe("Review Focus 4: photos stay fast while a video converts", () => {
   it("finishes a photo job in under 20 s while a 30-second conversion runs, nice'd, on every core", async () => {
+    // One libvips thread per photo, as production sets it (WORKER_SHARP_THREADS, Ruling R).
+    const sharpThreads = sharp.concurrency();
+    sharp.concurrency(1);
     const stopConversion = new AbortController();
     let conversionStarted!: () => void;
     const conversionRunning = new Promise<void>((resolve) => (conversionStarted = resolve));
@@ -260,7 +258,7 @@ describe("Review Focus 4: photos stay fast while a video converts", () => {
           {
             signal: AbortSignal.any([job.signal, stopConversion.signal]),
             timeoutMilliseconds: 10 * 60_000,
-            background: true,
+            priority: "background",
           },
         );
         conversionStarted();
@@ -304,6 +302,7 @@ describe("Review Focus 4: photos stay fast while a video converts", () => {
       expect(conversionEnded).toBe(false);
     } finally {
       stopConversion.abort();
+      sharp.concurrency(sharpThreads);
     }
   });
 });

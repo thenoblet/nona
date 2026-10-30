@@ -216,9 +216,23 @@ To run it locally against docker compose's database and MinIO: `npm run worker` 
 `ghcr.io/thenoblet/nona-worker` (private) as `:latest` and `:sha-<short>`, then calls the repository
 secret `DOKPLOY_WORKER_DEPLOY_URL` (skipped when blank: blank it to freeze the worker's deploys).
 In Dokploy, the `nona26-worker` app runs that image on `nona-worker-01`, with the same `ghcr.io`
-registry login as the site, about 3 CPUs and 12 GB, one replica, and the box's scratch folder
-`/mnt/nona-worker` bind-mounted at `/scratch`. The image runs as uid:gid `10001:10001`, the scratch
-folder's owner. It needs no port. Its environment:
+registry login as the site, about 3 CPUs and 12 GB, and the box's scratch folder `/mnt/nona-worker`
+bind-mounted at `/scratch`. The image runs as uid:gid `10001:10001`, the scratch folder's owner. It
+needs no port.
+
+**Exactly one worker container at a time: 1 replica, deployed stop-first** (Swarm
+`update_config.order: stop-first`, never start-first). Each start removes the scratch folders it
+finds (an earlier run's leftovers) and runs its own sweeper, so a second container running beside it,
+even for the seconds of a deploy, could remove a running job's files or queue an item twice. The
+old container stops within 8 s of SIGTERM and its interrupted jobs go back to their queues, so
+stop-first costs only those seconds. To process more at once, raise the concurrency variables
+below, never the replicas.
+
+`pg-boss` is pinned to one exact version in `package.json`: the sweeper reads pg-boss's own `job`
+table to see which items have a job, so upgrading pg-boss is a deliberate change, made with
+`npm run test:worker`.
+
+Its environment:
 
 | Variable | Default | What it is |
 |---|---|---|

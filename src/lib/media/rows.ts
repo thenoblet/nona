@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { EventId } from "@/lib/content/schema";
 import { isUuid } from "@/lib/data/ids";
 import { getDb } from "@/lib/db/client";
@@ -231,23 +231,28 @@ export async function uploadOwners(mediaIds: string[]): Promise<Map<string, stri
 
 /**
  * Marks an item whose processing failed for good (a corrupt file, or retries used up) `failed`, with
- * the short reason its uploader is shown. True if the item exists.
+ * the short reason its uploader is shown. Never a `ready` item: one whose re-processing failed stays
+ * as the album shows it. True if it changed the item.
  */
 export async function markProcessingFailed(mediaId: string, reason: string): Promise<boolean> {
   const rows = await getDb()
     .update(media)
     .set({ status: "failed", failureReason: reason })
-    .where(eq(media.id, mediaId))
+    .where(and(eq(media.id, mediaId), sql`${media.status} <> 'ready'`))
     .returning({ id: media.id });
   return rows.length > 0;
 }
 
-/** Marks a video's conversion failed for good. The video itself stays as it was, poster and all. */
+/**
+ * Marks a video's conversion failed for good. The video itself stays as it was, poster and all, and
+ * a conversion already `done` stays done (a later re-conversion failing keeps the copy that works).
+ * True if it changed the item.
+ */
 export async function markConversionFailed(mediaId: string): Promise<boolean> {
   const rows = await getDb()
     .update(media)
     .set({ conversion: "failed" })
-    .where(eq(media.id, mediaId))
+    .where(and(eq(media.id, mediaId), sql`${media.conversion} <> 'done'`))
     .returning({ id: media.id });
   return rows.length > 0;
 }
@@ -256,8 +261,10 @@ export async function markConversionFailed(mediaId: string): Promise<boolean> {
 export type UploadCursor = { startedAt: Date; id: string };
 
 export type UnfinishedUploadsPage = {
-  startedBefore: Date;
-  startedAfter: Date;
+  /** Only uploads started more than this many minutes ago, by the database's clock. */
+  startedMoreThanMinutesAgo: number;
+  /** And within this many minutes. */
+  startedWithinMinutes: number;
   cursor: UploadCursor | null;
   limit: number;
 };
@@ -267,7 +274,12 @@ export type UnfinishedUploadsPage = {
  * unfinished uploads, read in its own order, so no sort. `status = 'uploading'` is a literal, so
  * Postgres can prove the index applies under a generic plan.
  */
-export function unfinishedUploadsQuery({ startedBefore, startedAfter, cursor, limit }: UnfinishedUploadsPage) {
+export function unfinishedUploadsQuery({
+  startedMoreThanMinutesAgo,
+  startedWithinMinutes,
+  cursor,
+  limit,
+}: UnfinishedUploadsPage) {
   return getDb()
     .select(uploadColumns)
     .from(media)
@@ -275,8 +287,8 @@ export function unfinishedUploadsQuery({ startedBefore, startedAfter, cursor, li
       and(
         sql`${media.status} = 'uploading'`,
         isNotNull(media.multipartUploadId),
-        lt(media.startedAt, startedBefore),
-        gt(media.startedAt, startedAfter),
+        sql`${media.startedAt} < now() - make_interval(mins => ${startedMoreThanMinutesAgo}::integer)`,
+        sql`${media.startedAt} > now() - make_interval(mins => ${startedWithinMinutes}::integer)`,
         cursor
           ? or(gt(media.startedAt, cursor.startedAt), and(eq(media.startedAt, cursor.startedAt), gt(media.id, cursor.id)))
           : undefined,

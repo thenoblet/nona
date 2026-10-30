@@ -11,7 +11,13 @@ import { media } from "@/lib/db/schema";
 import { dbConfig } from "@/lib/env";
 import { originalKey } from "@/lib/storage/keys";
 import { resetDb } from "../../../test/db";
-import { isVisible, resumableUploadQuery, uploadQuery } from "./rows";
+import {
+  isVisible,
+  markConversionFailed,
+  markProcessingFailed,
+  resumableUploadQuery,
+  uploadQuery,
+} from "./rows";
 
 /** A finished album photo from a new guest, with any of its columns changed. */
 async function addPhoto(changes: Partial<typeof media.$inferInsert> = {}): Promise<string> {
@@ -77,6 +83,41 @@ describe("isVisible", () => {
 
   it("is the one the app's data layer hands out", () => {
     expect(isVisibleForApp).toBe(isVisible);
+  });
+});
+
+describe("the media worker's marks", () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function readRow(id: string) {
+    const [row] = await getDb()
+      .select({ status: media.status, failureReason: media.failureReason, conversion: media.conversion })
+      .from(media)
+      .where(eq(media.id, id));
+    return row;
+  }
+
+  it("marks an uploaded item whose processing failed for good failed, with its reason", async () => {
+    const id = await addPhoto({ status: "uploaded", listedAt: null });
+    expect(await markProcessingFailed(id, "corrupt")).toBe(true);
+    expect(await readRow(id)).toMatchObject({ status: "failed", failureReason: "corrupt" });
+  });
+
+  it("never turns a ready item failed: a failed re-processing leaves it as the album shows it", async () => {
+    const id = await addPhoto({ status: "ready" });
+    expect(await markProcessingFailed(id, "processing-failed")).toBe(false);
+    expect(await readRow(id)).toMatchObject({ status: "ready", failureReason: null });
+  });
+
+  it("marks a queued conversion failed, and never a done one", async () => {
+    const queued = await addPhoto({ kind: "video", conversion: "queued" });
+    const done = await addPhoto({ kind: "video", conversion: "done" });
+    expect(await markConversionFailed(queued)).toBe(true);
+    expect(await markConversionFailed(done)).toBe(false);
+    expect(await readRow(queued)).toMatchObject({ status: "ready", conversion: "failed" });
+    expect(await readRow(done)).toMatchObject({ status: "ready", conversion: "done" });
   });
 });
 

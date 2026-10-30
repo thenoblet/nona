@@ -17,14 +17,15 @@ describe("runProcess", () => {
   it("runs a program with its arguments as they are, never through a shell", async () => {
     const { stdout } = await runProcess("printf", ["%s|", "a b", "$(echo injected)", "; rm -rf /"], {
       signal: NEVER,
+      priority: "foreground",
       timeoutMilliseconds: MINUTE,
     });
     expect(stdout).toBe("a b|$(echo injected)|; rm -rf /|");
   });
 
   it("runs background work under nice 19, so photos keep the CPU, and other work at the worker's own", async () => {
-    const background = await runProcess("nice", [], { signal: NEVER, timeoutMilliseconds: MINUTE, background: true });
-    const foreground = await runProcess("nice", [], { signal: NEVER, timeoutMilliseconds: MINUTE });
+    const background = await runProcess("nice", [], { signal: NEVER, timeoutMilliseconds: MINUTE, priority: "background" });
+    const foreground = await runProcess("nice", [], { signal: NEVER, priority: "foreground", timeoutMilliseconds: MINUTE });
     expect(background.stdout.trim()).toBe("19");
     expect(Number(foreground.stdout.trim())).toBeLessThan(19);
   });
@@ -33,7 +34,7 @@ describe("runProcess", () => {
     const failure = await runProcess(
       "sh",
       ["-c", 'for line in $(seq 0 1999); do echo "line $line" >&2; done; exit 3'],
-      { signal: NEVER, timeoutMilliseconds: MINUTE },
+      { signal: NEVER, priority: "foreground", timeoutMilliseconds: MINUTE },
     ).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(ProcessError);
     const { exitCode, stderrTail, ending } = failure as ProcessError;
@@ -46,7 +47,7 @@ describe("runProcess", () => {
 
   it("kills a program that runs past its time", async () => {
     const started = Date.now();
-    const failure = await runProcess("sleep", ["30"], { signal: NEVER, timeoutMilliseconds: 200 }).catch(
+    const failure = await runProcess("sleep", ["30"], { signal: NEVER, priority: "foreground", timeoutMilliseconds: 200 }).catch(
       (error: unknown) => error,
     );
     expect(failure).toBeInstanceOf(ProcessError);
@@ -56,7 +57,7 @@ describe("runProcess", () => {
 
   it("kills a program when its job's signal is aborted", async () => {
     const job = new AbortController();
-    const running = runProcess("sleep", ["30"], { signal: job.signal, timeoutMilliseconds: MINUTE });
+    const running = runProcess("sleep", ["30"], { signal: job.signal, priority: "foreground", timeoutMilliseconds: MINUTE });
     const [processId] = runningProcessIds();
     expect(isRunning(processId)).toBe(true);
     job.abort(new Error("the job expired"));
@@ -69,13 +70,13 @@ describe("runProcess", () => {
   it("refuses to start for a job whose signal is already aborted", async () => {
     const job = new AbortController();
     job.abort();
-    await expect(runProcess("true", [], { signal: job.signal, timeoutMilliseconds: MINUTE })).rejects.toThrow();
+    await expect(runProcess("true", [], { signal: job.signal, priority: "foreground", timeoutMilliseconds: MINUTE })).rejects.toThrow();
     expect(runningProcessIds()).toEqual([]);
   });
 
   it("fails plainly when the program doesn't exist", async () => {
     await expect(
-      runProcess("nona-no-such-program", [], { signal: NEVER, timeoutMilliseconds: MINUTE }),
+      runProcess("nona-no-such-program", [], { signal: NEVER, priority: "foreground", timeoutMilliseconds: MINUTE }),
     ).rejects.toThrow(/nona-no-such-program/);
     expect(runningProcessIds()).toEqual([]);
   });
@@ -87,8 +88,8 @@ describe("stopAllProcesses", () => {
     vi.resetModules();
     const processes = await import("./processes");
     const running = [
-      processes.runProcess("sleep", ["30"], { signal: NEVER, timeoutMilliseconds: MINUTE, background: true }),
-      processes.runProcess("sleep", ["30"], { signal: NEVER, timeoutMilliseconds: MINUTE }),
+      processes.runProcess("sleep", ["30"], { signal: NEVER, timeoutMilliseconds: MINUTE, priority: "background" }),
+      processes.runProcess("sleep", ["30"], { signal: NEVER, priority: "foreground", timeoutMilliseconds: MINUTE }),
     ];
     const processIds = processes.runningProcessIds();
     expect(processIds).toHaveLength(2);
@@ -100,7 +101,7 @@ describe("stopAllProcesses", () => {
     expect(failures.map((failure) => (failure as ProcessError).ending)).toEqual(["stopping", "stopping"]);
     expect(processIds.filter(isRunning)).toEqual([]);
     await expect(
-      processes.runProcess("true", [], { signal: NEVER, timeoutMilliseconds: MINUTE }),
+      processes.runProcess("true", [], { signal: NEVER, priority: "foreground", timeoutMilliseconds: MINUTE }),
     ).rejects.toThrow(/stopping/);
   });
 });

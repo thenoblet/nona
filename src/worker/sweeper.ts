@@ -1,4 +1,4 @@
-import { and, eq, lt, notExists, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
@@ -25,13 +25,18 @@ import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch
 /** How often the sweeper runs. */
 export const SWEEP_EVERY_MILLISECONDS = 10 * 60_000;
 
-const MINUTE = 60_000;
+// Every age is measured by the database's clock (now()), the same clock that stamped the rows.
 /** An item `uploaded` (or a conversion `queued`) this long with no job is stuck. */
-const STUCK_AFTER_MILLISECONDS = 5 * MINUTE;
+const STUCK_AFTER_MINUTES = 5;
 /** An upload older than this is no longer being sent by its phone. */
-const ABANDONED_AFTER_MILLISECONDS = 30 * MINUTE;
+const ABANDONED_AFTER_MINUTES = 30;
 /** R2 aborts unfinished multipart uploads after 7 days; past that (and a day's margin) there is nothing left to finish. */
-const RESCUE_WITHIN_MILLISECONDS = 8 * 24 * 60 * MINUTE;
+const RESCUE_WITHIN_MINUTES = 8 * 24 * 60;
+/**
+ * The most items (or conversions) steps 1 and 2 look at in a sweep, oldest first. One stuck behind
+ * more than this many older ones is found once that backlog drains, as the workers drain it.
+ */
+const CANDIDATE_BATCH_SIZE = 1_000;
 /** The most items one sweep queues in each of steps 1 and 2. */
 const REQUEUE_BATCH_SIZE = 100;
 /** The most unfinished uploads one sweep checks in R2 (a ListParts each, and a complete for some). */
@@ -62,51 +67,30 @@ export type SweeperOptions = {
   rescueBatchSize?: number;
 };
 
-/**
- * Whether the item has a live job (waiting, retrying or running) on one of these queues, read
- * straight from pg-boss's job table: one query for the whole batch, rather than one per item. That
- * is pg-boss 12's own table (the parent of every queue's partition), whose index of live jobs
- * covers name and state; a pg-boss upgrade that changes it fails the sweeper's tests.
- */
-function hasLiveJob(bossSchema: string, queues: MediaQueueName[]): SQL {
-  const names = sql.join(
-    queues.map((name) => sql`${name}`),
-    sql`, `,
-  );
-  return sql`(select 1 from ${sql.identifier(bossSchema)}.job as job
-    where job.name in (${names})
-      and job.state in ('created', 'retry', 'active')
-      and job.data ->> 'mediaId' = ${media.id}::text)`;
-}
-
-function timeAgo(milliseconds: number): Date {
-  return new Date(Date.now() - milliseconds);
+/** `now()` less this many minutes, in SQL: the database's clock, never the worker's. */
+function minutesAgo(minutes: number): SQL {
+  return sql`now() - make_interval(mins => ${minutes}::integer)`;
 }
 
 /**
- * Items `uploaded` more than 5 minutes ago with no live job: at most `limit`. One query, on the
- * partial index of uploaded items, with pg-boss's index of live jobs for each. Exported for its
- * plan's test.
+ * Up to `limit` items `uploaded` more than 5 minutes ago, oldest first, read in order from the
+ * partial index of uploaded items. Exported for its plan's test.
  */
-export function stuckUploadsQuery(bossSchema: string, limit: number) {
+export function uploadedItemsQuery(limit: number) {
   return getDb()
     .select({ id: media.id, purpose: media.purpose, kind: media.kind })
     .from(media)
-    .where(
-      and(
-        sql`${media.status} = 'uploaded'`,
-        lt(media.uploadedAt, timeAgo(STUCK_AFTER_MILLISECONDS)),
-        notExists(hasLiveJob(bossSchema, PROCESSING_QUEUES)),
-      ),
-    )
+    .where(and(sql`${media.status} = 'uploaded'`, sql`${media.uploadedAt} < ${minutesAgo(STUCK_AFTER_MINUTES)}`))
+    .orderBy(asc(media.uploadedAt))
     .limit(limit);
 }
 
 /**
- * Ready videos whose conversion is `queued`, last queued more than 5 minutes ago, with no live job:
- * at most `limit`. On the partial index of queued conversions. Exported for its plan's test.
+ * Up to `limit` ready videos whose conversion is `queued`, last queued (on becoming ready, or when
+ * a phone asked) more than 5 minutes ago, oldest first, on the partial index of queued
+ * conversions. Exported for its plan's test.
  */
-export function stuckConversionsQuery(bossSchema: string, limit: number) {
+export function queuedConversionsQuery(limit: number) {
   return getDb()
     .select({ id: media.id, onDemand: sql<boolean>`${media.highlight} or ${media.conversionRequestedAt} is not null` })
     .from(media)
@@ -115,12 +99,40 @@ export function stuckConversionsQuery(bossSchema: string, limit: number) {
         sql`${media.status} = 'ready'`,
         sql`${media.conversion} = 'queued'`,
         eq(media.kind, "video"),
-        // When it was last queued: on becoming ready, or when a phone asked for it.
-        sql`greatest(${media.listedAt}, ${media.conversionRequestedAt}) < ${timeAgo(STUCK_AFTER_MILLISECONDS).toISOString()}::timestamptz`,
-        notExists(hasLiveJob(bossSchema, CONVERSION_QUEUES)),
+        sql`greatest(${media.listedAt}, ${media.conversionRequestedAt}) < ${minutesAgo(STUCK_AFTER_MINUTES)}`,
       ),
     )
+    .orderBy(asc(media.listedAt))
     .limit(limit);
+}
+
+/**
+ * The query behind itemsWithLiveJobs, exported for its plan's test: these items' live jobs
+ * (waiting, retrying or running) on these queues, read from pg-boss's job table. That is pg-boss
+ * 12's own table (the parent of every queue's partition), whose index of live jobs covers name and
+ * state; package.json pins pg-boss exactly, so an upgrade that changes it is a deliberate one, and
+ * it fails these tests.
+ */
+export function liveJobsQuery(bossSchema: string, queues: MediaQueueName[], mediaIds: string[]): SQL {
+  const names = sql.join(
+    queues.map((name) => sql`${name}`),
+    sql`, `,
+  );
+  return sql`select distinct job.data ->> 'mediaId' as "mediaId" from ${sql.identifier(bossSchema)}.job as job
+    where job.name in (${names})
+      and job.state in ('created', 'retry', 'active')
+      and ${inArray(sql`job.data ->> 'mediaId'`, mediaIds)}`;
+}
+
+/**
+ * Which of these items have a live job on these queues. One query for the batch, and only for its
+ * ids: the live jobs are read once by queue and state, never once per item, so it stays linear
+ * however stale the planner's statistics are after a burst.
+ */
+async function itemsWithLiveJobs(bossSchema: string, queues: MediaQueueName[], mediaIds: string[]): Promise<Set<string>> {
+  if (mediaIds.length === 0) return new Set();
+  const rows = await getDb().execute<{ mediaId: string }>(liveJobsQuery(bossSchema, queues, mediaIds));
+  return new Set(rows.map((row) => row.mediaId));
 }
 
 export function createSweeper(options: SweeperOptions) {
@@ -131,7 +143,13 @@ export function createSweeper(options: SweeperOptions) {
 
   /** Step 1: items stuck in `uploaded` with no job, queued on their processing queue. */
   async function requeueUploads(): Promise<number> {
-    const stuck = await stuckUploadsQuery(bossSchema, REQUEUE_BATCH_SIZE);
+    const candidates = await uploadedItemsQuery(CANDIDATE_BATCH_SIZE);
+    const withJobs = await itemsWithLiveJobs(
+      bossSchema,
+      PROCESSING_QUEUES,
+      candidates.map((item) => item.id),
+    );
+    const stuck = candidates.filter((item) => !withJobs.has(item.id)).slice(0, REQUEUE_BATCH_SIZE);
     const byQueue = Map.groupBy(stuck, (item) => processingQueue(item));
     for (const [queue, items] of byQueue) {
       await boss.insert(
@@ -144,7 +162,13 @@ export function createSweeper(options: SweeperOptions) {
 
   /** Step 2: ready videos whose conversion is `queued` with no job: on demand if anyone asked, else the backlog. */
   async function requeueConversions(): Promise<number> {
-    const stuck = await stuckConversionsQuery(bossSchema, REQUEUE_BATCH_SIZE);
+    const candidates = await queuedConversionsQuery(CANDIDATE_BATCH_SIZE);
+    const withJobs = await itemsWithLiveJobs(
+      bossSchema,
+      CONVERSION_QUEUES,
+      candidates.map((item) => item.id),
+    );
+    const stuck = candidates.filter((item) => !withJobs.has(item.id)).slice(0, REQUEUE_BATCH_SIZE);
     if (stuck.length > 0) {
       await boss.insert(
         MEDIA_QUEUES.convert,
@@ -166,8 +190,8 @@ export function createSweeper(options: SweeperOptions) {
     // Read once a sweep, as each route reads it once a request. Unreadable, the step fails: closed.
     const uploadsSwitch = await readUploadsSwitch();
     const page = await unfinishedUploads({
-      startedBefore: timeAgo(ABANDONED_AFTER_MILLISECONDS),
-      startedAfter: timeAgo(RESCUE_WITHIN_MILLISECONDS),
+      startedMoreThanMinutesAgo: ABANDONED_AFTER_MINUTES,
+      startedWithinMinutes: RESCUE_WITHIN_MINUTES,
       cursor: rescueCursor,
       limit: rescueBatchSize,
     });

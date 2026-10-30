@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { DeleteObjectsCommand, UploadPartCommand } from "@aws-sdk/client-s3";
 import { eq, inArray } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import type { PgBoss } from "pg-boss";
 import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +16,7 @@ import { unfinishedUploadsQuery } from "@/lib/media/rows";
 import { abortMultipart, completeMultipart, startMultipart } from "@/lib/storage/objects";
 import { resetDb } from "../../test/db";
 import { dropBossSchema, startTestBoss } from "../../test/uploads";
-import { createSweeper, stuckConversionsQuery, stuckUploadsQuery } from "./sweeper";
+import { createSweeper, liveJobsQuery, queuedConversionsQuery, uploadedItemsQuery } from "./sweeper";
 
 // These run against the local MinIO and test database: docker compose up -d db minio && npm run storage:init.
 
@@ -162,6 +163,41 @@ describe("the sweeper's first step: items stuck in uploaded", () => {
     expect(first.requeuedUploads).toBe(100);
     const second = await sweeper().sweep();
     expect(second.requeuedUploads).toBe(20);
+  });
+});
+
+describe("the sweeper's first step at the wedding's volume (Ruling AC d)", () => {
+  it("finds nothing to queue among 3,000 uploaded items that all have a waiting job, well inside its 10 s statement timeout", async () => {
+    const ids = Array.from({ length: 3_000 }, () => randomUUID());
+    await getDb()
+      .insert(media)
+      .values(
+        ids.map((id) => ({
+          id,
+          purpose: "album" as const,
+          kind: "photo" as const,
+          celebration: "more" as const,
+          originalKey: originalKey(id, "jpg"),
+          originalFilename: "IMG_0001.JPG",
+          sizeBytes: 4000,
+          contentType: "image/jpeg",
+          status: "uploaded" as const,
+          uploadedAt: minutesAgo(10),
+        })),
+      );
+    await boss.insert(
+      MEDIA_QUEUES.photo,
+      ids.map((mediaId) => ({ data: { mediaId } })),
+    );
+    // No ANALYZE: the planner's statistics are as stale as a burst leaves them, its worst case.
+
+    const started = performance.now();
+    const result = await sweeper().sweep();
+    const sweepMilliseconds = performance.now() - started;
+
+    expect(result.requeuedUploads).toBe(0);
+    // The budget is 500 ms on an idle machine; this bound leaves room for a busy CI runner.
+    expect(sweepMilliseconds).toBeLessThan(2_000);
   });
 });
 
@@ -380,36 +416,45 @@ describe("the sweeper's queries", () => {
    * generic plan). The test table is nearly empty, so sequential scans are put out of reach, as
    * they would be with a full one.
    */
-  async function genericPlan(query: { toSQL(): { sql: string } }): Promise<string> {
-    const { sql: text } = query.toSQL();
+  async function genericPlan(query: { sql: string }): Promise<string> {
     const rows = await client.begin(async (transaction) => {
       await transaction`set local enable_seqscan = off`;
-      return transaction.unsafe(`explain (generic_plan) ${text}`).simple();
+      return transaction.unsafe(`explain (generic_plan) ${query.sql}`).simple();
     });
     return rows.map((row) => String(row["QUERY PLAN"])).join("\n");
   }
 
-  it("find items stuck in uploaded through their partial index, and their jobs through pg-boss's", async () => {
-    const plan = await genericPlan(stuckUploadsQuery(BOSS_SCHEMA, 100));
+  it("take items stuck in uploaded oldest first, in their partial index's order, with no sort", async () => {
+    const plan = await genericPlan(uploadedItemsQuery(1_000).toSQL());
     expect(plan).toContain("media_uploaded_idx");
-    expect(plan).toMatch(/job_common_i14|job_i14/);
     expect(plan).not.toContain("Seq Scan");
+    expect(plan).not.toContain("Sort");
   });
 
-  it("find conversions queued with no job through their partial index", async () => {
-    const plan = await genericPlan(stuckConversionsQuery(BOSS_SCHEMA, 100));
+  it("take conversions queued with no job oldest first, in their partial index's order, with no sort", async () => {
+    const plan = await genericPlan(queuedConversionsQuery(1_000).toSQL());
     expect(plan).toContain("media_conversion_queued_idx");
+    expect(plan).not.toContain("Seq Scan");
+    expect(plan).not.toContain("Sort");
+  });
+
+  it("look up a batch's live jobs through pg-boss's index of live jobs by queue and state", async () => {
+    const query = new PgDialect().sqlToQuery(
+      liveJobsQuery(BOSS_SCHEMA, [MEDIA_QUEUES.photo, MEDIA_QUEUES.dead], [randomUUID(), randomUUID()]),
+    );
+    const plan = await genericPlan(query);
+    expect(plan).toMatch(/job_common_i14|job_i14/);
     expect(plan).not.toContain("Seq Scan");
   });
 
   it("page through unfinished uploads in index order, with no sort", async () => {
     const plan = await genericPlan(
       unfinishedUploadsQuery({
-        startedBefore: minutesAgo(30),
-        startedAfter: minutesAgo(8 * 24 * 60),
+        startedMoreThanMinutesAgo: 30,
+        startedWithinMinutes: 8 * 24 * 60,
         cursor: { startedAt: minutesAgo(60), id: randomUUID() },
         limit: 25,
-      }),
+      }).toSQL(),
     );
     expect(plan).toContain("media_unfinished_upload_idx");
     expect(plan).not.toContain("Seq Scan");
