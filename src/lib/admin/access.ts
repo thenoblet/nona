@@ -26,11 +26,19 @@ function remoteKeySet(teamDomain: string): JWTVerifyGetKey {
   return keySet;
 }
 
+// A pasted URL still works: "https://team.cloudflareaccess.com/" becomes "team.cloudflareaccess.com".
+function normalizeTeamDomain(teamDomain: string): string {
+  return teamDomain.trim().replace(/^https:\/\//i, "").replace(/\/+$/, "");
+}
+
 /** Checks the signature, issuer, audience and expiry of a Cloudflare Access token. */
 export async function verifyAccessJwt(token: string, options: VerifyOptions): Promise<{ email: string }> {
-  const { payload } = await jwtVerify(token, options.jwks ?? remoteKeySet(options.teamDomain), {
-    issuer: `https://${options.teamDomain}`,
+  const teamDomain = normalizeTeamDomain(options.teamDomain);
+  const { payload } = await jwtVerify(token, options.jwks ?? remoteKeySet(teamDomain), {
+    issuer: `https://${teamDomain}`,
     audience: options.audience,
+    algorithms: ["RS256"],
+    requiredClaims: ["exp"],
   });
   if (typeof payload.email !== "string" || payload.email === "") throw new AdminAccessError();
   return { email: payload.email };
@@ -47,16 +55,24 @@ export async function requireAdmin(): Promise<{ email: string }> {
 
   const teamDomain = process.env.CF_ACCESS_TEAM_DOMAIN;
   const audience = process.env.CF_ACCESS_AUD;
-  const token = (await headers()).get("cf-access-jwt-assertion");
   // Missing settings refuse access; they never skip the check.
-  if (!teamDomain || !audience || !token) throw new AdminAccessError();
+  if (!teamDomain || !audience) {
+    console.warn("Admin access refused: settings missing");
+    throw new AdminAccessError();
+  }
+  const token = (await headers()).get("cf-access-jwt-assertion");
+  if (!token) {
+    console.warn("Admin access refused: no token");
+    throw new AdminAccessError();
+  }
 
   try {
     return await verifyAccessJwt(token, { teamDomain, audience });
   } catch (error) {
-    // Only jose's error code is logged, never the token or its claims.
-    const code = (error as { code?: unknown }).code;
-    console.warn(`Admin access refused (${typeof code === "string" ? code : "verification failed"})`);
+    // Only the error's name and code are logged, never the token, its claims or the email.
+    const name = error instanceof Error ? error.name : "unknown error";
+    const code = (error as { code?: unknown } | null)?.code;
+    console.warn(`Admin access refused: token rejected (${name}${typeof code === "string" ? ` ${code}` : ""})`);
     throw new AdminAccessError();
   }
 }

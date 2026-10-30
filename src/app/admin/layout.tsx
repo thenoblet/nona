@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AdminTabs } from "@/components/admin/AdminTabs";
+import { AdminTabs, AdminTabLinks } from "@/components/admin/AdminTabs";
 import "./admin.css";
 
 export const metadata: Metadata = {
@@ -18,7 +18,10 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           <Link href="/admin" className="admin-brand">
             Noblet &amp; Nancy <span>· admin</span>
           </Link>
-          <AdminTabs />
+          {/* usePathname can suspend during a prerender, so the tabs keep their links either way. */}
+          <Suspense fallback={<AdminTabLinks currentPath={null} />}>
+            <AdminTabs />
+          </Suspense>
           <Link href="/" className="admin-viewsite">
             View site ↗
           </Link>

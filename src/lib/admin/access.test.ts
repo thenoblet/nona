@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
 
+const localKeySet = vi.hoisted(() => ({ current: undefined as unknown }));
+vi.mock("jose", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("jose")>()),
+  createRemoteJWKSet: () => localKeySet.current,
+}));
+
 const headerStore = new Map<string, string>();
 vi.mock("next/headers", () => ({
   headers: async () => ({ get: (name: string) => headerStore.get(name) ?? null }),
@@ -15,14 +21,17 @@ async function setup() {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   const jwk = { ...(await exportJWK(publicKey)), kid: "test-key", alg: "RS256" };
   const jwks = createLocalJWKSet({ keys: [jwk] });
-  const sign = (overrides: { audience?: string; issuer?: string; expiresAt?: string | number } = {}) =>
-    new SignJWT({ email: "couple@example.com" })
+  const sign = (
+    overrides: { audience?: string; issuer?: string; expiresAt?: string | number | null; claims?: Record<string, unknown> } = {},
+  ) => {
+    const builder = new SignJWT(overrides.claims ?? { email: "couple@example.com" })
       .setProtectedHeader({ alg: "RS256", kid: "test-key" })
       .setIssuer(overrides.issuer ?? `https://${teamDomain}`)
       .setAudience(overrides.audience ?? audience)
-      .setIssuedAt()
-      .setExpirationTime(overrides.expiresAt ?? "5m")
-      .sign(privateKey);
+      .setIssuedAt();
+    if (overrides.expiresAt !== null) builder.setExpirationTime(overrides.expiresAt ?? "5m");
+    return builder.sign(privateKey);
+  };
   return { jwks, sign };
 }
 
@@ -57,6 +66,26 @@ describe("verifyAccessJwt", () => {
     await expect(verifyAccessJwt(await sign(), { teamDomain, audience, jwks: otherJwks })).rejects.toThrow();
   });
 
+  it("rejects a token without an expiry", async () => {
+    const { jwks, sign } = await setup();
+    const token = await sign({ expiresAt: null });
+    await expect(verifyAccessJwt(token, { teamDomain, audience, jwks })).rejects.toThrow();
+  });
+
+  it("rejects a token without an email, or with an empty one", async () => {
+    const { jwks, sign } = await setup();
+    for (const claims of [{}, { email: "" }]) {
+      const token = await sign({ claims });
+      await expect(verifyAccessJwt(token, { teamDomain, audience, jwks })).rejects.toBeInstanceOf(AdminAccessError);
+    }
+  });
+
+  it("accepts a team domain pasted as a URL", async () => {
+    const { jwks, sign } = await setup();
+    const admin = await verifyAccessJwt(await sign(), { teamDomain: `https://${teamDomain}/`, audience, jwks });
+    expect(admin.email).toBe("couple@example.com");
+  });
+
   it("rejects a garbage token", async () => {
     const { jwks } = await setup();
     await expect(verifyAccessJwt("not-a-token", { teamDomain, audience, jwks })).rejects.toThrow();
@@ -80,6 +109,18 @@ describe("requireAdmin", () => {
     vi.stubEnv("CF_ACCESS_TEAM_DOMAIN", "");
     vi.stubEnv("CF_ACCESS_AUD", "");
     headerStore.set("cf-access-jwt-assertion", "anything");
+    await expect(requireAdmin()).rejects.toBeInstanceOf(AdminAccessError);
+  });
+
+  it("accepts a valid header in production and refuses a missing one", async () => {
+    const { jwks, sign } = await setup();
+    localKeySet.current = jwks;
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CF_ACCESS_TEAM_DOMAIN", teamDomain);
+    vi.stubEnv("CF_ACCESS_AUD", audience);
+    headerStore.set("cf-access-jwt-assertion", await sign());
+    await expect(requireAdmin()).resolves.toEqual({ email: "couple@example.com" });
+    headerStore.delete("cf-access-jwt-assertion");
     await expect(requireAdmin()).rejects.toBeInstanceOf(AdminAccessError);
   });
 

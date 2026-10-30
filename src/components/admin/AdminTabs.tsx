@@ -8,15 +8,19 @@ const tabs = [
   { href: "/admin/content", label: "Site text" },
 ];
 
-export function AdminTabs() {
-  const pathname = usePathname();
+/** The tab links, marking the one for currentPath (none while the path is not known yet). */
+export function AdminTabLinks({ currentPath }: { currentPath: string | null }) {
   return (
     <nav className="admin-tabs" aria-label="Admin sections">
       {tabs.map((tab) => (
         <Link
           key={tab.href}
           href={tab.href}
-          aria-current={pathname === tab.href || pathname.startsWith(`${tab.href}/`) ? "page" : undefined}
+          aria-current={
+            currentPath !== null && (currentPath === tab.href || currentPath.startsWith(`${tab.href}/`))
+              ? "page"
+              : undefined
+          }
         >
           {tab.label}
         </Link>
@@ -26,4 +30,8 @@ export function AdminTabs() {
       </span>
     </nav>
   );
+}
+
+export function AdminTabs() {
+  return <AdminTabLinks currentPath={usePathname()} />;
 }
