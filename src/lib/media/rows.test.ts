@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
+import { build } from "esbuild";
 import { beforeEach, describe, expect, it } from "vitest";
+import { createGuest } from "@/lib/data/guests";
+import { isVisible as isVisibleForApp } from "@/lib/data/media";
 import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
 import { originalKey } from "@/lib/storage/keys";
 import { resetDb } from "../../../test/db";
-import { createGuest } from "./guests";
-import { isVisible } from "./media";
-
-beforeEach(resetDb);
+import { isVisible } from "./rows";
 
 /** A finished album photo from a new guest, with any of its columns changed. */
 async function addPhoto(changes: Partial<typeof media.$inferInsert> = {}): Promise<string> {
@@ -36,6 +37,8 @@ async function addPhoto(changes: Partial<typeof media.$inferInsert> = {}): Promi
 }
 
 describe("isVisible", () => {
+  beforeEach(resetDb);
+
   it("is true for an item no one has hidden, removed or deleted", async () => {
     expect(await isVisible(await addPhoto())).toBe(true);
   });
@@ -50,7 +53,8 @@ describe("isVisible", () => {
   });
 
   it("is false for an item its uploader removed", async () => {
-    expect(await isVisible(await addPhoto({ removedByUploader: true }))).toBe(false);
+    const removed = { hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true };
+    expect(await isVisible(await addPhoto(removed))).toBe(false);
   });
 
   it("is false for a deleted item", async () => {
@@ -67,5 +71,32 @@ describe("isVisible", () => {
     expect(await isVisible(randomUUID())).toBe(false);
     expect(await isVisible("sample-1")).toBe(false);
     expect(await isVisible("")).toBe(false);
+  });
+
+  it("is the one the app's data layer hands out", () => {
+    expect(isVisibleForApp).toBe(isVisible);
+  });
+});
+
+describe("rows.ts's imports", () => {
+  it("reach no next/ module and no image, so the media worker can bundle it", async () => {
+    // The worker's bundle (Task 8) is built the same way: esbuild, packages left external.
+    const result = await build({
+      entryPoints: [fileURLToPath(new URL("./rows.ts", import.meta.url))],
+      bundle: true,
+      write: false,
+      metafile: true,
+      platform: "node",
+      format: "esm",
+      packages: "external",
+      logLevel: "silent",
+      // Loaded as nothing, so an image in the graph shows up in the metafile instead of failing the build.
+      loader: { ".jpg": "empty", ".jpeg": "empty", ".png": "empty", ".webp": "empty", ".svg": "empty" },
+    });
+    const modules = Object.values(result.metafile.inputs).flatMap((input) => input.imports.map((imported) => imported.path));
+    const files = Object.keys(result.metafile.inputs);
+    expect(modules.filter((path) => path === "next" || path.startsWith("next/"))).toEqual([]);
+    expect(files.filter((path) => /\.(jpe?g|png|webp|svg)$/i.test(path))).toEqual([]);
+    expect(files.some((path) => path.endsWith("src/lib/db/schema.ts"))).toBe(true);
   });
 });

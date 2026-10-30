@@ -16,6 +16,11 @@ describe("createGuest", () => {
     expect(Number.isNaN(Date.parse(guest.createdAt))).toBe(false);
   });
 
+  it("cuts a name to 80 characters, as it shows on every album tile and in emails", async () => {
+    const guest = await createGuest("A".repeat(200));
+    expect(guest.displayName).toBe("A".repeat(80));
+  });
+
   it("keeps no name when the guest gave none", async () => {
     expect((await createGuest(null)).displayName).toBeNull();
     expect((await createGuest("   ")).displayName).toBeNull();
@@ -56,6 +61,11 @@ describe("setGuestName", () => {
     const renamed = await setGuestName(guest.id, " Yaw Mensah ");
     expect(renamed).toEqual({ ...guest, displayName: "Yaw Mensah" });
     expect(await findGuestByToken(guest.linkToken)).toEqual(renamed);
+  });
+
+  it("cuts a new name to 80 characters too", async () => {
+    const guest = await createGuest("Yaw");
+    expect((await setGuestName(guest.id, "Ɔ".repeat(200)))?.displayName).toBe("Ɔ".repeat(80));
   });
 
   it("clears the name when given none", async () => {

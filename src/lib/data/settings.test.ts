@@ -8,9 +8,9 @@ import { getSetting, SETTING_DEFAULTS, setSetting, type SettingKey } from "./set
 beforeEach(resetDb);
 
 describe("the settings' defaults", () => {
-  it("open uploads and the backlog conversions, with no close time and no worker heartbeat yet", () => {
+  it("keep uploads closed until the couple open them, and convert the backlog", () => {
     expect(SETTING_DEFAULTS).toEqual({
-      uploads_open: true,
+      uploads_open: false,
       uploads_closed_at: null,
       convert_backlog: true,
       worker_heartbeat: null,
@@ -26,8 +26,23 @@ describe("the settings' defaults", () => {
 
 describe("setSetting", () => {
   it("saves a value that getSetting then reads instead of the fallback", async () => {
-    await setSetting("uploads_open", false);
-    expect(await getSetting("uploads_open", SETTING_DEFAULTS.uploads_open)).toBe(false);
+    await setSetting("uploads_open", true);
+    expect(await getSetting("uploads_open", SETTING_DEFAULTS.uploads_open)).toBe(true);
+  });
+
+  it("is typed by key, so a setting can't be saved or read as the wrong kind of value", () => {
+    // Checked by tsc (npx tsc --noEmit), never run.
+    async function misuses(): Promise<void> {
+      // @ts-expect-error uploads_open is a boolean
+      await setSetting("uploads_open", "yes");
+      // @ts-expect-error uploads_open's fallback must be a boolean too
+      await getSetting("uploads_open", "no");
+      const closedAt: string | null = await getSetting("uploads_closed_at", null);
+      // @ts-expect-error getSetting returns the key's own type
+      const wrong: number = await getSetting("uploads_open", false);
+      void [closedAt, wrong];
+    }
+    expect(misuses).toBeTypeOf("function");
   });
 
   it("replaces the saved value, keeping one row per key", async () => {
@@ -46,7 +61,7 @@ describe("setSetting", () => {
 
   it("leaves the other settings as they were", async () => {
     await setSetting("convert_backlog", false);
-    expect(await getSetting("uploads_open", SETTING_DEFAULTS.uploads_open)).toBe(true);
+    expect(await getSetting("uploads_open", SETTING_DEFAULTS.uploads_open)).toBe(false);
     expect(await getSetting("convert_backlog", SETTING_DEFAULTS.convert_backlog)).toBe(false);
   });
 

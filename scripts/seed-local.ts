@@ -3,7 +3,8 @@
  * something to show while they are built:
  * - one sample guest;
  * - the couple's sample photos from public/images as that guest's album uploads;
- * - a few written wishes.
+ * - a few written wishes;
+ * - uploads opened (a new database starts with them closed).
  *
  *   docker compose up -d db minio && npm run storage:init && npm run seed
  *
@@ -24,11 +25,11 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { runMigrations } from "@/lib/db/migrate";
-import { guests, media, wishes } from "@/lib/db/schema";
+import { guests, media, settings, wishes } from "@/lib/db/schema";
 import { dbConfig, storageConfig } from "@/lib/env";
 import { storageClient, withDeadline } from "@/lib/storage/client";
 import { originalKey } from "@/lib/storage/keys";
@@ -181,6 +182,16 @@ async function seedWishes(db: PostgresJsDatabase): Promise<void> {
   console.log(`wishes: ${added.length} added`);
 }
 
+/** Opens uploads, as the couple will from the admin; a new database starts with them closed. */
+async function openUploads(db: PostgresJsDatabase): Promise<void> {
+  const open = sql`'true'::jsonb`;
+  await db
+    .insert(settings)
+    .values({ key: "uploads_open", value: open })
+    .onConflictDoUpdate({ target: settings.key, set: { value: open, updatedAt: sql`now()` } });
+  console.log("uploads: open");
+}
+
 async function main() {
   if (!applyLocalSettings()) {
     console.error("seed fills the local database and MinIO only; POSTGRES_HOST and R2_ENDPOINT must be on this machine.");
@@ -200,6 +211,7 @@ async function main() {
     await seedGuest(db);
     await seedPhotos(db);
     await seedWishes(db);
+    await openUploads(db);
   } finally {
     await connection.end();
     storageClient().destroy();

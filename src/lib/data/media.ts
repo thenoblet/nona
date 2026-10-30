@@ -1,32 +1,10 @@
 import "server-only";
-import { and, eq, isNull } from "drizzle-orm";
 import { photos } from "@/content/images";
-import { getDb } from "@/lib/db/client";
-import { media } from "@/lib/db/schema";
-import { isUuid } from "./ids";
 import type { MediaFilter, MediaItem } from "./types";
 
-/**
- * Whether anyone may see or fetch the item: it isn't hidden, deleted or removed by its uploader.
- * Every presign, download, playback and slideshow path checks this first. An unknown id, or one
- * that isn't a UUID, is not visible.
- */
-export async function isVisible(mediaId: string): Promise<boolean> {
-  if (!isUuid(mediaId)) return false;
-  const [row] = await getDb()
-    .select({ id: media.id })
-    .from(media)
-    .where(
-      and(
-        eq(media.id, mediaId),
-        isNull(media.hiddenAt),
-        isNull(media.deletedAt),
-        eq(media.removedByUploader, false),
-      ),
-    )
-    .limit(1);
-  return row !== undefined;
-}
+// The media table's queries live in src/lib/media/rows.ts, which the worker can bundle (this file
+// can't, for the stub's image imports). The app reaches them here too.
+export { isVisible } from "@/lib/media/rows";
 
 /**
  * STUB, below. A fixed set of sample uploads built from the couple's photos, until the album

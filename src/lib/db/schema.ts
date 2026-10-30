@@ -11,10 +11,12 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import type { EventId } from "@/content/wedding";
+import { EVENT_IDS } from "@/lib/content/schema";
 import type { DerivedVariant } from "@/lib/storage/keys";
 
 export const rsvps = pgTable(
@@ -84,9 +86,22 @@ export const CONVERSION_STATES = ["none", "queued", "converting", "done", "faile
 export const WISH_KINDS = ["text", "voice", "video"] as const;
 export const UPLOAD_EVENT_KINDS = ["part-retry", "failed", "resumed", "completed"] as const;
 
+/**
+ * The longest a guest's name may be, in characters (code points, as Postgres counts them): it
+ * shows on every album tile and in emails. The same as a wish's signature.
+ */
+export const NAME_MAX_CHARACTERS = 80;
+/** The longest an original's filename may be, in characters. */
+export const FILENAME_MAX_CHARACTERS = 255;
+
 /** A check that the column holds one of these values (constants of ours, never guest input). */
 function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
   return sql`${column} in (${sql.raw(values.map((value) => `'${value}'`).join(", "))})`;
+}
+
+/** A check that the text column holds at most this many characters (or is null). */
+function atMost(column: AnyPgColumn, maxCharacters: number): SQL {
+  return sql`char_length(${column}) <= ${sql.raw(String(maxCharacters))}`;
 }
 
 const withTimezone = { withTimezone: true } as const;
@@ -95,14 +110,18 @@ const withTimezone = { withTimezone: true } as const;
  * Each browser that has RSVPed or uploaded. Guests are never merged: a browser's cookie lists every
  * guest it knows (its own, plus any opened through a personal link).
  */
-export const guests = pgTable("guests", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  /** The name the guest typed, or null when they gave none. */
-  displayName: text("display_name"),
-  /** The personal link's secret: 32 random bytes in base64url. */
-  linkToken: text("link_token").notNull().unique(),
-  createdAt: timestamp("created_at", withTimezone).notNull().defaultNow(),
-});
+export const guests = pgTable(
+  "guests",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    /** The name the guest typed (at most 80 characters), or null when they gave none. */
+    displayName: text("display_name"),
+    /** The personal link's secret: 32 random bytes in base64url. */
+    linkToken: text("link_token").notNull().unique(),
+    createdAt: timestamp("created_at", withTimezone).notNull().defaultNow(),
+  },
+  (table) => [check("guests_display_name_length", atMost(table.displayName, NAME_MAX_CHARACTERS))],
+);
 
 /**
  * One row per upload: album photos and videos, voice and video wishes, and the site's own photos.
@@ -116,7 +135,7 @@ export const media = pgTable(
     kind: text("kind").$type<(typeof MEDIA_FILE_KINDS)[number]>().notNull(),
     /** The uploading guest; null for a site photo, which the couple upload from the admin. */
     guestId: uuid("guest_id").references(() => guests.id),
-    /** The name shown with the item, as the uploader gave it; null for none. */
+    /** The name shown with the item, as the uploader gave it (at most 80 characters); null for none. */
     uploaderName: text("uploader_name"),
     celebration: text("celebration").$type<EventId | "more">().notNull(),
     /** Set once the couple move an item, so re-processing never moves it back. */
@@ -179,6 +198,11 @@ export const media = pgTable(
     check("media_kind_check", oneOf(table.kind, MEDIA_FILE_KINDS)),
     check("media_status_check", oneOf(table.status, MEDIA_STATUSES)),
     check("media_conversion_check", oneOf(table.conversion, CONVERSION_STATES)),
+    check("media_celebration_check", oneOf(table.celebration, [...EVENT_IDS, "more"])),
+    check("media_uploader_name_length", atMost(table.uploaderName, NAME_MAX_CHARACTERS)),
+    check("media_original_filename_length", atMost(table.originalFilename, FILENAME_MAX_CHARACTERS)),
+    // A guest removing their own upload hides it as well (Task 12 sets both).
+    check("media_removed_is_hidden", sql`not ${table.removedByUploader} or ${table.hiddenAt} is not null`),
   ],
 );
 
@@ -205,6 +229,8 @@ export const wishes = pgTable(
     check("wishes_kind_check", oneOf(table.kind, WISH_KINDS)),
     check("wishes_text_has_message", sql`${table.kind} <> 'text' or ${table.message} is not null`),
     check("wishes_recording_has_media", sql`${table.kind} = 'text' or ${table.mediaId} is not null`),
+    // A recording belongs to one wish.
+    uniqueIndex("wishes_media_id_unique").on(table.mediaId).where(sql`${table.mediaId} is not null`),
   ],
 );
 

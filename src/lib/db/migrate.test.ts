@@ -1,5 +1,5 @@
 import postgres from "postgres";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { dbConfig } from "@/lib/env";
 import { runMigrations } from "./migrate";
 
@@ -63,4 +63,46 @@ describe("runMigrations", () => {
       await holder.end();
     }
   }, 20_000);
+});
+
+describe("a database migrated from nothing", () => {
+  // Its own database, so the shared test database's truncated settings don't hide the migration's.
+  const FRESH_DATABASE = "nona_fresh_migrations_test";
+  let fresh: postgres.Sql;
+
+  async function migrateFresh(): Promise<void> {
+    vi.stubEnv("POSTGRES_DB", FRESH_DATABASE);
+    try {
+      await runMigrations();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }
+
+  async function uploadsOpen(): Promise<unknown[]> {
+    const rows = await fresh<{ value: unknown }[]>`select value from settings where key = 'uploads_open'`;
+    return rows.map((row) => row.value);
+  }
+
+  beforeAll(async () => {
+    await sql`drop database if exists ${sql(FRESH_DATABASE)} with (force)`;
+    await sql`create database ${sql(FRESH_DATABASE)}`;
+    fresh = postgres({ ...dbConfig(), database: FRESH_DATABASE, max: 1, onnotice: () => {} });
+  }, 20_000);
+
+  afterAll(async () => {
+    await fresh?.end();
+    await sql`drop database if exists ${sql(FRESH_DATABASE)} with (force)`;
+  });
+
+  it("starts with uploads closed, so a deploy never opens them before the couple do", async () => {
+    await migrateFresh();
+    expect(await uploadsOpen()).toEqual([false]);
+  });
+
+  it("keeps the couple's choice when the migrations run again at the next start", async () => {
+    await fresh`update settings set value = 'true'::jsonb where key = 'uploads_open'`;
+    await migrateFresh();
+    expect(await uploadsOpen()).toEqual([true]);
+  });
 });

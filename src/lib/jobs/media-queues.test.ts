@@ -5,6 +5,7 @@ import { dbConfig } from "@/lib/env";
 import { createMediaQueues, MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES } from "./media-queues";
 
 const allQueues = Object.values(MEDIA_QUEUES);
+const jobQueues = allQueues.filter((name) => name !== MEDIA_QUEUES.dead);
 
 describe("the media queues' options", () => {
   it("name the eight queues", () => {
@@ -21,16 +22,26 @@ describe("the media queues' options", () => {
     expect(Object.keys(MEDIA_QUEUE_OPTIONS).sort()).toEqual([...allQueues].sort());
   });
 
-  it("expect a heartbeat every minute and retry transient errors with backoff, on every queue", () => {
+  it("are standard queues expecting a heartbeat every minute, every one of them", () => {
     for (const name of allQueues) {
+      expect(MEDIA_QUEUE_OPTIONS[name], name).toMatchObject({ policy: "standard", heartbeatSeconds: 60 });
+    }
+  });
+
+  it("retry a job's transient errors with backoff", () => {
+    for (const name of jobQueues) {
       expect(MEDIA_QUEUE_OPTIONS[name], name).toMatchObject({
-        heartbeatSeconds: 60,
         retryLimit: 12,
         retryDelay: 30,
         retryBackoff: true,
         retryDelayMax: 1800,
       });
     }
+  });
+
+  it("retry media.dead's handler a few times a minute apart: pg-boss's dead-letter copies carry no retryDelayMax", () => {
+    expect(MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.dead]).toMatchObject({ retryBackoff: false, retryDelay: 60, retryLimit: 5 });
+    expect(MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.dead].retryDelayMax).toBeUndefined();
   });
 
   it("keep retrying a transient error for 3½ to 4 hours, well inside the job's retention", () => {
@@ -51,15 +62,15 @@ describe("the media queues' options", () => {
     expect(totalWait(1)).toBeLessThan(14 * 24 * HOUR);
   });
 
-  it("give a conversion four hours and leave every other queue at pg-boss's 15 minutes", () => {
+  it("give a conversion four hours and every other job 15 minutes, set explicitly so a drift is put right", () => {
     expect(MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.convert].expireInSeconds).toBe(14_400);
     for (const name of allQueues.filter((name) => name !== MEDIA_QUEUES.convert)) {
-      expect(MEDIA_QUEUE_OPTIONS[name].expireInSeconds, name).toBeUndefined();
+      expect(MEDIA_QUEUE_OPTIONS[name].expireInSeconds, name).toBe(900);
     }
   });
 
   it("send a job that runs out of retries to media.dead, which keeps its own", () => {
-    for (const name of allQueues.filter((name) => name !== MEDIA_QUEUES.dead)) {
+    for (const name of jobQueues) {
       expect(MEDIA_QUEUE_OPTIONS[name].deadLetter, name).toBe("media.dead");
     }
     expect(MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.dead].deadLetter).toBeUndefined();
@@ -127,7 +138,12 @@ describe("createMediaQueues", () => {
 
   it("brings a queue whose settings changed back to these options", async () => {
     await createMediaQueues(app);
-    await app.updateQueue(MEDIA_QUEUES.photo, { retryLimit: 1, heartbeatSeconds: null, deadLetter: null });
+    await app.updateQueue(MEDIA_QUEUES.photo, {
+      retryLimit: 1,
+      heartbeatSeconds: null,
+      deadLetter: null,
+      expireInSeconds: 60,
+    });
     await createMediaQueues(app);
     await expectQueuesAsConfigured(app);
   });

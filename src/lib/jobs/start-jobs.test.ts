@@ -76,7 +76,10 @@ describe("startJobs", () => {
     await startJobs();
     for (const name of Object.values(MEDIA_QUEUES)) {
       expect(queue.createQueue).toHaveBeenCalledWith(name, MEDIA_QUEUE_OPTIONS[name]);
-      expect(queue.updateQueue).toHaveBeenCalledWith(name, MEDIA_QUEUE_OPTIONS[name]);
+      // updateQueue refuses a policy, which can't change after creation; it gets everything else.
+      const { policy, ...updatable } = MEDIA_QUEUE_OPTIONS[name];
+      expect(policy).toBe("standard");
+      expect(queue.updateQueue).toHaveBeenCalledWith(name, updatable);
     }
     // Before any worker starts: a failure here retries the whole start-up, which must not leave a
     // second confirmation worker running.
