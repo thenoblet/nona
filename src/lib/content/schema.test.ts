@@ -85,16 +85,18 @@ describe("links", () => {
 });
 
 describe("celebration times", () => {
-  it("refuse an end at or before the start, on the end time", () => {
+  it("refuse an end at the start, on the end time", () => {
     const value = celebrations();
-    value[0].startTime = "14:00";
-    value[0].endTime = "13:30";
     value[1].startTime = "15:00";
     value[1].endTime = "15:00";
-    expect(problems("celebrations", value)).toEqual([
-      "celebrations[0].endTime: Ends must be after Starts",
-      "celebrations[1].endTime: Ends must be after Starts",
-    ]);
+    expect(problems("celebrations", value)).toEqual(["celebrations[1].endTime: Ends must be after Starts"]);
+  });
+
+  it("read an end before the start as after midnight", () => {
+    const value = celebrations();
+    value[1].startTime = "18:00";
+    value[1].endTime = "02:00";
+    expect(problems("celebrations", value)).toEqual([]);
   });
 
   it("accept an end after the start, and either time alone", () => {

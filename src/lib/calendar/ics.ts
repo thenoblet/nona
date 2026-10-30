@@ -1,4 +1,5 @@
 import type { Celebration } from "@/lib/content/schema";
+import { endsNextDay } from "@/lib/content/times";
 
 export type CalendarEvent = {
   uid: string;
@@ -7,12 +8,15 @@ export type CalendarEvent = {
   date: string;
   /** `HH:MM` in GMT (Ghana has no daylight saving), or null for an all-day event. */
   startTime: string | null;
+  /** Earlier than `startTime` when the celebration ends after midnight, on the next day. */
   endTime: string | null;
   location: string;
   description: string;
 };
 
 const DEFAULT_LENGTH_MS = 3 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const utf8 = new TextEncoder();
 
 export function celebrationEvent(celebration: Celebration, siteUrl: string): CalendarEvent {
   return {
@@ -40,11 +44,12 @@ function utc(date: string, time: string): Date {
 function span(event: CalendarEvent): { allDay: boolean; start: string; end: string } {
   if (!event.startTime) {
     const start = utc(event.date, "00:00");
-    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + DAY_MS);
     return { allDay: true, start: stamp(start, true), end: stamp(end, true) };
   }
   const start = utc(event.date, event.startTime);
-  const end = event.endTime ? utc(event.date, event.endTime) : new Date(start.getTime() + DEFAULT_LENGTH_MS);
+  let end = event.endTime ? utc(event.date, event.endTime) : new Date(start.getTime() + DEFAULT_LENGTH_MS);
+  if (endsNextDay(event.startTime, event.endTime)) end = new Date(end.getTime() + DAY_MS);
   return { allDay: false, start: stamp(start), end: stamp(end) };
 }
 
@@ -58,7 +63,8 @@ function fold(line: string): string[] {
   let current = "";
   let bytes = 0;
   for (const character of line) {
-    const size = Buffer.byteLength(character, "utf8");
+    // TextEncoder rather than Buffer: the guest's thank-you page builds calendar links in the browser.
+    const size = utf8.encode(character).length;
     if (bytes + size > 75) {
       folded.push(current);
       current = " ";

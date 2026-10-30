@@ -58,6 +58,18 @@ describe("buildIcs", () => {
     expect(ics).toContain("DTEND:20261205T123000Z\r\n");
   });
 
+  it("puts an end before the start on the next day", () => {
+    const ics = buildIcs([celebrationEvent({ ...base, startTime: "18:00", endTime: "02:00" }, site)], now);
+    expect(ics).toContain("DTSTART:20261205T180000Z\r\n");
+    expect(ics).toContain("DTEND:20261206T020000Z\r\n");
+  });
+
+  it("carries an end after midnight on 31 December into the new year", () => {
+    const ics = buildIcs([celebrationEvent({ ...base, date: "2026-12-31", startTime: "21:00", endTime: "01:30" }, site)], now);
+    expect(ics).toContain("DTSTART:20261231T210000Z\r\n");
+    expect(ics).toContain("DTEND:20270101T013000Z\r\n");
+  });
+
   it("ends every line with CRLF and folds at 75 octets, counting bytes", () => {
     const long = { ...base, place: "Ɛkɔm Ɔdɔ, ".repeat(30), startTime: "10:00" };
     const ics = buildIcs([celebrationEvent(long, site)], now);
@@ -90,5 +102,10 @@ describe("googleCalendarUrl", () => {
   it("uses UTC times when the start is set", () => {
     const url = new URL(googleCalendarUrl(celebrationEvent({ ...base, startTime: "10:00" }, site)));
     expect(url.searchParams.get("dates")).toBe("20261205T100000Z/20261205T130000Z");
+  });
+
+  it("ends an overnight celebration on the next day", () => {
+    const url = new URL(googleCalendarUrl(celebrationEvent({ ...base, startTime: "18:00", endTime: "02:00" }, site)));
+    expect(url.searchParams.get("dates")).toBe("20261205T180000Z/20261206T020000Z");
   });
 });

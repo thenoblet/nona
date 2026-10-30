@@ -1,4 +1,5 @@
 import * as zod from "zod";
+import { TIME_PATTERN } from "./times";
 
 /** The celebrations are fixed: their wording is editable, but exactly these three exist. */
 export const EVENT_IDS = ["ceremony", "reception", "thanks"] as const;
@@ -13,8 +14,7 @@ const link = zod
   .string()
   .regex(/^\S*$/, noSpace)
   .regex(/^(https:\/\/\S+|#\S*)$/, "Use an https:// link or an in-page anchor starting with #");
-const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
-const time = zod.string().regex(timePattern, "Use a 24-hour time like 14:30");
+const time = zod.string().regex(TIME_PATTERN, "Use a 24-hour time like 14:30");
 const date = zod
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-05")
@@ -41,9 +41,10 @@ const celebration = zod
     endTime: time.nullable(),
   })
   .superRefine((value, context) => {
+    // An end before the start is after midnight (see endsNextDay); only the same time is refused.
     // Compared only when both are real times; a malformed one already has its own message.
     const { startTime, endTime } = value;
-    if (startTime && endTime && timePattern.test(startTime) && timePattern.test(endTime) && endTime <= startTime) {
+    if (startTime && endTime && TIME_PATTERN.test(startTime) && TIME_PATTERN.test(endTime) && endTime === startTime) {
       context.addIssue({ code: "custom", path: ["endTime"], message: "Ends must be after Starts" });
     }
   });

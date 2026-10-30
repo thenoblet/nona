@@ -1,5 +1,6 @@
 import { describeDate } from "@/lib/admin/content";
 import type { SectionKey } from "@/lib/content/schema";
+import { endsNextDay } from "@/lib/content/times";
 import { getAt } from "./editing";
 
 // How each section's form is drawn. One editor renders all ten from these, so a section's
@@ -96,7 +97,15 @@ export const sectionSpecs: Record<SectionKey, SectionSpec> = {
       { path: ["name"], label: "Name", kind: "text", span: 4 },
       { path: ["date"], label: "Date", kind: "date", span: 2, hint: (item) => describeDate(text(item, "date"))?.long },
       { path: ["startTime"], label: "Starts", kind: "time", span: 1 },
-      { path: ["endTime"], label: "Ends", kind: "time", span: 1, placeholder: OPTIONAL },
+      {
+        path: ["endTime"],
+        label: "Ends",
+        kind: "time",
+        span: 1,
+        placeholder: OPTIONAL,
+        // An end before the start is read as the next day; say so, so a mistyped time shows.
+        hint: (item) => (endsNextDay(text(item, "startTime"), text(item, "endTime")) ? "Ends after midnight" : undefined),
+      },
       {
         path: ["time"],
         label: "Guests see",
