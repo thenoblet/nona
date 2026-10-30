@@ -4,6 +4,7 @@ World coordinates are pixels of that satellite image (1139 x 947, north up). Eac
 its own window onto the world (a viewBox) and its own look (a style), and gets an SVG back.
 """
 
+import math
 import random
 
 # Dirt roads, traced along their centre lines.
@@ -14,8 +15,34 @@ ROADS = {
     "far_east": [(835, -40), (900, 130), (950, 230), (1000, 330), (1060, 430), (1100, 505)],
     "north": [(-60, 133), (100, 85), (200, 57), (262, 35)],
 }
-# The paved main road, running south-west to north-east below the houses.
-MAIN_ROAD = [(-80, 975), (300, 850), (560, 760), (760, 680), (880, 612), (1000, 562), (1220, 472)]
+# The town's paved main road, running south-west to north-east below the houses: the road every
+# guest comes in on, traced along the line the couple marked.
+MAIN_ROAD = [(-300, 1060), (-80, 980), (200, 885), (450, 795), (650, 705), (850, 618), (1110, 520), (1500, 370)]
+# The way in from the main road: up the east road to the corner, then west along the cross road to
+# the reception's gate, as (road, from point, to point) along the traced roads.
+ROUTE = [("east", 8, 5), ("cross", 8, 6)]
+ROUTE_END = (497, 511)
+
+
+def main_road_y(x):
+    """Where the main road's centre line crosses `x`."""
+    for (start_x, start_y), (end_x, end_y) in zip(MAIN_ROAD, MAIN_ROAD[1:]):
+        if start_x <= x <= end_x:
+            return start_y + (end_y - start_y) * (x - start_x) / (end_x - start_x)
+    return MAIN_ROAD[-1][1]
+
+
+def main_road_label_spot(view):
+    """A point on the main road inside `view`, left of centre, clear of the edges, and its angle."""
+    left, top, width, height = view
+    for share in (0.72, 0.64, 0.8, 0.88, 0.55, 0.45, 0.35, 0.25):
+        x = left + width * share
+        y = main_road_y(x)
+        if top + height * 0.12 < y < top + height * 0.9:
+            ahead = main_road_y(x + 10)
+            return x, y, math.degrees(math.atan2(ahead - y, 10))
+    x = left + width * 0.3
+    return x, main_road_y(x), -24
 
 # Roofs, as (left, top, right, bottom) boxes, traced roughly.
 BUILDINGS = [
@@ -27,6 +54,8 @@ BUILDINGS = [
     (200, 390, 245, 445), (285, 445, 320, 500), (100, 440, 150, 500), (100, 495, 170, 545),
     (20, 250, 80, 300), (460, 550, 560, 620), (490, 630, 560, 672), (560, 640, 600, 700),
     (30, 520, 90, 575), (130, 330, 175, 380), (700, 20, 790, 75), (880, 50, 940, 110),
+    (850, 720, 905, 770), (915, 755, 975, 800), (930, 830, 990, 880), (760, 745, 810, 790),
+    (560, 850, 615, 892), (300, 905, 360, 945), (1020, 700, 1080, 750), (480, 560, 540, 600),
 ]
 # Trees: the wooded block between the east road and the main road, and smaller groves.
 GROVES = [
@@ -41,7 +70,8 @@ RECEPTION = {"box": (452, 404, 528, 452), "pin": (489, 418)}
 
 LIGHT = {
     "ground": "#FAF6F4", "block": "#F3EBE6", "building": "#EDE2DC", "tree": "#E9DED7",
-    "casing": "#E3D4CB", "road": "#FFFFFF", "main_casing": "#D9C7BC", "main": "#FFFFFF",
+    "casing": "#E3D4CB", "road": "#FFFFFF", "main_casing": "#E09A66", "main": "#F6D6BC",
+    "main_label": "#3D2927", "route": "#E87F39",
     "church": "#E87F39", "reception": "#6A524C", "pin": "#3D2927", "pin_dot": "#E87F39",
     "pin_number": "#3D2927", "label": "#3D2927", "small": "#6A524C", "card": "#FFFFFF",
     "card_edge": "#EADFDA",
@@ -61,6 +91,30 @@ def _path(points):
             f"C{first[0]:.1f} {first[1]:.1f} {second[0]:.1f} {second[1]:.1f} {end[0]:.1f} {end[1]:.1f}"
         )
     return "".join(commands)
+
+
+def _section(points, start, end):
+    """The smoothed curve of `points` from index `start` to index `end` (either way round), with the
+    same tangents as the whole road, so it lies exactly on it."""
+    step = 1 if end > start else -1
+    commands = [f"M{points[start][0]:.1f} {points[start][1]:.1f}"]
+    index = start
+    while index != end:
+        before = points[min(max(index - step, 0), len(points) - 1)]
+        here, there = points[index], points[index + step]
+        after = points[min(max(index + 2 * step, 0), len(points) - 1)]
+        first = (here[0] + (there[0] - before[0]) / 6, here[1] + (there[1] - before[1]) / 6)
+        second = (there[0] - (after[0] - here[0]) / 6, there[1] - (after[1] - here[1]) / 6)
+        commands.append(f"C{first[0]:.1f} {first[1]:.1f} {second[0]:.1f} {second[1]:.1f} {there[0]:.1f} {there[1]:.1f}")
+        index += step
+    return "".join(commands)
+
+
+def route_path():
+    """The dashed way in, along the roads themselves, ending at the reception's gate."""
+    pieces = [_section(ROADS[road], start, end) for road, start, end in ROUTE]
+    joined = pieces[0] + "".join("L" + piece[1:] for piece in pieces[1:])
+    return joined + f"L{ROUTE_END[0]} {ROUTE_END[1]}"
 
 
 # The streets run about 21 degrees off north, and the houses face them.
@@ -90,7 +144,8 @@ def _pin(position, number, style, scale):
     )
 
 
-def map_svg(view, style=LIGHT, scale=1.0, label_size=17, landmarks=True, compass=True, aria=True, caption=True):
+def map_svg(view, style=LIGHT, scale=1.0, label_size=17, landmarks=True, compass=True, aria=True, caption=True,
+            landmarks_corner="left"):
     """The map for one window, `view` = (left, top, width, height) in world pixels."""
     left, top, width, height = view
     road = 10 * scale
@@ -118,11 +173,21 @@ def map_svg(view, style=LIGHT, scale=1.0, label_size=17, landmarks=True, compass
     lines = []
     for points in ROADS.values():
         lines.append(f'<path d="{_path(points)}" stroke="{style["casing"]}" stroke-width="{road + 5 * scale:.1f}"/>')
-    lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main_casing"]}" stroke-width="{road * 2.1 + 5 * scale:.1f}"/>')
+    lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main_casing"]}" stroke-width="{road * 2.6 + 5 * scale:.1f}"/>')
     for points in ROADS.values():
         lines.append(f'<path d="{_path(points)}" stroke="{style["road"]}" stroke-width="{road:.1f}"/>')
-    lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main"]}" stroke-width="{road * 2.1:.1f}"/>')
+    lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main"]}" stroke-width="{road * 2.6:.1f}"/>')
+    lines.append(
+        f'<path d="{route_path()}" stroke="{style["route"]}" stroke-width="{road * 0.32:.1f}" '
+        f'stroke-dasharray="{road * 0.7:.1f} {road * 0.55:.1f}"/>'
+    )
     parts.append(f'<g fill="none" stroke-linecap="round" stroke-linejoin="round">{"".join(lines)}</g>')
+    label_x, label_y, angle = main_road_label_spot(view)
+    parts.append(
+        f'<text x="{label_x:.1f}" y="{label_y:.1f}" dy="0.35em" text-anchor="middle" transform="rotate({angle:.1f} {label_x:.1f} {label_y:.1f})" '
+        f'font-family="Jost, sans-serif" font-weight="500" font-size="{road * 1.15:.1f}" letter-spacing="{road * 0.28:.1f}" '
+        f'fill="{style["main_label"]}">MAIN ROAD</text>'
+    )
 
     for place, fill in ((CHURCH, style["church"]), (RECEPTION, style["reception"])):
         parts.append(_roof(place["box"], 3, f' fill="{fill}" stroke="#FFFFFF" stroke-width="{2 * scale:.1f}"'))
@@ -156,7 +221,8 @@ def map_svg(view, style=LIGHT, scale=1.0, label_size=17, landmarks=True, compass
         )
     if landmarks:
         box_width, box_height = 150 * scale, 40 * scale
-        box_x, box_y = left + width - box_width - 10 * scale, top + height - box_height - 10 * scale
+        box_x = left + 10 * scale if landmarks_corner == "left" else left + width - box_width - 10 * scale
+        box_y = top + height - box_height - 10 * scale
         parts.append(
             f'<g transform="translate({box_x:.1f} {box_y:.1f})">'
             f'<rect width="{box_width:.1f}" height="{box_height:.1f}" rx="{3 * scale:.1f}" fill="{style["card"]}" '
@@ -169,7 +235,7 @@ def map_svg(view, style=LIGHT, scale=1.0, label_size=17, landmarks=True, compass
         )
     if caption:
         parts.append(
-            f'<text x="{left + 12 * scale:.1f}" y="{top + height - 12 * scale:.1f}" font-family="Jost, sans-serif" '
+            f'<text x="{left + 12 * scale:.1f}" y="{top + 20 * scale:.1f}" font-family="Jost, sans-serif" '
             f'font-size="{8.5 * scale:.1f}" letter-spacing="{1.8 * scale:.1f}" fill="{style["small"]}">TEPA · NOT TO SCALE</text>'
         )
 

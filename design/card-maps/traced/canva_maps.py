@@ -5,12 +5,12 @@ from tepa_styles import styled_map, STYLES
 FONTS = "/home/claude/nona/src/fonts/"
 FRAMES = {
     # name: (frame width, frame height in Canva px, world view centre x, centre y, world view height)
-    "first": (244.27, 147.26, 500, 330, 470),
-    "premium": (137.54, 154.02, 507, 340, 520),
-    "quiet": (183.77, 265.97, 497, 360, 600),
-    "deco": (160.47, 168.30, 508, 340, 520),
-    "ashanti": (122.51, 217.14, 497, 350, 560),
-    "water": (183.39, 217.14, 508, 345, 540),
+    "first": (244.27, 147.26, 560, 400, 580),
+    "premium": (137.54, 154.02, 700, 432, 664),
+    "quiet": (183.77, 265.97, 702, 458, 736),
+    "deco": (160.47, 168.30, 705, 432, 664),
+    "ashanti": (122.51, 217.14, 708, 452, 724),
+    "water": (183.39, 217.14, 700, 440, 712),
 }
 pages = {}
 for name, (frame_width, frame_height, centre_x, centre_y, view_height) in FRAMES.items():

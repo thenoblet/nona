@@ -2,32 +2,34 @@
 
 import random
 
-from tepa_map import BUILDINGS, CHURCH, GROVES, MAIN_ROAD, RECEPTION, ROADS, TILT, _path
+from tepa_map import BUILDINGS, CHURCH, GROVES, MAIN_ROAD, RECEPTION, ROADS, TILT, _path, main_road_label_spot, route_path
 
 STYLES = {
     # Cream card with white flowers: soft cream map, white roads, sepia edges.
     "first": {
         "ground": "#F6EFE6", "building": "#EADFD2", "tree": "#E2D6C6", "casing": "#D9C6B2", "road": "#FFFBF5",
-        "main_casing": "#CDB59D", "main": "#FFF8EE", "church": "#E87F39", "reception": "#6A524C",
+        "main_casing": "#E09A66", "main": "#F6D6BC", "church": "#E87F39", "reception": "#6A524C",
         "ink": "#3D2927", "soft": "#6A524C", "accent": "#E87F39", "roads": "cased", "pins": "pin",
         "font": "Cormorant Garamond", "italic": True, "feather": True,
     },
     # Dark floral card: the map sits on its cream panel, a touch warmer.
     "premium": {
         "ground": "#F3EADF", "building": "#E6D8C8", "tree": "#DDCFBE", "casing": "#D2BCA6", "road": "#FFFAF3",
-        "main_casing": "#C4A98F", "main": "#FFF6EA", "church": "#E87F39", "reception": "#6A524C",
+        "main_casing": "#D98C57", "main": "#F4D0B3", "church": "#E87F39", "reception": "#6A524C",
         "ink": "#3D2927", "soft": "#6A524C", "accent": "#B4561B", "roads": "cased", "pins": "pin",
         "font": "Cormorant Garamond", "italic": True, "feather": True,
     },
     # Minimal two-sided card: hairline streets, dots, small capitals.
     "quiet": {
+        "landmarks_top": True,
         "ground": "#FBF8F4", "building": "#F1EAE3", "tree": "#EEE6DE", "casing": "#CDBFB4", "road": "#CDBFB4",
-        "main_casing": "#B9A79A", "main": "#B9A79A", "church": "#E87F39", "reception": "#3D2927",
+        "main_casing": "#E87F39", "main": "#E87F39", "church": "#E87F39", "reception": "#3D2927",
         "ink": "#42271A", "soft": "#7A6258", "accent": "#E87F39", "roads": "line", "pins": "dot",
         "font": "Jost", "italic": False, "caps": True, "feather": True,
     },
     # Art Deco card: dark cocoa, burnt-orange streets, cream diamonds.
     "deco": {
+        "landmarks_top": True,
         "ground": "#2E1E1B", "building": "#3B2925", "tree": "#36251F", "casing": "#2E1E1B", "road": "#B8693A",
         "main_casing": "#2E1E1B", "main": "#E87F39", "church": "#E87F39", "reception": "#E6E0C5",
         "ink": "#E6E0C5", "soft": "#BFA98F", "accent": "#E87F39", "roads": "line", "pins": "diamond",
@@ -35,15 +37,17 @@ STYLES = {
     },
     # Ashanti card: warm cream panel, burnt-orange streets, room at the top for its Tepa heading.
     "ashanti": {
+        "landmarks_top": True,
         "ground": "#FBF3E7", "building": "#F0E2D0", "tree": "#EADBC6", "casing": "#E8A774", "road": "#FFF8EF",
-        "main_casing": "#E08A4C", "main": "#FFF3E4", "church": "#E87F39", "reception": "#6A524C",
+        "main_casing": "#C96A2C", "main": "#F4C29C", "church": "#E87F39", "reception": "#6A524C",
         "ink": "#391F15", "soft": "#6A524C", "accent": "#E87F39", "roads": "cased", "pins": "pin",
         "font": "Jost", "italic": False, "bold": True, "feather": False, "top_space": 0.2,
     },
     # Watercolour card: a painted wash in blush and mocha with soft, bleeding edges.
     "water": {
+        "landmarks_top": True,
         "ground": "#F4E3D7", "building": "#E9CDBB", "tree": "#DDBBA4", "casing": "#E4CBB9", "road": "#FFF8F2",
-        "main_casing": "#D9B39A", "main": "#FFF6EE", "church": "#E87F39", "reception": "#6A524C",
+        "main_casing": "#D98C5A", "main": "#F3CDB0", "church": "#E87F39", "reception": "#6A524C",
         "ink": "#593D26", "soft": "#6A524C", "accent": "#E87F39", "roads": "cased", "pins": "pin",
         "font": "Cormorant Garamond", "italic": True, "feather": False, "watercolour": True,
     },
@@ -123,15 +127,28 @@ def styled_map(name, view, width, height, unit):
     if style["roads"] == "cased":
         for points in ROADS.values():
             lines.append(f'<path d="{_path(points)}" stroke="{style["casing"]}" stroke-width="{road * 1.5:.1f}"/>')
-        lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main_casing"]}" stroke-width="{road * 2.7:.1f}"/>')
+        lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main_casing"]}" stroke-width="{road * 3.2:.1f}"/>')
         for points in ROADS.values():
             lines.append(f'<path d="{_path(points)}" stroke="{style["road"]}" stroke-width="{road:.1f}"/>')
-        lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main"]}" stroke-width="{road * 2.1:.1f}"/>')
+        lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main"]}" stroke-width="{road * 2.6:.1f}"/>')
     else:
         for points in ROADS.values():
             lines.append(f'<path d="{_path(points)}" stroke="{style["road"]}" stroke-width="{road * 0.42:.1f}"/>')
-        lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main"]}" stroke-width="{road * 0.9:.1f}"/>')
+        lines.append(f'<path d="{_path(MAIN_ROAD)}" stroke="{style["main"]}" stroke-width="{road * 1.5:.1f}"/>')
+    route_colour = style["accent"] if style["roads"] == "cased" else style["ink"]
+    lines.append(
+        f'<path d="{route_path()}" stroke="{route_colour}" stroke-width="{road * 0.34:.1f}" '
+        f'stroke-dasharray="{road * 0.75:.1f} {road * 0.6:.1f}"/>'
+    )
     parts.append(f'<g fill="none" stroke-linecap="round" stroke-linejoin="round">{"".join(lines)}</g>')
+    label_x, label_y, angle = main_road_label_spot((left, top, view_width, view_height))
+    on_road = style["roads"] == "cased"
+    parts.append(
+        f'<text x="{label_x:.1f}" y="{label_y:.1f}" dy="{"0.35em" if on_road else "-0.9em"}" text-anchor="middle" '
+        f'transform="rotate({angle:.1f} {label_x:.1f} {label_y:.1f})" font-family="Jost, sans-serif" font-weight="500" '
+        f'font-size="{road * 1.2:.1f}" letter-spacing="{road * 0.3:.1f}" fill="{style["ink"]}" '
+        f'{"" if on_road else "paint-order=" + chr(34) + "stroke" + chr(34) + " stroke=" + chr(34) + style["ground"] + chr(34) + f" stroke-width={chr(34)}{road * 0.4:.1f}{chr(34)}"}>MAIN ROAD</text>'
+    )
 
     for place, fill in ((CHURCH, style["church"]), (RECEPTION, style["reception"])):
         parts.append(_roof(place["box"], fill, f' stroke="{style["ground"]}" stroke-width="{unit * 0.25:.1f}"'))
@@ -156,12 +173,17 @@ def styled_map(name, view, width, height, unit):
 
     # The landmarks, as the couple asked: words over the map, not places on it.
     small = unit * 1.05
-    big = unit * (1.5 if caps else 1.9)
-    box_width = big * (13.2 if caps else 9.6)
+    big = unit * (1.2 if caps else 1.9)
+    box_width = big * (15.6 if caps else 9.6)
     box_height = small * 1.6 + big * 1.5 + unit * 0.8
     margin = unit + (min(view_width, view_height) * 0.09 if style.get("watercolour") else 0)
-    box_x = left + view_width - box_width - margin
-    box_y = top + view_height - box_height - margin
+    if style.get("landmarks_top"):
+        # Up in the north-east corner, clear of the main road and the way in.
+        box_x = left + view_width - box_width - margin
+        box_y = top + view_height * top_space + margin
+    else:
+        box_x = left + margin
+        box_y = top + view_height - box_height - margin
     landmark_font = "Jost" if caps else "Cormorant Garamond"
     landmark_style = "normal" if caps else "italic"
     parts.append(
