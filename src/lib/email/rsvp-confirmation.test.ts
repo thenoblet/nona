@@ -100,6 +100,70 @@ describe("renderRsvpConfirmation", () => {
     }
   });
 
+  it("writes a numeric day without its leading zero, and any other day as the couple wrote it", async () => {
+    const withDays = (firstDay: string, secondDay: string): SiteContent => ({
+      ...contentDefaults,
+      celebrations: contentDefaults.celebrations.map((celebration) =>
+        celebration.id === first.id
+          ? { ...celebration, day: firstDay }
+          : celebration.id === second.id
+            ? { ...celebration, day: secondDay }
+            : celebration,
+      ),
+    });
+    const numeric = await render(record({ [first.id]: "yes", [second.id]: "no" }), withDays("05", "12"));
+    const written = await render(record({ [first.id]: "yes", [second.id]: "no" }), withDays("[Day]", "5th"));
+    for (const [body, asWritten] of [
+      [numeric.html, asHtml],
+      [numeric.text, (value: string) => value],
+    ] as const) {
+      expect(card(body, first, second)).toContain(asWritten(`${first.weekday} 5 ${first.month}`));
+      expect(body).not.toContain(`${first.weekday} 05 `);
+      expect(card(body, second, null)).toContain(asWritten(`${second.weekday} 12 ${second.month}`));
+    }
+    for (const [body, asWritten] of [
+      [written.html, asHtml],
+      [written.text, (value: string) => value],
+    ] as const) {
+      expect(card(body, first, second)).toContain(asWritten(`${first.weekday} [Day] ${first.month}`));
+      expect(card(body, second, null)).toContain(asWritten(`${second.weekday} 5th ${second.month}`));
+    }
+  });
+
+  it("shows a celebration's GhanaPost GPS line under its place when it has one, and none when it doesn't", async () => {
+    const withGps = contentDefaults.celebrations.filter((celebration) => celebration.placeDetail);
+    const withoutGps = contentDefaults.celebrations.filter((celebration) => !celebration.placeDetail);
+    // The built-in text gives the reception a GhanaPost GPS line and the white wedding none.
+    expect(withGps.map((celebration) => celebration.id)).toContain(second.id);
+    expect(withoutGps.map((celebration) => celebration.id)).toContain(first.id);
+    const gpsLine = second.placeDetail as string;
+    expect(gpsLine).toMatch(/^GhanaPost GPS/);
+
+    const mail = await render(record({ [first.id]: "yes", [second.id]: "yes" }));
+    for (const [body, written] of [
+      [mail.html, asHtml],
+      [mail.text, (value: string) => value],
+    ] as const) {
+      const reception = card(body, second, null);
+      expect(reception).toContain(written(gpsLine));
+      // Under the place, on a line of its own.
+      expect(reception.indexOf(written(gpsLine))).toBeGreaterThan(reception.indexOf(written(second.place)));
+      expect(card(body, first, second)).not.toContain("GhanaPost GPS");
+    }
+    expect(mail.text).toContain(`${second.place}\n${gpsLine}`);
+
+    const noGps: SiteContent = {
+      ...contentDefaults,
+      celebrations: contentDefaults.celebrations.map((celebration) => ({ ...celebration, placeDetail: undefined })),
+    };
+    const withoutLine = await render(record({ [first.id]: "yes", [second.id]: "yes" }), noGps);
+    expect(withoutLine.html).not.toContain("GhanaPost GPS");
+    expect(withoutLine.text).not.toContain("GhanaPost GPS");
+    // The place ends the card's details: no empty line or stray break is left where it would have been.
+    expect(withoutLine.html).toContain(`${asHtml(second.place)}</p>`);
+    expect(withoutLine.html).not.toContain('<span style="font-size:13px">');
+  });
+
   it("builds a calendar file with the celebrations the guest is coming to only", async () => {
     const mail = await render(record({ [first.id]: "yes", [second.id]: "no" }));
     expect(mail.ics).toContain(`UID:${first.id}@nobletxnancy.com`);
