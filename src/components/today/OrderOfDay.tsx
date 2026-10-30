@@ -1,20 +1,20 @@
-import { schedule } from "@/content/wedding";
-import { nowIndex } from "./ByDay";
+import type { ScheduleItem } from "@/lib/content/schema";
+import { nowIndex } from "./day";
 
 /** The day's timeline: finished items fade, the current one is marked in orange. */
-export function OrderOfDay({ secondDay }: { secondDay: boolean }) {
-  const now = nowIndex(secondDay);
+export function OrderOfDay({ schedule, secondDay }: { schedule: ScheduleItem[]; secondDay: boolean }) {
+  const now = nowIndex(schedule, secondDay);
   return (
     <ol className="border-t border-hairline">
-      {schedule.map((s, i) => {
-        const state = i < now ? "done" : i === now ? "now" : "next";
+      {schedule.map((item, index) => {
+        const state = index < now ? "done" : index === now ? "now" : "next";
         return (
           <li
-            key={s.title}
+            key={`${item.time}-${item.title}`}
             aria-current={state === "now" ? "step" : undefined}
             className={`flex items-start gap-3.5 border-b border-hairline py-4 ${state === "done" ? "opacity-55" : ""}`}
           >
-            <span className="w-17.5 shrink-0 pt-1 text-[11px] uppercase tracking-[0.12em] text-mocha">{s.time}</span>
+            <span className="w-17.5 shrink-0 pt-1 text-[11px] uppercase tracking-[0.12em] text-mocha">{item.time}</span>
             <span
               aria-hidden
               className={`mt-[7px] size-[11px] shrink-0 rounded-full ${
@@ -27,10 +27,10 @@ export function OrderOfDay({ secondDay }: { secondDay: boolean }) {
             />
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className={`font-serif text-[22px] leading-[1.2] ${state === "now" ? "font-semibold" : ""}`}>
-                {s.title}
+                {item.title}
                 {state === "done" ? <span className="sr-only"> (finished)</span> : null}
               </span>
-              <span className="text-[13px] text-mocha">{s.place}</span>
+              <span className="text-[13px] text-mocha">{item.place}</span>
               {state === "now" ? (
                 <span className="mt-[3px] text-[10px] uppercase tracking-[0.24em] text-ember-ink">Happening now</span>
               ) : null}

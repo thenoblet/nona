@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { couple, schedule } from "@/content/wedding";
+import { couple } from "@/content/wedding";
+import { getSiteContent } from "@/lib/content/get";
+import { liveStreamState, visibleFaq } from "@/lib/content/live";
 import { isSecondDay, resolveMode, type Mode } from "@/lib/mode";
 import { Autoplay } from "@/components/music/Autoplay";
 import { DockItem } from "@/components/music/Dock";
@@ -13,7 +15,7 @@ import { Celebrations } from "@/components/home/Celebrations";
 import { MapSection } from "@/components/home/MapSection";
 import { AlbumTeaser, Colours, Faq, Footer, Gifts, Party, RsvpBand, Travel } from "@/components/home/Sections";
 import { AfterAlbum, LiveAlbum, TodaySection, WishesWall } from "@/components/home/ModeSections";
-import { dayLabel, nowIndex } from "@/components/today/ByDay";
+import { dayLabel, nowIndex } from "@/components/today/day";
 
 export const metadata: Metadata = {
   title: "Our invitation",
@@ -37,11 +39,17 @@ export default function HomePage({ searchParams }: PageProps<"/home">) {
 
 async function Home({ searchParams }: { searchParams: PageProps<"/home">["searchParams"] }) {
   await connection();
+  const content = await getSiteContent();
+  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts } = content;
+  const faq = visibleFaq(content);
   const params = await searchParams;
+  // One moment for the whole page, so the version, the schedule and the live stream agree.
   const now = new Date();
+  const live = liveStreamState(content, now);
   const mode: Mode = resolveMode(now, params.mode);
   const secondDay = mode === "day" && isSecondDay(now);
-  const current = schedule[nowIndex(secondDay)];
+  const current = schedule[nowIndex(schedule, secondDay)];
+  const todayLabel = dayLabel(secondDay, celebrations);
 
   return (
     <>
@@ -51,32 +59,38 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
           <>
             <HeroBefore />
             <InvitationLetter />
-            <Story />
-            <Celebrations />
-            <MapSection />
+            <Story story={story} />
+            <Celebrations celebrations={celebrations} />
+            <MapSection venues={venues} landmarks={landmarks} />
             <Colours />
-            <Party />
+            <Party party={party} />
             <Gallery />
-            <Travel />
+            <Travel travel={travel} />
             <RsvpBand />
-            <Gifts />
+            <Gifts gifts={gifts} />
             <AlbumTeaser />
-            <Faq />
+            <Faq faq={faq} />
           </>
         ) : null}
 
         {mode === "day" ? (
           <>
-            <HeroDay todayLabel={dayLabel(secondDay)} nowTitle={current.title} nowPlace={current.place.replace(", Tepa", "")} />
+            <HeroDay
+              todayLabel={todayLabel}
+              now={current ? { title: current.title, place: current.place.replace(", Tepa", "") } : null}
+            />
             <LiveAlbum />
-            <TodaySection todayLabel={dayLabel(secondDay)} secondDay={secondDay} />
-            <Celebrations />
-            <MapSection />
-            <Story />
-            <Party />
+            <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule}
+              reception={venues.reception}
+              liveUrl={live.show ? live.url : null}
+            />
+            <Celebrations celebrations={celebrations} />
+            <MapSection venues={venues} landmarks={landmarks} />
+            <Story story={story} />
+            <Party party={party} />
             <Gallery />
-            <Gifts />
-            <Faq />
+            <Gifts gifts={gifts} />
+            <Faq faq={faq} />
             <DockItem>
               <SharePill />
             </DockItem>
@@ -86,11 +100,11 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
         {mode === "after" ? (
           <>
             <HeroAfter />
-            <AfterAlbum />
+            <AfterAlbum celebrations={celebrations} />
             <WishesWall />
-            <Story />
-            <Party />
-            <Gifts />
+            <Story story={story} />
+            <Party party={party} />
+            <Gifts gifts={gifts} />
           </>
         ) : null}
       </main>

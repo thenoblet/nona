@@ -4,7 +4,7 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
 
 export type MapPlace = {
-  n: number;
+  number: number;
   label: string;
   name: string;
   lat: number;
@@ -31,7 +31,7 @@ export function VenueMap({
   note?: { eyebrow: string; text: string };
   label: string;
 }) {
-  const el = useRef<HTMLDivElement>(null);
+  const frame = useRef<HTMLDivElement>(null);
   const key = JSON.stringify(places);
 
   useEffect(() => {
@@ -39,38 +39,38 @@ export function VenueMap({
     let map: import("leaflet").Map | undefined;
     let cancelled = false;
 
-    import("leaflet").then((L) => {
-      if (cancelled || !el.current) return;
+    import("leaflet").then((leaflet) => {
+      if (cancelled || !frame.current) return;
       // On phones, one finger keeps scrolling the page; pinch or the buttons zoom the map.
       const touch = window.matchMedia("(pointer: coarse)").matches;
-      map = L.map(el.current, {
+      map = leaflet.map(frame.current, {
         scrollWheelZoom: false,
         dragging: !touch,
         maxZoom: 19,
         zoomSnap: 0.25,
       });
       map.attributionControl.setPrefix(false);
-      L.tileLayer(IMAGERY, {
+      leaflet.tileLayer(IMAGERY, {
         maxZoom: 19,
         attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
       }).addTo(map);
 
-      const bounds = L.latLngBounds([]);
-      for (const p of list) {
-        const icon = L.divIcon({
+      const bounds = leaflet.latLngBounds([]);
+      for (const place of list) {
+        const icon = leaflet.divIcon({
           className: "nona-pin",
-          html: `${pinSvg}<span class="nona-pin__n">${p.n}</span><span class="nona-pin__tag">${p.label}</span>`,
+          html: `${pinSvg}<span class="nona-pin__n">${place.number}</span><span class="nona-pin__tag">${place.label}</span>`,
           iconSize: [34, 44],
           iconAnchor: [17, 44],
           popupAnchor: [0, -46],
         });
-        L.marker([p.lat, p.lng], { icon, title: p.name, alt: p.name })
+        leaflet.marker([place.lat, place.lng], { icon, title: place.name, alt: place.name })
           .addTo(map)
           .bindPopup(
-            `<span class="nona-pop__eyebrow">${p.label}</span><strong class="nona-pop__name">${p.name}</strong><a class="nona-pop__link" href="${p.directionsUrl}" target="_blank" rel="noopener noreferrer">Get directions</a>`,
+            `<span class="nona-pop__eyebrow">${place.label}</span><strong class="nona-pop__name">${place.name}</strong><a class="nona-pop__link" href="${place.directionsUrl}" target="_blank" rel="noopener noreferrer">Get directions</a>`,
             { className: "nona-pop", closeButton: false, maxWidth: 240 },
           );
-        bounds.extend([p.lat, p.lng]);
+        bounds.extend([place.lat, place.lng]);
       }
       // Labels sit to the right of each marker, so leave more room on that side.
       map.fitBounds(bounds, { paddingTopLeft: [24, 60], paddingBottomRight: [110, 24], maxZoom: 18 });
@@ -85,7 +85,7 @@ export function VenueMap({
   return (
     <div className="relative">
       <div
-        ref={el}
+        ref={frame}
         role="region"
         aria-label={label}
         className="nona-map aspect-[4/5] w-full overflow-hidden rounded-[calc(var(--radius-paper)-4px)] bg-tray sm:aspect-[5/4]"

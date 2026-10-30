@@ -8,9 +8,9 @@ import { useMusic } from "@/components/music/MusicProvider";
  * (it lives in the root layout) is paused here rather than left running with no controls.
  */
 export function PauseMusic() {
-  const { playing, toggle } = useMusic();
+  const { playing, pause } = useMusic();
   useEffect(() => {
-    if (playing) toggle();
-  }, [playing, toggle]);
+    if (playing) pause();
+  }, [playing, pause]);
   return null;
 }

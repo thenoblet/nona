@@ -2,10 +2,11 @@ import type { Metadata, Viewport } from "next";
 import { cormorant, jost, pinyon } from "./fonts";
 import { MusicProvider } from "@/components/music/MusicProvider";
 import { shareDefaults } from "@/lib/share";
+import { siteUrl } from "@/lib/site-url";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.SITE_URL ?? "http://localhost:3000"),
+  metadataBase: new URL(siteUrl()),
   title: {
     default: "Noblet & Nancy · NONA'26",
     template: "%s · Noblet & Nancy",

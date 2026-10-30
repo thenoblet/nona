@@ -2,6 +2,7 @@
 
 import { refresh } from "next/cache";
 import { addWish } from "@/lib/data/wishes";
+import { describeError } from "@/lib/log-error";
 
 export type WishFormState = {
   status: "idle" | "error" | "sent";
@@ -38,7 +39,7 @@ export async function sendWish(_prev: WishFormState, formData: FormData): Promis
   try {
     wish = await addWish({ kind: "text", message, signedAs });
   } catch (error) {
-    console.error("[wishes] could not save a wish", error);
+    console.error("[wishes] could not save a wish:", describeError(error));
     return { status: "error", values, errors: { form: "Your wish didn't send. Please try again." } };
   }
 

@@ -1,37 +1,32 @@
-import { Suspense, type ReactNode } from "react";
+import { cache, Suspense, type ReactNode } from "react";
 import { connection } from "next/server";
-import { celebrations, schedule } from "@/content/wedding";
+import { getSiteContent } from "@/lib/content/get";
+import type { SiteContent } from "@/lib/content/schema";
 import { isSecondDay } from "@/lib/mode";
 
-type Render = (secondDay: boolean) => ReactNode;
+type Render = (secondDay: boolean, content: SiteContent) => ReactNode;
+
+/** Shared by every ByDay on a page, so the content is read once per request. */
+const loadDay = cache(async () => {
+  await connection();
+  const content = await getSiteContent();
+  return { secondDay: isSecondDay(new Date()), content };
+});
 
 async function AtRequest({ render }: { render: Render }) {
-  await connection();
-  return render(isSecondDay(new Date()));
+  const { secondDay, content } = await loadDay();
+  return render(secondDay, content);
 }
 
 /**
- * Renders Saturday's version in the static shell, then swaps in the right day
- * at request time (Sunday moves on to the thanksgiving service).
+ * Renders a piece of the page for the right day (Sunday moves on to the thanksgiving service),
+ * from content read at request time. The fallback is a static placeholder, so no content is read
+ * in the prerendered shell.
  */
-export function ByDay({ render }: { render: Render }) {
+export function ByDay({ fallback, render }: { fallback: ReactNode; render: Render }) {
   return (
-    <Suspense fallback={render(false)}>
+    <Suspense fallback={fallback}>
       <AtRequest render={render} />
     </Suspense>
   );
-}
-
-/** "Saturday · 5 Dec" or "Sunday · 6 Dec". */
-export function dayLabel(secondDay: boolean) {
-  const c = celebrations.find((e) => e.id === (secondDay ? "thanks" : "ceremony")) ?? celebrations[0];
-  return `${c.weekday} · ${Number(c.day)} ${c.month.slice(0, 3)}`;
-}
-
-/**
- * Which schedule item is happening now. Until the timings are confirmed,
- * the white wedding stands for all of Saturday and the thanksgiving for Sunday.
- */
-export function nowIndex(secondDay: boolean) {
-  return secondDay ? schedule.findIndex((s) => s.day === "sun") : 1;
 }

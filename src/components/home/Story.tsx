@@ -1,5 +1,6 @@
 import Image from "next/image";
-import { couple, story } from "@/content/wedding";
+import { couple } from "@/content/wedding";
+import type { Story as StoryContent } from "@/lib/content/schema";
 import { photos, type Photo } from "@/content/images";
 import { Reveal } from "@/components/ui/Reveal";
 import { Eyebrow, Motto, Ornament } from "@/components/ui/Typography";
@@ -51,7 +52,7 @@ function SmallPrint({ photo, caption, side }: { photo: Photo; caption: string; s
   return (
     <div
       className={`print absolute -bottom-7 w-[110px] bg-white p-1.5 pb-6 shadow-[0_10px_24px_rgb(61_41_39/0.2)] sm:w-[120px] ${
-        side === "left" ? "-left-4 sm:-left-9" : "-right-4 sm:-right-9"
+        side === "left" ? "-left-2 sm:-left-4 xl:-left-9" : "-right-2 sm:-right-4 xl:-right-9"
       }`}
       style={{ transform: `rotate(${side === "left" ? -6 : 6}deg)` }}
     >
@@ -90,9 +91,9 @@ function Chapter({
   );
 }
 
-export function Story() {
+export function Story({ story }: { story: StoryContent }) {
   return (
-    <section id="story" className="bg-white px-5 py-20 sm:px-6 sm:py-26">
+    <section id="story" className="overflow-x-clip bg-white px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[1200px] flex-col gap-14 sm:gap-16">
         <Reveal className="flex flex-col items-center gap-3 text-center">
           <Eyebrow>Chapter one</Eyebrow>

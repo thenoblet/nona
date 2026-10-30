@@ -1,6 +1,13 @@
+import type { Celebration, EventId, PartyMember, ScheduleItem } from "@/lib/content/schema";
+
+export type { Celebration, EventId, PartyMember, ScheduleItem };
+
 /**
- * Everything the couple knows ahead of time lives here.
- * Edit the words in this file; the pages read from it.
+ * Everything the couple knows ahead of time lives here. The pages read `couple`, `wedding` and
+ * `colours` straight from this file. The rest (celebrations, venues, landmarks, story, party,
+ * travel, gifts, FAQ, live stream and schedule) is the built-in text: the site shows it until a
+ * section is saved in the admin (/admin/content), and whenever the database can't be reached.
+ * Once a section is saved there, changing it here no longer changes the site.
  * Square brackets mark details still to confirm.
  */
 
@@ -55,22 +62,6 @@ export const venues = {
 /** Landmarks guests can ask for on the way. Shown as a note over the map, not as pins. */
 export const landmarks = ["Rexco", "Amel Junction"] as const;
 
-export type EventId = "ceremony" | "reception" | "thanks";
-
-export type Celebration = {
-  id: EventId;
-  name: string;
-  weekday: string;
-  weekdayShort: string;
-  day: string;
-  month: string;
-  time: string;
-  place: string;
-  placeDetail?: string;
-  dress: string;
-  directionsUrl: string;
-};
-
 export const celebrations: Celebration[] = [
   {
     id: "ceremony",
@@ -83,6 +74,9 @@ export const celebrations: Celebration[] = [
     place: venues.church.name + ", Tepa",
     dress: "Formal · black tie optional",
     directionsUrl: "#map",
+    date: "2026-12-05",
+    startTime: null,
+    endTime: null,
   },
   {
     id: "reception",
@@ -96,6 +90,9 @@ export const celebrations: Celebration[] = [
     placeDetail: "GhanaPost GPS · " + venues.reception.gps,
     dress: "Evening glamour",
     directionsUrl: venues.reception.mapsUrl,
+    date: "2026-12-05",
+    startTime: null,
+    endTime: null,
   },
   {
     id: "thanks",
@@ -108,6 +105,9 @@ export const celebrations: Celebration[] = [
     place: venues.church.name + ", Tepa",
     dress: "Your Sunday best",
     directionsUrl: "#map",
+    date: "2026-12-06",
+    startTime: null,
+    endTime: null,
   },
 ];
 
@@ -131,17 +131,15 @@ export const story = {
   },
 } as const;
 
-export type PartyMember = { name: string; role: string; lead?: boolean };
-
 export const party: PartyMember[] = [
-  { name: "Lilian", role: "Maid of honour", lead: true },
-  { name: "James", role: "Best man", lead: true },
-  { name: "Bernice", role: "Bridesmaid" },
-  { name: "Jacqueline", role: "Bridesmaid" },
-  { name: "Rahina", role: "Bridesmaid" },
-  { name: "Priscilla", role: "Bridesmaid" },
-  { name: "Afrifa", role: "Groomsman" },
-  { name: "Dennis", role: "Groomsman" },
+  { id: "lilian", name: "Lilian", role: "Maid of honour", lead: true },
+  { id: "james", name: "James", role: "Best man", lead: true },
+  { id: "bernice", name: "Bernice", role: "Bridesmaid" },
+  { id: "jacqueline", name: "Jacqueline", role: "Bridesmaid" },
+  { id: "rahina", name: "Rahina", role: "Bridesmaid" },
+  { id: "priscilla", name: "Priscilla", role: "Bridesmaid" },
+  { id: "afrifa", name: "Afrifa", role: "Groomsman" },
+  { id: "dennis", name: "Dennis", role: "Groomsman" },
 ];
 
 export const colours = [
@@ -180,22 +178,24 @@ export const gifts = [
 
 export const faq = [
   {
-    q: "Can I bring a plus-one?",
-    a: "[Your plus-one policy.] If you have a question, please reach out to [contact name].",
+    question: "Can I bring a plus-one?",
+    answer: "[Your plus-one policy.] If you have a question, please reach out to [contact name].",
   },
-  { q: "Are children welcome?", a: "[Your children policy.]" },
+  { question: "Are children welcome?", answer: "[Your children policy.]" },
   {
-    q: "Is the ceremony unplugged?",
-    a: "[Phones away during the vows?] Our photographers will capture every moment, and the shared album opens right after.",
+    question: "Is the ceremony unplugged?",
+    answer: "[Phones away during the vows?] Our photographers will capture every moment, and the shared album opens right after.",
   },
-  { q: "Where do I park?", a: "[Parking details for each venue.]" },
+  { question: "Where do I park?", answer: "[Parking details for each venue.]" },
   {
-    q: "Can't make it in person?",
-    a: "Join the live stream from this page on the day. The link appears here an hour before the ceremony.",
+    question: "Can't make it in person?",
+    answer: "Join the live stream from this page on the day. The link appears here an hour before the ceremony.",
+    topic: "live-stream",
   },
 ] as const;
 
-export type ScheduleItem = { time: string; title: string; place: string; day: "sat" | "sun" };
+/** The live-stream link; null until the couple add it. */
+export const liveStream: { url: string | null } = { url: null };
 
 export const schedule: ScheduleItem[] = [
   { time: "[Time]", title: "Guests arrive", place: venues.church.name + ", Tepa", day: "sat" },

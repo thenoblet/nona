@@ -1,7 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useRef, type FormEvent } from "react";
-import { celebrations, type EventId } from "@/content/wedding";
+import type { EventId } from "@/content/wedding";
+import type { Celebration } from "@/lib/content/schema";
 import type { Answer } from "@/lib/data/types";
 import { Field, Select, TextInput } from "@/components/ui/Field";
 import { PillButton } from "@/components/ui/Button";
@@ -22,12 +23,14 @@ function ErrorText({ id, children }: { id: string; children?: string }) {
 
 /** The reply form. Fields keep what was typed; the celebration answers live in the parent. */
 export function ReplyForm({
+  celebrations,
   state,
   pending,
   dispatch,
   answers,
   onAnswer,
 }: {
+  celebrations: Celebration[];
   state: RsvpState;
   pending: boolean;
   dispatch: (form: FormData) => void;
@@ -44,10 +47,10 @@ export function ReplyForm({
     first?.focus();
   }, [state]);
 
-  function onSubmit(e: FormEvent<HTMLFormElement>) {
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
     // Submit without React's automatic form reset, so nothing typed is lost.
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
     startTransition(() => dispatch(data));
   }
 
@@ -86,10 +89,29 @@ export function ReplyForm({
           />
           <ErrorText id="phone-error">{errors.phone}</ErrorText>
         </Field>
+        <Field
+          id="email"
+          label="Email"
+          hint="Optional. Without it we can't send you a confirmation or calendar invites."
+        >
+          <TextInput
+            id="email"
+            name="email"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            placeholder="For your confirmation"
+            defaultValue={values.email}
+            aria-invalid={errors.email ? true : undefined}
+            aria-describedby={errors.email ? "email-error" : undefined}
+            className="aria-invalid:border-ember-ink"
+          />
+          <ErrorText id="email-error">{errors.email}</ErrorText>
+        </Field>
         <Field id="partySize" label="How many in your party?">
           <Select id="partySize" name="partySize" defaultValue={values.partySize}>
-            {partySizes.map((p) => (
-              <option key={p}>{p}</option>
+            {partySizes.map((partySize) => (
+              <option key={partySize}>{partySize}</option>
             ))}
           </Select>
         </Field>
@@ -111,12 +133,12 @@ export function ReplyForm({
               {errors.answers}
             </p>
           ) : null}
-          {celebrations.map((c) => (
+          {celebrations.map((celebration) => (
             <CelebrationChoice
-              key={c.id}
-              celebration={c}
-              value={answers[c.id]}
-              onChange={(v) => onAnswer(c.id, v)}
+              key={celebration.id}
+              celebration={celebration}
+              value={answers[celebration.id]}
+              onChange={(answer) => onAnswer(celebration.id, answer)}
             />
           ))}
         </fieldset>
@@ -150,7 +172,7 @@ export function ReplyForm({
           </PillButton>
         </div>
         <p className="-mt-1.5 text-center text-[13px] leading-relaxed text-mocha">
-          Need to change something later? Send a new reply with the same name.
+          Need to change something? Send a new reply with the same name and phone or email.
         </p>
       </div>
     </form>

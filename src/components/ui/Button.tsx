@@ -69,6 +69,24 @@ export function PillLink({
   );
 }
 
+/** A pill that is a plain `<a>`, for file downloads: `next/link` would prefetch the file. */
+export function PillAnchor({
+  variant = "ember",
+  icon,
+  size = "md",
+  block,
+  children,
+  className,
+  ...rest
+}: PillOwnProps & Omit<ComponentProps<"a">, "className" | "children">) {
+  return (
+    <a className={pillClasses({ variant, icon, size, block, className })} {...rest}>
+      {icon ? <IconBubble icon={icon} variant={variant} size={size} /> : null}
+      <span>{children}</span>
+    </a>
+  );
+}
+
 export function PillButton({
   variant = "ember",
   icon,

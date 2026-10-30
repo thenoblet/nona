@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
+import { getSiteContent } from "@/lib/content/get";
 import { listMedia, SAMPLE_DEVICE } from "@/lib/data/media";
 import { resolveMode } from "@/lib/mode";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
@@ -72,7 +73,7 @@ export default function AlbumPage({ searchParams }: PageProps<"/album">) {
           <PillLink href="/slideshow" variant="cocoa">
             <span className="flex items-center gap-2.5">
               <Icon name="slideshow" size={15} className="text-ember" />
-              Slideshow
+              Watch the slideshow
             </span>
           </PillLink>
           <TextLink href="/wishes" className="text-cocoa">
@@ -94,19 +95,21 @@ async function ShareChoices({ searchParams }: Pick<PageProps<"/album">, "searchP
 /** Read at request time so new uploads show up. */
 async function AlbumMedia() {
   await connection();
-  const items = await listMedia();
+  const [{ celebrations }, items] = await Promise.all([getSiteContent(), listMedia()]);
   // TODO: identify this phone with a device cookie instead of the sample device.
-  return <AlbumBrowser items={items} myDevice={SAMPLE_DEVICE} />;
+  // TODO: ask for the latest list every 30 s, as the slideshow does (pollSlides in
+  // src/components/slideshow/feed.ts), so new uploads appear without a reload.
+  return <AlbumBrowser celebrations={celebrations} items={items} myDevice={SAMPLE_DEVICE} />;
 }
 
 function GridSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading the album" className="pt-5.5">
+    <div role="status" aria-busy="true" aria-label="Loading the album" className="pt-5.5">
       <div className="h-11 w-3/4 rounded-full bg-tray" />
       <div className="mt-3.5 h-13 rounded-full bg-tray sm:max-w-md" />
       <div className="mt-17 grid grid-cols-3 gap-1.5 md:grid-cols-4 lg:grid-cols-5">
-        {Array.from({ length: 9 }, (_, i) => (
-          <div key={i} className="aspect-square animate-pulse rounded-[2px] bg-tile" />
+        {Array.from({ length: 9 }, (_tile, index) => (
+          <div key={index} className="aspect-square animate-pulse rounded-[2px] bg-tile" />
         ))}
       </div>
     </div>

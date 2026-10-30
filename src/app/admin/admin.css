@@ -1,0 +1,325 @@
+/* The admin's own look. Colours are tokens here and are not part of the guest site's theme. */
+.admin {
+  --admin-bg: #f4f4f3;
+  --admin-surface: #fff;
+  --admin-text: #1c1a19;
+  --admin-muted: #5c5856;
+  --admin-border: #d4d1cf;
+  --admin-soft: #e8e6e4;
+  --admin-subtle: #fafaf9;
+  --admin-disabled: #8d8986;
+  --admin-accent: #b4541a;
+  --admin-accent-soft: #fbeee5;
+  --admin-accent-text: #8a3a0c;
+  --admin-ok: #166534;
+  --admin-ok-bg: #dcfce7;
+  --admin-wait: #854d0e;
+  --admin-wait-bg: #fef3c7;
+  --admin-bad: #b42318;
+  --admin-bad-bg: #fee4e2;
+  --admin-none: #57534e;
+  --admin-none-bg: #efeeed;
+  --admin-radius: 10px;
+  --admin-gutter: 16px;
+  min-height: 100dvh;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--admin-text);
+  background: var(--admin-bg);
+}
+.admin a { color: var(--admin-accent); }
+.admin :focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--admin-accent) 45%, transparent);
+  outline-offset: 2px;
+}
+/* Tailwind's reset leaves headings unweighted; the admin wants them bold. */
+.admin h1 { font-size: 22px; font-weight: 700; line-height: 1.2; margin: 0; }
+
+.admin-topbar { position: sticky; top: 0; z-index: 5; background: var(--admin-surface); border-bottom: 1px solid var(--admin-border); }
+.admin-topbar-inner {
+  max-width: 1200px; margin: 0 auto; padding: 0 var(--admin-gutter);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0 20px; min-height: 56px;
+}
+/* A flex box drops the space before "· admin", so the gap stands in for it. */
+.admin .admin-brand { display: inline-flex; align-items: center; gap: 0.25em; min-height: 44px; font-weight: 600; text-decoration: none; color: var(--admin-text); white-space: nowrap; }
+.admin-brand span { font-weight: 400; color: var(--admin-muted); }
+.admin-tabs { display: flex; gap: 4px; }
+.admin .admin-tabs > a, .admin-tabs > span {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px;
+  text-decoration: none; color: var(--admin-muted); border-bottom: 2px solid transparent; white-space: nowrap;
+}
+.admin .admin-tabs a[aria-current="page"] { color: var(--admin-text); border-bottom-color: var(--admin-accent); font-weight: 600; }
+.admin-tabs .admin-tab-disabled { color: var(--admin-disabled); cursor: not-allowed; }
+.admin-tab-disabled small { font-size: 11px; }
+.admin .admin-viewsite { display: inline-flex; align-items: center; min-height: 44px; margin-left: auto; white-space: nowrap; text-decoration: none; font-size: 14px; }
+@media (max-width: 599px) {
+  .admin-topbar-inner { gap: 0 12px; padding-top: 6px; }
+  .admin-tabs { order: 3; width: 100%; margin: 0 calc(var(--admin-gutter) * -1); padding: 0 calc(var(--admin-gutter) - 12px); overflow-x: auto; }
+}
+
+.admin-page { max-width: 1200px; margin: 0 auto; padding: 20px var(--admin-gutter) 120px; }
+.admin-denied, .admin-loading { margin: 0; color: var(--admin-muted); }
+.admin-num { font-variant-numeric: tabular-nums; }
+.admin-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+.admin-pagehead { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.admin-lede { margin: 4px 0 0; color: var(--admin-muted); font-size: 14px; }
+
+.admin .admin-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px;
+  border: 1px solid var(--admin-border); border-radius: 8px; background: var(--admin-surface);
+  color: var(--admin-text); font-weight: 500; text-decoration: none; white-space: nowrap; cursor: pointer;
+}
+.admin .admin-btn:hover { background: var(--admin-subtle); border-color: #bfbbb8; }
+
+/* Replies: totals per celebration */
+.admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.admin-stat { min-width: 0; padding: 14px 16px; background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius); overflow-wrap: anywhere; }
+.admin-stat h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.admin-stat-when { margin: 0; color: var(--admin-muted); font-size: 13px; }
+.admin-stat-big { margin: 8px 0 2px; font-size: 30px; font-weight: 600; line-height: 1.1; }
+.admin-stat-big span { font-size: 14px; font-weight: 400; color: var(--admin-muted); }
+.admin-stat-split { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--admin-muted); }
+.admin-footnote { margin: 8px 0 0; font-size: 13px; color: var(--admin-muted); }
+/* "Includes 2 replies to check": the totals count every current reply, flagged ones too. */
+.admin-checknote { margin: 4px 0 0; font-size: 13px; color: var(--admin-accent-text); }
+.admin .admin-linkbtn {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0; border: 0; background: none;
+  color: var(--admin-accent); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px;
+  vertical-align: middle; cursor: pointer;
+}
+
+/* Replies: search and filters */
+.admin-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 20px 0 12px; }
+.admin-search { position: relative; flex: 1 1 260px; min-width: 0; max-width: 420px; }
+.admin-search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--admin-muted); }
+.admin-search input {
+  width: 100%; min-height: 44px; padding: 0 12px 0 36px; border: 1px solid var(--admin-border); border-radius: 8px;
+  background: var(--admin-surface); color: inherit; font: inherit; font-size: 16px;
+}
+.admin-filters { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.admin-filter {
+  min-height: 36px; padding: 0 12px; border: 1px solid var(--admin-border); border-radius: 999px;
+  background: var(--admin-surface); color: inherit; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer;
+}
+.admin-filter b { margin-left: 4px; font-weight: 600; }
+.admin-filter-attention { border-color: #e7b38f; }
+.admin-filter[aria-pressed="true"] { background: var(--admin-text); border-color: var(--admin-text); color: #fff; }
+
+/* Replies: badges, flags and answers */
+.admin-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.admin-badge::before { content: ""; width: 7px; height: 7px; border-radius: 9px; background: currentColor; }
+.admin-badge-ok { color: var(--admin-ok); background: var(--admin-ok-bg); }
+.admin-badge-wait { color: var(--admin-wait); background: var(--admin-wait-bg); }
+.admin-badge-bad { color: var(--admin-bad); background: var(--admin-bad-bg); }
+.admin-badge-none { color: var(--admin-none); background: var(--admin-none-bg); }
+/* Replies to check: the notes, then "Keep this one" (with its confirm step) and "Keep both". */
+.admin-flags { margin-top: 8px; padding: 8px 10px 10px; border-radius: 8px; background: var(--admin-accent-soft); color: var(--admin-accent-text); font-size: 13.5px; }
+.admin-flags[data-pending] { opacity: 0.6; }
+.admin-flag-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.admin-flag-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.admin-flag-note { min-width: 0; }
+.admin-flag-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.admin-flag-btn {
+  min-height: 36px; padding: 0 12px; border: 1px solid #e7b38f; border-radius: 8px; background: var(--admin-surface);
+  color: var(--admin-text); font: inherit; font-size: 14px; font-weight: 500; white-space: nowrap; cursor: pointer;
+}
+.admin-flag-btn:hover { border-color: var(--admin-accent); }
+.admin-flag-btn:disabled { cursor: progress; }
+.admin-flag-btn-primary, .admin-flag-btn-primary:hover { background: var(--admin-accent); border-color: var(--admin-accent); color: #fff; }
+.admin-confirm { margin-top: 8px; padding-top: 8px; border-top: 1px solid #efc9ae; }
+.admin-confirm p { margin: 0; color: var(--admin-text); font-weight: 500; }
+.admin-flag-error { margin: 8px 0 0; color: var(--admin-bad); font-weight: 500; }
+/* What the last "Keep" did. Always in the page, so screen readers announce each new message. */
+.admin-notice { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--admin-border); border-left: 3px solid var(--admin-ok); border-radius: 8px; background: var(--admin-surface); font-size: 14px; overflow-wrap: anywhere; }
+.admin-notice:empty { margin: 0; padding: 0; border: 0; }
+.admin-yes { font-weight: 600; }
+.admin-no { color: var(--admin-disabled); }
+
+/* Replies: a table on wide screens, a card per reply below 860 px. The table scrolls sideways
+   rather than cutting off a long unbroken celebration name. */
+.admin-tablewrap { background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius); overflow-x: auto; }
+.admin-replies { width: 100%; border-collapse: collapse; }
+.admin-replies th {
+  padding: 10px 12px; border-bottom: 1px solid var(--admin-border); background: var(--admin-subtle);
+  color: var(--admin-muted); font-size: 12.5px; font-weight: 600; text-align: left; white-space: nowrap;
+}
+/* Celebration names wrap between words only, so a column never shrinks below its longest word. */
+.admin-replies th.admin-answer-heading { white-space: normal; overflow-wrap: break-word; }
+.admin-replies td { padding: 12px; border-bottom: 1px solid var(--admin-soft); vertical-align: top; }
+.admin-replies tbody tr:last-child td { border-bottom: 0; }
+.admin-party, .admin-replied { white-space: nowrap; }
+.admin-guest { overflow-wrap: anywhere; }
+.admin-guest-name { font-weight: 600; }
+.admin-guest-contact { color: var(--admin-muted); font-size: 13.5px; }
+.admin-history { margin-top: 6px; }
+.admin-history summary {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 32px;
+  color: var(--admin-accent); font-size: 14px; font-weight: 500; list-style: none; cursor: pointer;
+}
+.admin-history summary::-webkit-details-marker { display: none; }
+.admin-history summary::after { content: "▾"; font-size: 11px; transition: transform 0.15s; }
+.admin-history[open] summary::after { transform: rotate(180deg); }
+.admin-earlier { margin: 4px 0 0; padding: 8px 10px; border-left: 3px solid var(--admin-soft); background: var(--admin-subtle); color: var(--admin-muted); font-size: 13.5px; }
+.admin-earlier b { color: var(--admin-text); font-weight: 600; }
+.admin-empty { margin: 0; padding: 24px 16px; background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius); color: var(--admin-muted); text-align: center; }
+
+@media (max-width: 859px) {
+  .admin-tablewrap { background: none; border: 0; border-radius: 0; overflow: visible; }
+  .admin-replies, .admin-replies tbody, .admin-replies td { display: block; }
+  .admin-replies thead { display: none; }
+  .admin-replies tbody { display: grid; gap: 10px; }
+  .admin-replies tr {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 4px 0;
+    background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius);
+  }
+  .admin-replies td { min-width: 0; padding: 6px 14px; border: 0; white-space: normal; }
+  .admin-replies td[data-label]::before { content: attr(data-label); display: block; color: var(--admin-muted); font-size: 12px; overflow-wrap: anywhere; }
+  .admin-guest, .admin-party { grid-column: 1 / -1; }
+  .admin-replies td.admin-guest { padding-top: 10px; }
+  .admin-replies td.admin-answer { padding-top: 4px; }
+  .admin-replied { grid-column: span 2; }
+}
+@media (max-width: 379px) {
+  .admin-replies tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-replies td { padding-left: 12px; padding-right: 12px; }
+  .admin-replied { grid-column: 1 / -1; }
+}
+/* Fingers need 44 px; a mouse keeps the compact chips. */
+@media (pointer: coarse) {
+  .admin-filter, .admin-history summary, .admin-flag-btn, .admin .admin-linkbtn { min-height: 44px; }
+}
+
+/* Buttons shared by the site text editor */
+.admin .admin-btn-primary { background: var(--admin-accent); border-color: var(--admin-accent); color: #fff; }
+.admin .admin-btn-primary:hover { background: #9a4614; border-color: #9a4614; }
+.admin .admin-btn-small { min-height: 36px; padding: 0 12px; font-size: 14px; }
+.admin .admin-btn:disabled, .admin .admin-btn[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.admin .admin-btn-remove { color: var(--admin-bad); }
+.admin-notice-bad { border-left-color: var(--admin-bad); color: var(--admin-bad); }
+
+/* Site text: section list | form | version history. The history drops below the form under
+   1100 px, and the section list becomes a menu above the form under 760 px. */
+.admin-editor { display: grid; grid-template-columns: 200px minmax(0, 1fr) 240px; gap: 20px; align-items: start; }
+.admin-editor-main { grid-column: 2; min-width: 0; }
+.admin-sectionnav {
+  position: sticky; top: 76px; padding: 6px;
+  background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius);
+}
+.admin .admin-sectionnav a { display: block; padding: 9px 12px; border-radius: 7px; color: var(--admin-text); font-size: 14.5px; text-decoration: none; overflow-wrap: anywhere; }
+.admin .admin-sectionnav a:hover { background: #f5f5f4; }
+.admin .admin-sectionnav a[aria-current="page"] { background: var(--admin-accent-soft); color: var(--admin-accent-text); font-weight: 600; }
+.admin-sectionpick { display: none; }
+.admin-sectionpick label { display: block; margin-bottom: 4px; color: var(--admin-muted); font-size: 13px; }
+.admin-sectionpick-row { display: flex; gap: 8px; }
+.admin-sectionpick-row select { flex: 1 1 auto; }
+.admin-sectionpick select, .admin-field select {
+  width: 100%; min-width: 0; min-height: 44px; padding: 0 10px; border: 1px solid var(--admin-border); border-radius: 8px;
+  background: var(--admin-surface); color: inherit; font: inherit; font-size: 16px;
+}
+
+.admin-section-hint { margin: 0 0 14px; color: var(--admin-muted); font-size: 14px; overflow-wrap: anywhere; }
+.admin-form-problems {
+  margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--admin-border); border-left: 3px solid var(--admin-bad);
+  border-radius: 8px; background: var(--admin-surface); color: var(--admin-bad); font-size: 14px; font-weight: 500; overflow-wrap: anywhere;
+}
+.admin-form-problems ul { margin: 0; padding-left: 18px; }
+
+.admin-fieldset {
+  min-width: 0; margin: 0 0 14px; padding: 14px 16px 16px;
+  background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius);
+}
+.admin-fieldset legend { max-width: 100%; margin-left: -6px; padding: 0 6px; font-weight: 600; overflow-wrap: anywhere; }
+.admin-item-note { margin: 0 0 10px; color: var(--admin-accent-text); font-size: 13px; }
+.admin-fields { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.admin-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.admin-field label { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.admin-field input:not([type="checkbox"]), .admin-field textarea {
+  width: 100%; min-width: 0; max-width: 100%; border: 1px solid var(--admin-border); border-radius: 8px;
+  background: var(--admin-surface); color: inherit; font: inherit; font-size: 15px;
+}
+.admin-field input:not([type="checkbox"]) { min-height: 42px; padding: 0 10px; }
+/* Text boxes grow with their text where the browser can (field-sizing); elsewhere they keep their
+   rows and scroll down. Either way long text wraps instead of running out of sight sideways. */
+.admin-field textarea { min-height: calc(2lh + 20px); padding: 9px 10px; line-height: 1.4; resize: vertical; field-sizing: content; }
+.admin-field textarea.admin-oneline { min-height: 42px; resize: none; }
+.admin-field textarea.admin-oneline-tall { min-height: calc(2lh + 20px); }
+.admin-field input:focus, .admin-field textarea:focus, .admin-field select:focus { border-color: var(--admin-accent); }
+.admin-field-hint { color: var(--admin-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.admin-field-error { color: var(--admin-bad); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.admin-field-invalid input, .admin-field-invalid textarea, .admin-field-invalid select { border-color: var(--admin-bad); background: #fffafa; }
+.admin-field-check label { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px; cursor: pointer; }
+.admin-field-check input { width: 20px; height: 20px; margin: 0; accent-color: var(--admin-accent); }
+.admin-span-6 { grid-column: span 6; }
+.admin-span-4 { grid-column: span 4; }
+.admin-span-3 { grid-column: span 3; }
+.admin-span-2 { grid-column: span 2; }
+.admin-span-1 { grid-column: span 1; }
+.admin-item-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.admin .admin-add { margin-bottom: 14px; }
+
+/* The save bar sits at the bottom of the window while the form is longer than it. */
+.admin-savebar {
+  position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  margin: 6px -1px 0; padding: 10px 14px; background: var(--admin-surface); border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius); box-shadow: 0 -6px 18px rgb(0 0 0 / 0.06);
+}
+.admin-savestatus { flex: 1 1 200px; min-width: 0; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.admin-savestatus-bad { color: var(--admin-bad); }
+.admin-savestatus-ok { color: var(--admin-ok); }
+.admin-savestatus-muted { color: var(--admin-muted); }
+.admin-savebar-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+
+/* Version history: a column from 1100 px, a disclosure below the form under it. */
+.admin-versions {
+  position: sticky; top: 76px; max-height: calc(100dvh - 96px); overflow-y: auto; padding: 14px 16px;
+  background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius);
+}
+.admin-versions h2 { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+.admin-version-list { margin: 0; padding: 0; list-style: none; }
+.admin-version-list li {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px;
+  padding: 10px 0; border-top: 1px solid var(--admin-soft);
+}
+.admin-version-list li:first-child { padding-top: 2px; border-top: 0; }
+.admin-version-what { flex: 1 1 120px; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.admin-version-what small { display: block; color: var(--admin-muted); font-size: 13px; }
+.admin-version-live { color: var(--admin-ok); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.admin-version-list .admin-confirm { flex: 1 1 100%; margin-top: 0; padding-top: 8px; border-top-color: var(--admin-soft); }
+.admin-confirm-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.admin-versions-mobile { display: none; }
+
+.admin-error { display: grid; justify-items: start; gap: 12px; }
+.admin-error p { margin: 0; color: var(--admin-text); font-weight: 500; }
+
+@media (max-width: 1099px) {
+  .admin-editor { grid-template-columns: 190px minmax(0, 1fr); }
+  .admin-versions { display: none; }
+  .admin-versions-mobile {
+    display: block; margin-top: 14px;
+    background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius);
+  }
+  .admin-versions-mobile summary { display: flex; align-items: center; min-height: 44px; padding: 0 16px; font-weight: 600; cursor: pointer; }
+  .admin-versions-mobile .admin-versions-body { padding: 0 16px 14px; }
+}
+@media (max-width: 759px) {
+  .admin-editor { grid-template-columns: minmax(0, 1fr); }
+  .admin-editor-main { grid-column: 1; }
+  .admin-sectionnav { display: none; }
+  .admin-sectionpick { display: block; margin-bottom: 14px; }
+  .admin-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-span-6, .admin-span-4, .admin-span-3, .admin-span-2 { grid-column: 1 / -1; }
+  .admin-span-1 { grid-column: span 1; }
+  .admin-field input:not([type="checkbox"]), .admin-field textarea { font-size: 16px; }
+  .admin-field input:not([type="checkbox"]), .admin-field textarea.admin-oneline:not(.admin-oneline-tall) { min-height: 44px; }
+  .admin-savebar-actions { width: 100%; }
+  /* Side by side where both fit, one above the other where they do not. */
+  .admin .admin-savebar-actions .admin-btn { flex: 1 1 auto; padding: 0 12px; }
+}
+@media (pointer: coarse) {
+  .admin .admin-btn-small { min-height: 44px; }
+}

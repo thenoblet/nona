@@ -1,5 +1,7 @@
 # Builds the production image on every push to main and pushes it to GHCR.
 # Dokploy pulls the image; nothing is built on the server.
+# Pull requests into main and manual runs on other branches run the tests only:
+# only main builds :latest and deploys.
 # To freeze deploys (e.g. the wedding week), blank the DOKPLOY_DEPLOY_URL secret.
 
 name: Image
@@ -7,19 +9,74 @@ name: Image
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
+# Each job asks for what it needs; nothing by default.
+permissions: {}
 
+# One run at a time per branch or pull request, so main's deploys stay in order.
 concurrency:
-  group: image
+  group: image-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: nona
+          POSTGRES_PASSWORD: nona
+          POSTGRES_DB: nona
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nona"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: nona_test
+      POSTGRES_USER: nona
+      POSTGRES_PASSWORD: nona
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # The service container can't run the init SQL, so create the test database here.
+      - name: Create test database
+        run: psql -h localhost -U nona -d nona -c "CREATE DATABASE nona_test"
+        env:
+          PGPASSWORD: nona
+
+      - run: npm ci
+      # Generates next-env.d.ts and route types, which a fresh checkout lacks.
+      - run: npx next typegen
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm test
+      # Builds the site and runs it against the test database; the config blanks the email key.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  build:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     env:
       IMAGE: ghcr.io/${{ github.repository }}
       DOKPLOY_DEPLOY_URL: ${{ secrets.DOKPLOY_DEPLOY_URL }}

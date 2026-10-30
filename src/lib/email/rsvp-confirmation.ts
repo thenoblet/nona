@@ -1,0 +1,82 @@
+import { createElement } from "react";
+import { render, toPlainText } from "react-email";
+import { unwrapOutlookOnly } from "@/emails/components/OutlookOnly";
+import RsvpConfirmation, { type ConfirmationCelebration } from "@/emails/rsvp-confirmation";
+import { buildIcs, celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
+import type { SiteContent } from "@/lib/content/schema";
+import type { RsvpRecord } from "@/lib/data/types";
+
+const SUBJECT = "Your reply to Noblet & Nancy";
+
+/** Only a plain name is echoed back: the address is unverified, so a link must not ride along. */
+function greetingName(fullName: string): string | null {
+  // A period only ends an initial or suffix ("J. Doe", "Jr."), so "bit.ly" is not a name.
+  const plain =
+    fullName.length <= 60 && /^(?:[\p{L}\p{M}' -]|\.(?= |$))+$/u.test(fullName);
+  return plain ? fullName : null;
+}
+
+/** "05" reads as "5"; a day the couple wrote some other way is shown as written. */
+const dayOfMonth = (day: string) => (/^\d+$/.test(day) ? String(Number(day)) : day);
+
+/**
+ * The confirmation email for a reply, rendered from the template in `src/emails`. The same reply
+ * always renders the same bytes (the calendar file is stamped with the reply's time), so a retry
+ * under the same idempotency key sends exactly what the first try did.
+ */
+export async function renderRsvpConfirmation(
+  rsvp: RsvpRecord,
+  content: SiteContent,
+  siteUrl: string,
+): Promise<{ subject: string; text: string; html: string; ics: string | null }> {
+  const answered = content.celebrations.filter(
+    (celebration) => rsvp.answers[celebration.id],
+  );
+  const attending = answered.filter(
+    (celebration) => rsvp.answers[celebration.id] === "yes",
+  );
+  const celebrations: ConfirmationCelebration[] = answered.map((celebration) => {
+    const comingTo = rsvp.answers[celebration.id] === "yes";
+    return {
+      id: celebration.id,
+      name: celebration.name,
+      date: `${celebration.weekday} ${dayOfMonth(celebration.day)} ${celebration.month}`,
+      time: celebration.time,
+      place: celebration.place,
+      placeDetail: celebration.placeDetail,
+      attending: comingTo,
+      googleCalendarUrl: comingTo
+        ? googleCalendarUrl(celebrationEvent(celebration, siteUrl))
+        : null,
+    };
+  });
+
+  const html = unwrapOutlookOnly(
+    await render(
+      createElement(RsvpConfirmation, {
+        guestName: greetingName(rsvp.fullName),
+        celebrations,
+        siteUrl,
+      }),
+    ),
+  );
+  const text = toPlainText(html, {
+    selectors: [
+      // The headings are the greeting and the celebrations' names: written as they are, not shouted.
+      { selector: "h1", options: { uppercase: false } },
+      { selector: "h2", options: { uppercase: false, leadingLineBreaks: 2, trailingLineBreaks: 1 } },
+      // The footer's link already reads as the address it goes to.
+      { selector: "a[data-text-without-href=true]", format: "anchor", options: { ignoreHref: true } },
+    ],
+  });
+
+  const ics =
+    attending.length > 0
+      ? buildIcs(
+          attending.map((celebration) => celebrationEvent(celebration, siteUrl)),
+          new Date(rsvp.receivedAt),
+        )
+      : null;
+
+  return { subject: SUBJECT, text, html, ics };
+}

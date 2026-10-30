@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { celebrations, type EventId } from "@/content/wedding";
+import type { EventId } from "@/content/wedding";
+import type { Celebration } from "@/lib/content/schema";
 import type { MediaItem } from "@/lib/data/types";
 import { Halo } from "@/components/ui/Halo";
 import { Segmented } from "@/components/ui/Segmented";
@@ -17,42 +18,50 @@ const chipLabel: Record<EventId, string> = {
   thanks: "Thanksgiving",
 };
 
-const chips: { id: EventFilter; label: string }[] = [
-  { id: "all", label: "All" },
-  ...celebrations.map((c) => ({ id: c.id, label: chipLabel[c.id] })),
-];
 
 /**
  * Filters (celebration chips, everyone or mine), the count line and the photo grid.
  * Filtering runs here over the full list the server sent.
  */
-export function AlbumBrowser({ items, myDevice }: { items: MediaItem[]; myDevice: string }) {
+export function AlbumBrowser({
+  celebrations,
+  items,
+  myDevice,
+}: {
+  celebrations: Celebration[];
+  items: MediaItem[];
+  myDevice: string;
+}) {
+  const chips: { id: EventFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    ...celebrations.map((celebration) => ({ id: celebration.id, label: chipLabel[celebration.id] })),
+  ];
   const [event, setEvent] = useState<EventFilter>("all");
   const [whose, setWhose] = useState<Whose>("everyone");
 
   const shown = items.filter(
-    (m) => (event === "all" || m.event === event) && (whose === "everyone" || m.uploaderDevice === myDevice),
+    (item) => (event === "all" || item.event === event) && (whose === "everyone" || item.uploaderDevice === myDevice),
   );
   const mine = whose === "mine";
 
   return (
     <>
       <nav aria-label="Celebrations" className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pt-5.5 pb-1">
-        {chips.map((c) => {
-          const on = c.id === event;
+        {chips.map((chip) => {
+          const on = chip.id === event;
           return (
             <button
-              key={c.id}
+              key={chip.id}
               type="button"
               aria-pressed={on}
-              onClick={() => setEvent(c.id)}
+              onClick={() => setEvent(chip.id)}
               className={`min-h-11 shrink-0 cursor-pointer rounded-full border px-5 text-xs uppercase tracking-[0.14em] transition-[background-color,box-shadow,color] duration-200 ${
                 on
                   ? "border-white bg-white text-cocoa shadow-[0_1px_2px_rgb(61_41_39/0.08),0_6px_14px_rgb(61_41_39/0.1)]"
                   : "border-stone bg-transparent text-mocha"
               }`}
             >
-              {c.label}
+              {chip.label}
             </button>
           );
         })}
@@ -88,8 +97,8 @@ export function AlbumBrowser({ items, myDevice }: { items: MediaItem[]; myDevice
 
       {shown.length ? (
         <ul className="m-0 grid list-none grid-cols-3 gap-1.5 p-0 md:grid-cols-4 lg:grid-cols-5">
-          {shown.map((m) => (
-            <MediaTile key={m.id} item={m} mine={m.uploaderDevice === myDevice} />
+          {shown.map((item) => (
+            <MediaTile key={item.id} item={item} mine={item.uploaderDevice === myDevice} />
           ))}
         </ul>
       ) : (

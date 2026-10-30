@@ -34,10 +34,10 @@ export const photos = {
   },
 } satisfies Record<string, Photo>;
 
-/** Wedding party portraits, keyed by the name in `party` (src/content/wedding.ts). */
+/** Wedding party portraits, keyed by the member `id` in `party` (src/content/wedding.ts). */
 export const partyPhotos: Partial<Record<string, Photo>> = {
-  Lilian: { src: lilian, alt: "Lilian, maid of honour", position: "center 40%" },
-  James: { src: james, alt: "James, best man", position: "center 30%" },
+  lilian: { src: lilian, alt: "Lilian, maid of honour", position: "center 40%" },
+  james: { src: james, alt: "James, best man", position: "center 30%" },
 };
 
 /**

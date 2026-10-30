@@ -1,6 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import QRCode from "qrcode";
+import { siteUrl } from "@/lib/site-url";
 
 /**
  * The shared album's public address, for QR codes on the venue screen and table cards.
@@ -9,8 +10,7 @@ import QRCode from "qrcode";
  */
 export async function albumUrl(): Promise<string> {
   await connection();
-  const site = (process.env.SITE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-  return `${site}/album`;
+  return `${siteUrl()}/album`;
 }
 
 /** The album URL without the scheme, for printing as text. */
@@ -29,7 +29,7 @@ export async function qrSvg(text: string, label: string): Promise<string> {
     errorCorrectionLevel: "M",
     color: { dark: "#3D2927", light: "#FFFFFF" },
   });
-  const safeLabel = label.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const safeLabel = label.replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
   return svg.replace(
     "<svg ",
     `<svg role="img" aria-label="${safeLabel}" width="100%" height="100%" style="display:block" `,

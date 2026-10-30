@@ -79,14 +79,14 @@ async function WishesWall() {
 
   return (
     <ul className="m-0 flex list-none flex-col gap-5.5 p-0">
-      {wishes.map((wish, i) => (
+      {wishes.map((wish, index) => (
         <Reveal as="li" key={wish.id}>
           {wish.kind === "text" ? (
-            <TextWish wish={wish} index={paperIndex[i]} />
+            <TextWish wish={wish} index={paperIndex[index]} />
           ) : wish.kind === "voice" ? (
-            <VoiceWish wish={wish} index={i} />
+            <VoiceWish wish={wish} index={index} />
           ) : (
-            <VideoWish wish={wish} index={i} />
+            <VideoWish wish={wish} index={index} />
           )}
         </Reveal>
       ))}
@@ -96,9 +96,9 @@ async function WishesWall() {
 
 function WallSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading wishes" className="flex flex-col gap-5.5">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="h-36 animate-pulse rounded-[var(--radius-paper)] bg-blush" />
+    <div role="status" aria-busy="true" aria-label="Loading wishes" className="flex flex-col gap-5.5">
+      {[0, 1, 2].map((row) => (
+        <div key={row} className="h-36 animate-pulse rounded-[var(--radius-paper)] bg-blush" />
       ))}
     </div>
   );

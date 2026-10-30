@@ -1,5 +1,6 @@
 import Image from "next/image";
-import { colours, couple, faq, gifts, party, travel, wedding } from "@/content/wedding";
+import { colours, couple, wedding } from "@/content/wedding";
+import type { FaqItem, GiftItem, PartyMember, TravelItem } from "@/lib/content/schema";
 import { partyPhotos, photos } from "@/content/images";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
@@ -7,7 +8,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Reveal } from "@/components/ui/Reveal";
 import { SwipeRow } from "@/components/ui/SwipeRow";
 import { Eyebrow, Motto, SectionHeading } from "@/components/ui/Typography";
-import { QrCode } from "@/components/slideshow/QrCode";
+import { QrCode } from "@/components/ui/QrCode";
 import { albumUrl, displayUrl, qrSvg } from "@/lib/qr";
 
 export function Colours() {
@@ -28,13 +29,13 @@ export function Colours() {
           </TextLink>
         </div>
         <div className="grid flex-1 grid-cols-4 gap-3 sm:gap-4.5">
-          {colours.map((c) => (
-            <div key={c.name} className="flex flex-col items-center gap-3">
+          {colours.map((colour) => (
+            <div key={colour.name} className="flex flex-col items-center gap-3">
               <div
                 className="aspect-[1/1.5] w-full rounded-full transition-transform duration-400 [@media(hover:hover)]:hover:-translate-y-2"
-                style={{ background: c.hex, border: c.hex === "#3D2927" || c.hex === "#6A524C" ? "1px solid rgb(255 255 255 / 0.45)" : undefined }}
+                style={{ background: colour.hex, border: colour.hex === "#3D2927" || colour.hex === "#6A524C" ? "1px solid rgb(255 255 255 / 0.45)" : undefined }}
               />
-              <span className="text-center font-serif text-base text-linen italic sm:text-xl">{c.name}</span>
+              <span className="text-center font-serif text-base text-linen italic sm:text-xl">{colour.name}</span>
             </div>
           ))}
         </div>
@@ -43,8 +44,8 @@ export function Colours() {
   );
 }
 
-function Portrait({ name, role, large }: { name: string; role: string; large?: boolean }) {
-  const photo = partyPhotos[name];
+function Portrait({ id, name, role, large }: { id: string; name: string; role: string; large?: boolean }) {
+  const photo = partyPhotos[id];
   const box = large ? "h-[200px] w-[150px] sm:h-[234px] sm:w-[176px]" : "h-[160px] w-[120px] sm:h-[186px] sm:w-[140px]";
   return (
     <figure className="m-0 flex flex-col items-center gap-2.5 text-center">
@@ -75,9 +76,9 @@ function Portrait({ name, role, large }: { name: string; role: string; large?: b
   );
 }
 
-export function Party() {
-  const leads = party.filter((p) => p.lead);
-  const rest = party.filter((p) => !p.lead);
+export function Party({ party }: { party: PartyMember[] }) {
+  const leads = party.filter((member) => member.lead);
+  const rest = party.filter((member) => !member.lead);
   return (
     <section aria-labelledby="party-h" className="px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[1200px] flex-col gap-12 sm:gap-14">
@@ -85,13 +86,13 @@ export function Party() {
           <SectionHeading id="party-h" eyebrow="Standing with us" title="The wedding party" />
         </Reveal>
         <div className="flex flex-wrap justify-center gap-x-10 gap-y-10 sm:gap-x-18">
-          {leads.map((p) => (
-            <Portrait key={p.name} name={p.name} role={p.role} large />
+          {leads.map((member) => (
+            <Portrait key={member.id} id={member.id} name={member.name} role={member.role} large />
           ))}
         </div>
         <div className="grid grid-cols-2 justify-items-center gap-x-4 gap-y-10 sm:flex sm:flex-wrap sm:justify-center sm:gap-x-9">
-          {rest.map((p) => (
-            <Portrait key={p.name} name={p.name} role={p.role} />
+          {rest.map((member) => (
+            <Portrait key={member.id} id={member.id} name={member.name} role={member.role} />
           ))}
         </div>
       </div>
@@ -101,7 +102,7 @@ export function Party() {
 
 const travelTilts = ["0.5deg", "-0.6deg", "0.4deg"];
 
-export function Travel() {
+export function Travel({ travel }: { travel: TravelItem[] }) {
   return (
     <section id="travel" className="bg-tray px-5 pt-20 pb-24 sm:px-6 sm:pt-28 sm:pb-30">
       <div className="mx-auto flex max-w-[1160px] flex-col gap-14 sm:gap-16">
@@ -109,18 +110,18 @@ export function Travel() {
           <SectionHeading eyebrow="For our travelling guests" title="Travel & stay" />
         </Reveal>
         <Reveal>
-          <SwipeRow labels={travel.map((t) => t.title)}>
-            {travel.map((t, i) => (
+          <SwipeRow labels={travel.map((item) => item.title)}>
+            {travel.map((item, index) => (
               <article
-                key={t.title}
-                className={`paper-card flex w-full flex-col items-center gap-3.5 rounded-[var(--radius-paper)] bg-white px-6 pt-10 pb-7.5 text-center shadow-[var(--shadow-paper)] sm:px-7.5 ${i === 1 ? "lg:mt-4" : ""}`}
-                style={{ transform: `rotate(${travelTilts[i]})` }}
+                key={item.title}
+                className={`paper-card flex w-full flex-col items-center gap-3.5 rounded-[var(--radius-paper)] bg-white px-6 pt-10 pb-7.5 text-center shadow-[var(--shadow-paper)] sm:px-7.5 ${index === 1 ? "lg:mt-4" : ""}`}
+                style={{ transform: `rotate(${travelTilts[index % travelTilts.length]})` }}
               >
-                <Halo icon={t.icon} size="xl" />
-                <h3 className="mt-1 mb-0 font-serif text-[32px] font-normal italic">{t.title}</h3>
-                <p className="m-0 font-serif text-xl leading-relaxed text-mocha">{t.text}</p>
+                <Halo icon={item.icon} size="xl" />
+                <h3 className="mt-1 mb-0 font-serif text-[32px] font-normal italic">{item.title}</h3>
+                <p className="m-0 font-serif text-xl leading-relaxed text-mocha">{item.text}</p>
                 <TextLink href="#travel" className="mt-auto">
-                  {t.link}
+                  {item.link}
                 </TextLink>
               </article>
             ))}
@@ -162,7 +163,7 @@ export function RsvpBand() {
   );
 }
 
-export function Gifts() {
+export function Gifts({ gifts }: { gifts: GiftItem[] }) {
   return (
     <section id="gifts" className="px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[1100px] flex-col gap-12">
@@ -174,18 +175,18 @@ export function Gifts() {
           />
         </Reveal>
         <div className="grid grid-cols-1 border-y border-hairline md:grid-cols-3">
-          {gifts.map((g, i) => (
+          {gifts.map((gift, index) => (
             // TODO: link to the registry and reveal account details.
             <a
-              key={g.title}
+              key={gift.title}
               href="#gifts"
               className={`flex flex-col items-center gap-1.5 px-5 py-8 text-center no-underline transition-colors duration-300 hover:bg-blush ${
-                i > 0 ? "border-t border-hairline md:border-t-0 md:border-l" : ""
+                index > 0 ? "border-t border-hairline md:border-t-0 md:border-l" : ""
               }`}
             >
-              <span className="font-serif text-[30px] italic">{g.title}</span>
-              <span className="text-sm text-mocha">{g.text}</span>
-              <span className="ember-link mt-2 pb-0.5 text-xs uppercase tracking-[0.18em]">{g.action}</span>
+              <span className="font-serif text-[30px] italic">{gift.title}</span>
+              <span className="text-sm text-mocha">{gift.text}</span>
+              <span className="ember-link mt-2 pb-0.5 text-xs uppercase tracking-[0.18em]">{gift.action}</span>
             </a>
           ))}
         </div>
@@ -227,7 +228,7 @@ export async function AlbumTeaser() {
   );
 }
 
-export function Faq() {
+export function Faq({ faq }: { faq: FaqItem[] }) {
   return (
     <section aria-labelledby="faq-h" className="px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[820px] flex-col gap-10">
@@ -238,13 +239,13 @@ export function Faq() {
           </h2>
         </div>
         <div className="flex flex-col border-t border-hairline">
-          {faq.map((f, i) => (
-            <details key={f.q} open={i === 0} className="group border-b border-hairline py-5.5">
+          {faq.map((item, index) => (
+            <details key={item.question} open={index === 0} className="group border-b border-hairline py-5.5">
               <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 font-serif text-[22px] transition-colors hover:text-ember-ink sm:text-[26px] [&::-webkit-details-marker]:hidden">
-                {f.q}
+                {item.question}
                 <Icon name="chevron" size={20} strokeWidth={1.6} className="shrink-0 text-ember transition-transform group-open:rotate-180" />
               </summary>
-              <p className="mt-3 mb-0 text-base leading-[1.75] font-light text-mocha">{f.a}</p>
+              <p className="mt-3 mb-0 text-base leading-[1.75] font-light text-mocha">{item.answer}</p>
             </details>
           ))}
         </div>
