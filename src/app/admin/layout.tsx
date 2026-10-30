@@ -1,7 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { AdminTabs, AdminTabLinks } from "@/components/admin/AdminTabs";
+import { LeaveLink } from "@/components/admin/LeaveLink";
 import "./admin.css";
 
 export const metadata: Metadata = {
@@ -15,16 +15,16 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     <div className="admin">
       <header className="admin-topbar">
         <div className="admin-topbar-inner">
-          <Link href="/admin/rsvps" className="admin-brand">
+          <LeaveLink href="/admin/rsvps" className="admin-brand">
             Noblet &amp; Nancy <span>· admin</span>
-          </Link>
+          </LeaveLink>
           {/* usePathname can suspend during a prerender, so the tabs keep their links either way. */}
           <Suspense fallback={<AdminTabLinks currentPath={null} />}>
             <AdminTabs />
           </Suspense>
-          <Link href="/" className="admin-viewsite">
+          <LeaveLink href="/" className="admin-viewsite">
             View site ↗
-          </Link>
+          </LeaveLink>
         </div>
       </header>
       <main className="admin-page">{children}</main>
