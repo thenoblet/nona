@@ -86,6 +86,16 @@ describe("saveRsvp keeps every reply", () => {
     expect(await listRsvps()).toHaveLength(1);
   });
 
+  it("compares a send with the guest's newest reply only: yes, no, then yes again is three replies", async () => {
+    await saveRsvp(base);
+    await saveRsvp({ ...base, answers: { ceremony: "no", reception: "yes", thanks: "no" } });
+    const third = await saveRsvp(base);
+    const current = await listRsvps();
+    expect(current).toHaveLength(3);
+    expect(current[0].id).toBe(third.record.id);
+    expect(current[0].answers.ceremony).toBe("yes");
+  });
+
   it("keeps one current reply when two identical saves race", async () => {
     await Promise.all([saveRsvp(base), saveRsvp(base)]);
     expect(await listRsvps()).toHaveLength(1);
@@ -114,7 +124,7 @@ describe("keepReply", () => {
     const newer = await saveRsvp({ ...base, partySize: "2 people" });
     const unrelated = await saveRsvp({ ...base, fullName: "Esi Ansa", phone: "055 111 2222" });
 
-    expect(await keepReply(newer.record.id)).toEqual({ ok: true, moved: 2 });
+    expect(await keepReply(newer.record.id, [older.record.id, kofi.record.id])).toEqual({ ok: true, moved: 2 });
     expect((await listRsvps()).map((reply) => reply.id)).toEqual([unrelated.record.id, newer.record.id]);
     expect(await flagsOf(newer.record.id)).toEqual([]);
     expect((await rsvpHistory(newer.record.id)).map((reply) => reply.id).sort()).toEqual(
@@ -127,15 +137,15 @@ describe("keepReply", () => {
     const ama = await saveRsvp(base);
     const kofi = await saveRsvp({ ...base, fullName: "Kofi Mensah" });
     await keepBoth(ama.record.id, kofi.record.id, "couple@example.com");
-    expect(await keepReply(ama.record.id)).toEqual({ ok: true, moved: 0 });
+    expect(await keepReply(ama.record.id, [])).toEqual({ ok: true, moved: 0 });
     expect(await listRsvps()).toHaveLength(2);
   });
 
   it("refuses a reply that is already in another reply's history", async () => {
     const older = await saveRsvp(base);
     const newer = await saveRsvp({ ...base, partySize: "2 people" });
-    await keepReply(newer.record.id);
-    const result = await keepReply(older.record.id);
+    await keepReply(newer.record.id, [older.record.id]);
+    const result = await keepReply(older.record.id, [newer.record.id]);
     expect(result.ok).toBe(false);
     expect(await listRsvps()).toHaveLength(1);
   });
@@ -143,7 +153,7 @@ describe("keepReply", () => {
   it("keeps exactly one reply when both of a pair are kept at once", async () => {
     const older = await saveRsvp(base);
     const newer = await saveRsvp({ ...base, partySize: "2 people" });
-    await Promise.all([keepReply(older.record.id), keepReply(newer.record.id)]);
+    await Promise.all([keepReply(older.record.id, [newer.record.id]), keepReply(newer.record.id, [older.record.id])]);
     expect(await listRsvps()).toHaveLength(1);
   });
 });
@@ -183,7 +193,7 @@ describe("rsvpTotals", () => {
       thanks: { accepted: 0, declined: 2, people: 0 },
     });
 
-    await keepReply(second.record.id);
+    await keepReply(second.record.id, [first.record.id]);
     expect((await getRsvp(first.record.id))?.supersededAt).not.toBeNull();
     expect(await rsvpTotals()).toEqual({
       ceremony: { accepted: 2, declined: 0, people: 5 },
@@ -197,9 +207,9 @@ describe("rsvpHistories", () => {
   it("gives a reply kept twice its full earlier history, newest first", async () => {
     const first = await saveRsvp({ ...base, partySize: "Just me" });
     const second = await saveRsvp({ ...base, partySize: "2 people" });
-    await keepReply(second.record.id);
+    await keepReply(second.record.id, [first.record.id]);
     const third = await saveRsvp({ ...base, partySize: "3 people" });
-    await keepReply(third.record.id);
+    await keepReply(third.record.id, [second.record.id]);
     const other = await saveRsvp({ ...base, fullName: "Kofi Mensah", phone: "055 111 2222" });
 
     const histories = await rsvpHistories();
@@ -217,9 +227,9 @@ describe("rsvpHistories", () => {
     const byPhone = await saveRsvp(base);
     const byEmail = await saveRsvp({ ...base, phone: "055 111 2222", email: "ama@example.com" });
     const merged = await saveRsvp({ ...base, email: "ama@example.com" });
-    expect(await keepReply(merged.record.id)).toEqual({ ok: true, moved: 2 });
+    expect(await keepReply(merged.record.id, [byEmail.record.id, byPhone.record.id])).toEqual({ ok: true, moved: 2 });
     const latest = await saveRsvp({ ...base, email: "ama@example.com", partySize: "2 people" });
-    expect(await keepReply(latest.record.id)).toEqual({ ok: true, moved: 1 });
+    expect(await keepReply(latest.record.id, [merged.record.id])).toEqual({ ok: true, moved: 1 });
 
     const histories = await rsvpHistories();
     expect(histories.get(latest.record.id)?.map((reply) => reply.id)).toEqual([

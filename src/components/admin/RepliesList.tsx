@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   countByFilter,
   emailStatusLabels,
@@ -24,13 +24,21 @@ const badgeTone = { sent: "ok", queued: "wait", failed: "bad", none: "none" } as
 export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; celebrations: CelebrationColumn[] }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ReplyFilter>("all");
-  const [notice, setNotice] = useState("");
+  // The serial changes with every message, so the same message twice still moves focus.
+  const [notice, setNotice] = useState({ text: "", serial: 0 });
+  const noticeBox = useRef<HTMLParagraphElement>(null);
   const toCheckButton = useRef<HTMLButtonElement>(null);
   const counts = useMemo(() => countByFilter(replies), [replies]);
   const shown = useMemo(
     () => replies.filter((row) => matchesFilter(row, filter) && matchesSearch(row, query)),
     [replies, filter, query],
   );
+
+  // After a Keep, the flag panel that held focus is gone, so focus moves to what happened.
+  useEffect(() => {
+    if (notice.serial > 0) noticeBox.current?.focus();
+  }, [notice.serial]);
+  const announce = (text: string) => setNotice((previous) => ({ text, serial: previous.serial + 1 }));
 
   const showToCheck = () => {
     setFilter("toCheck");
@@ -79,8 +87,8 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
       <p className="admin-sr-only" role="status">
         {shown.length === replies.length ? "" : `Showing ${shown.length} of ${replies.length} replies`}
       </p>
-      <p className="admin-notice" role="status">
-        {notice}
+      <p ref={noticeBox} className="admin-notice" role="status" tabIndex={-1}>
+        {notice.text}
       </p>
 
       {replies.length === 0 ? (
@@ -114,7 +122,7 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
                     {row.otherNames && <div className="admin-guest-contact">With {row.otherNames}</div>}
                     {row.song && <div className="admin-guest-contact">Song: {row.song}</div>}
                     {row.flags.length > 0 && (
-                      <ReplyFlags replyId={row.id} replyName={row.fullName} flags={row.flags} onDone={setNotice} />
+                      <ReplyFlags replyId={row.id} replyName={row.fullName} flags={row.flags} onDone={announce} />
                     )}
                     {row.earlier.length > 0 && (
                       <details className="admin-history">

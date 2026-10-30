@@ -61,7 +61,7 @@ describe("handleRsvpConfirmation", () => {
   it("skips a reply moved into another reply's history", async () => {
     const old = await queued();
     const { record: kept } = await saveRsvp({ ...input, partySize: "2 people" });
-    await keepReply(kept.id);
+    await keepReply(kept.id, [old.id]);
     await handleRsvpConfirmation(old.id, { retryCount: 0, retryLimit: 5 });
     expect(send.fn).not.toHaveBeenCalled();
   });

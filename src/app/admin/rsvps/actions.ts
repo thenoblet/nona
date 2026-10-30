@@ -7,12 +7,20 @@ import { keepBoth, keepReply, REPLY_NOT_FOUND, type KeepResult } from "@/lib/dat
 
 // Reached by a direct POST as well as from the page, so each action checks the couple first.
 const replyId = z.uuid();
+const listedReplyIds = z.array(z.uuid()).max(50);
 
-/** "Keep this one": every reply flagged against this one moves into its history. */
-export async function keepReplyAction(id: string): Promise<KeepResult> {
+/**
+ * "Keep this one": the replies the page showed flagged against this one (`expectedOtherIds`) move
+ * into its history. If a reply arrived since, nothing moves and the re-rendered page shows it.
+ */
+export async function keepReplyAction(id: string, expectedOtherIds: string[]): Promise<KeepResult> {
   await requireAdmin();
-  if (!replyId.safeParse(id).success) return { ok: false, error: REPLY_NOT_FOUND };
-  const result = await keepReply(id.toLowerCase());
+  const listed = listedReplyIds.safeParse(expectedOtherIds);
+  if (!replyId.safeParse(id).success || !listed.success) return { ok: false, error: REPLY_NOT_FOUND };
+  const result = await keepReply(
+    id.toLowerCase(),
+    listed.data.map((otherId) => otherId.toLowerCase()),
+  );
   // The replies are read at request time, so re-rendering the page shows the change.
   refresh();
   return result;

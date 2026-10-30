@@ -56,12 +56,14 @@ export function celebrationDay(date: string): string {
 
 /**
  * "Replied again: also replied as Ama Owusu on 28 Oct, 18:02 (same phone)" or
- * "Possible duplicate of Kofi Ansa (same email)". The date is the other reply's, in Accra.
+ * "Possible duplicate of Kofi Ansa on 28 Oct, 18:02 (same email)". The date is the other reply's,
+ * in Accra, so two replies under one name read differently.
  */
 export function flagNote(flag: RsvpFlag, otherReceivedAt?: string): string {
-  if (flag.kind === "possible-duplicate") return `Possible duplicate of ${flag.otherName} (same ${flag.via})`;
   const when = otherReceivedAt ? ` on ${accraDateTime(otherReceivedAt)}` : "";
-  return `Replied again: also replied as ${flag.otherName}${when} (same ${flag.via})`;
+  return flag.kind === "possible-duplicate"
+    ? `Possible duplicate of ${flag.otherName}${when} (same ${flag.via})`
+    : `Replied again: also replied as ${flag.otherName}${when} (same ${flag.via})`;
 }
 
 /** The CSV's shorter wording: "Replied again: Ama Owusu (same phone)". */
@@ -71,8 +73,14 @@ function flagWords(flag: RsvpFlag): string {
     : `Possible duplicate of ${flag.otherName} (same ${flag.via})`;
 }
 
-/** A flag as the list shows it, with the other reply's id for "Keep both". */
-export type ReplyFlag = { kind: RsvpFlag["kind"]; otherId: string; otherName: string; note: string };
+/** A flag as the list shows it, with the other reply's id and time ("28 Oct, 18:02") for "Keep both". */
+export type ReplyFlag = {
+  kind: RsvpFlag["kind"];
+  otherId: string;
+  otherName: string;
+  otherReceived: string;
+  note: string;
+};
 
 export type EarlierReply = { id: string; received: string; details: string[] };
 
@@ -130,12 +138,16 @@ export function toReplyRows(
     receivedAt: reply.receivedAt,
     received: receivedLabel(reply.receivedAt, now),
     emailStatus: reply.emailStatus,
-    flags: reply.flags.map((flag) => ({
-      kind: flag.kind,
-      otherId: flag.otherId,
-      otherName: flag.otherName,
-      note: flagNote(flag, receivedAt.get(flag.otherId)),
-    })),
+    flags: reply.flags.map((flag) => {
+      const otherReceivedAt = receivedAt.get(flag.otherId);
+      return {
+        kind: flag.kind,
+        otherId: flag.otherId,
+        otherName: flag.otherName,
+        otherReceived: otherReceivedAt ? accraDateTime(otherReceivedAt) : "",
+        note: flagNote(flag, otherReceivedAt),
+      };
+    }),
     earlier: (histories.get(reply.id) ?? []).map((earlier) => ({
       id: earlier.id,
       received: accraDateTime(earlier.receivedAt),

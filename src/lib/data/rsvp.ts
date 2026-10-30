@@ -39,10 +39,11 @@ const PEOPLE: Record<string, number> = {
 
 /**
  * Saves a reply as its own current reply: a second reply never replaces the first, the couple
- * chooses between them in the admin. The same reply sent again within 10 minutes (same name,
- * phone, email, party size, answers, other names and song, compared as keys) is a double tap and
- * returns the first, so it gets no second confirmation email. The advisory lock makes two
- * simultaneous submissions for one name run one after the other.
+ * chooses between them in the admin. A send identical to the guest's newest current reply (same
+ * name, phone, email, party size, answers, other names and song, compared as keys) within 10
+ * minutes of it is a double tap and returns that reply, so it gets no second confirmation email.
+ * Only the newest counts: yes, then no, then yes again is three replies. The advisory lock makes
+ * two simultaneous submissions for one name run one after the other.
  */
 export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }> {
   const guestName = nameKey(input.fullName);
@@ -55,25 +56,27 @@ export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }
   return getDb().transaction(async (transaction) => {
     await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${guestName}))`);
 
-    const [repeat] = await transaction
-      .select()
+    const sameGuest = guestEmail
+      ? or(eq(rsvps.phoneKey, guestPhone), eq(rsvps.emailKey, guestEmail))
+      : eq(rsvps.phoneKey, guestPhone);
+    const [newest] = await transaction
+      .select({
+        reply: rsvps,
+        repeated: sql<boolean>`(
+          ${rsvps.phoneKey} = ${guestPhone}
+          and ${rsvps.emailKey} is not distinct from ${guestEmail}
+          and ${rsvps.partySize} = ${input.partySize}
+          and ${rsvps.answers} = ${JSON.stringify(input.answers)}::jsonb
+          and ${rsvps.otherNames} is not distinct from ${otherNames}
+          and ${rsvps.song} is not distinct from ${song}
+          and ${rsvps.receivedAt} > now() - interval '10 minutes'
+        )`,
+      })
       .from(rsvps)
-      .where(
-        and(
-          eq(rsvps.nameKey, guestName),
-          isNull(rsvps.supersededAt),
-          eq(rsvps.phoneKey, guestPhone),
-          sql`${rsvps.emailKey} is not distinct from ${guestEmail}`,
-          eq(rsvps.partySize, input.partySize),
-          sql`${rsvps.answers} = ${JSON.stringify(input.answers)}::jsonb`,
-          sql`${rsvps.otherNames} is not distinct from ${otherNames}`,
-          sql`${rsvps.song} is not distinct from ${song}`,
-          gt(rsvps.receivedAt, sql`now() - interval '10 minutes'`),
-        ),
-      )
+      .where(and(eq(rsvps.nameKey, guestName), isNull(rsvps.supersededAt), sameGuest))
       .orderBy(desc(rsvps.receivedAt))
       .limit(1);
-    if (repeat) return { record: toRecord(repeat) };
+    if (newest?.repeated) return { record: toRecord(newest.reply) };
 
     const [created] = await transaction
       .insert(rsvps)
@@ -163,10 +166,16 @@ export type KeepResult = { ok: true; moved: number } | { ok: false; error: strin
 const KEEP_LOCK = "rsvp-keep";
 
 export const REPLY_NOT_FOUND = "That reply could not be found. The page now shows the latest replies.";
+export const NEW_REPLY_ARRIVED = "A new reply arrived; the page now shows it.";
 const ALREADY_MOVED = "That reply was already moved into another reply's history. The page now shows the latest replies.";
 
-/** "Keep this one": every current reply flagged against this one moves into its history. */
-export async function keepReply(id: string): Promise<KeepResult> {
+/**
+ * "Keep this one": the replies the couple saw flagged against this one (`expectedOtherIds`) move
+ * into its history, if they are still current and still flagged. If another reply is flagged
+ * against it now, one that arrived after the page was shown, nothing moves: the couple must see
+ * it first.
+ */
+export async function keepReply(id: string, expectedOtherIds: string[]): Promise<KeepResult> {
   return getDb().transaction(async (transaction) => {
     await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${KEEP_LOCK}))`);
     const [kept] = await transaction.select().from(rsvps).where(eq(rsvps.id, id));
@@ -185,13 +194,16 @@ export async function keepReply(id: string): Promise<KeepResult> {
       .select(dismissalColumns)
       .from(rsvpFlagDismissals)
       .where(or(eq(rsvpFlagDismissals.rsvpId, id), eq(rsvpFlagDismissals.otherRsvpId, id)));
-    const flagged = flagsByReply(matching, dismissals).get(id) ?? [];
+    const flagged = (flagsByReply(matching, dismissals).get(id) ?? []).map((flag) => flag.otherId);
+    const expected = new Set(expectedOtherIds);
+    if (flagged.some((otherId) => !expected.has(otherId))) return { ok: false, error: NEW_REPLY_ARRIVED };
     if (flagged.length === 0) return { ok: true, moved: 0 };
 
+    // Every flagged reply was on the page, so these are the listed ones still current and flagged.
     const moved = await transaction
       .update(rsvps)
       .set({ supersededAt: sql`now()`, supersededBy: id })
-      .where(and(inArray(rsvps.id, flagged.map((flag) => flag.otherId)), isNull(rsvps.supersededAt)))
+      .where(and(inArray(rsvps.id, flagged), isNull(rsvps.supersededAt)))
       .returning({ id: rsvps.id });
     return { ok: true, moved: moved.length };
   });

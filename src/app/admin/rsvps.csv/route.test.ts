@@ -77,9 +77,9 @@ describe("GET /admin/rsvps.csv", () => {
       partySize: "Just me",
       answers: { ceremony: "yes" },
     });
-    await saveRsvp({ fullName: "Kofi Mensah", phone: "055 111 2222", partySize: "Just me", answers: { ceremony: "no" } });
+    const moved = await saveRsvp({ fullName: "Kofi Mensah", phone: "055 111 2222", partySize: "Just me", answers: { ceremony: "no" } });
     const kept = await saveRsvp({ fullName: "Kofi Mensah", phone: "055 111 2222", partySize: "2 people", answers: { ceremony: "no" } });
-    await keepReply(kept.record.id);
+    await keepReply(kept.record.id, [moved.record.id]);
 
     const lines = (await (await GET()).text()).replace(/^\uFEFF/, "").split("\r\n");
     expect(lines).toHaveLength(5);

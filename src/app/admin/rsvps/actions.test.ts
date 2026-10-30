@@ -46,9 +46,9 @@ describe("without the couple", () => {
     const older = await saveRsvp(base);
     const newer = await saveRsvp({ ...base, partySize: "2 people" });
 
-    await expect(keepReplyAction(newer.record.id)).rejects.toThrow("Admin access refused");
+    await expect(keepReplyAction(newer.record.id, [older.record.id])).rejects.toThrow("Admin access refused");
     await expect(keepBothAction(newer.record.id, older.record.id)).rejects.toThrow("Admin access refused");
-    await expect(keepReplyAction("not-an-id")).rejects.toThrow("Admin access refused");
+    await expect(keepReplyAction("not-an-id", ["not-an-id"])).rejects.toThrow("Admin access refused");
 
     expect(await flagged()).toEqual({
       [newer.record.id]: [older.record.id],
@@ -65,11 +65,11 @@ describe("keepReplyAction", () => {
     admin.allowed = true;
   });
 
-  it("keeps the newer reply and moves the older one into its history", async () => {
+  it("keeps the newer reply and moves the older one the page listed into its history", async () => {
     const older = await saveRsvp(base);
     const newer = await saveRsvp({ ...base, partySize: "2 people" });
 
-    expect(await keepReplyAction(newer.record.id)).toEqual({ ok: true, moved: 1 });
+    expect(await keepReplyAction(newer.record.id, [older.record.id])).toEqual({ ok: true, moved: 1 });
     expect(await flagged()).toEqual({ [newer.record.id]: [] });
     expect((await rsvpHistories()).get(newer.record.id)?.map((reply) => reply.id)).toEqual([older.record.id]);
     expect(cache.refresh).toHaveBeenCalledOnce();
@@ -78,15 +78,56 @@ describe("keepReplyAction", () => {
   it("says so when the reply is already in another reply's history", async () => {
     const older = await saveRsvp(base);
     const newer = await saveRsvp({ ...base, partySize: "2 people" });
-    await keepReplyAction(newer.record.id);
+    await keepReplyAction(newer.record.id, [older.record.id]);
 
-    const result = await keepReplyAction(older.record.id);
+    const result = await keepReplyAction(older.record.id, [newer.record.id]);
     expect(result).toEqual({ ok: false, error: expect.any(String) });
     expect(await flagged()).toEqual({ [newer.record.id]: [] });
   });
 
-  it("refuses an id that is not a reply's", async () => {
-    expect(await keepReplyAction("not-an-id")).toEqual({ ok: false, error: expect.any(String) });
+  it("refuses and moves nothing when a reply arrived after the page was shown", async () => {
+    const ama = await saveRsvp(base);
+    const amaAgain = await saveRsvp({ ...base, partySize: "2 people" });
+    const listed = (await listRsvps()).find((reply) => reply.id === amaAgain.record.id)!.flags.map((flag) => flag.otherId);
+    expect(listed).toEqual([ama.record.id]);
+    const spouse = await saveRsvp({ ...base, fullName: "Kojo Owusu", partySize: "Just me" });
+
+    expect(await keepReplyAction(amaAgain.record.id, listed)).toEqual({
+      ok: false,
+      error: "A new reply arrived; the page now shows it.",
+    });
+    expect(await flagged()).toEqual({
+      [spouse.record.id]: [amaAgain.record.id, ama.record.id],
+      [amaAgain.record.id]: [spouse.record.id, ama.record.id],
+      [ama.record.id]: [spouse.record.id, amaAgain.record.id],
+    });
+    expect((await rsvpHistories()).size).toBe(0);
+    // The page is re-rendered, so the new reply shows up flagged.
+    expect(cache.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("moves only the listed replies that are still flagged against it", async () => {
+    const ama = await saveRsvp(base);
+    const kofi = await saveRsvp({ ...base, fullName: "Kofi Mensah" });
+    const amaAgain = await saveRsvp({ ...base, partySize: "2 people" });
+    // Another tab kept both Kofi's reply and this one after the page listed them.
+    await keepBothAction(amaAgain.record.id, kofi.record.id);
+
+    expect(await keepReplyAction(amaAgain.record.id, [kofi.record.id, ama.record.id])).toEqual({ ok: true, moved: 1 });
+    expect(await flagged()).toEqual({ [amaAgain.record.id]: [], [kofi.record.id]: [] });
+    expect((await rsvpHistories()).get(amaAgain.record.id)?.map((reply) => reply.id)).toEqual([ama.record.id]);
+  });
+
+  it("refuses an id that is not a reply's, and a list that is not one", async () => {
+    const ama = await saveRsvp(base);
+    expect(await keepReplyAction("not-an-id", [])).toEqual({ ok: false, error: expect.any(String) });
+    expect(await keepReplyAction(ama.record.id, ["not-an-id"])).toEqual({ ok: false, error: expect.any(String) });
+    const tooMany = Array.from({ length: 51 }, () => ama.record.id);
+    expect(await keepReplyAction(ama.record.id, tooMany)).toEqual({ ok: false, error: expect.any(String) });
+    expect(await keepReplyAction(ama.record.id, "not-a-list" as unknown as string[])).toEqual({
+      ok: false,
+      error: expect.any(String),
+    });
   });
 });
 

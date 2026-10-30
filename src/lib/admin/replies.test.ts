@@ -40,10 +40,28 @@ describe("flagNote", () => {
     ).toBe("Replied again: also replied as Ama Owusu on 28 Oct, 18:02 (same phone)");
   });
 
-  it("names a possible duplicate and the detail it shares", () => {
-    expect(flagNote({ kind: "possible-duplicate", otherId: "kofi", otherName: "Kofi Ansa", via: "email" })).toBe(
-      "Possible duplicate of Kofi Ansa (same email)",
-    );
+  it("names a possible duplicate, when it was sent and the detail it shares", () => {
+    expect(
+      flagNote({ kind: "possible-duplicate", otherId: "kofi", otherName: "Kofi Ansa", via: "email" }, "2026-10-28T18:02:00Z"),
+    ).toBe("Possible duplicate of Kofi Ansa on 28 Oct, 18:02 (same email)");
+  });
+
+  it("tells apart two possible duplicates with the same name by their dates", () => {
+    const kofi = reply({
+      id: "kofi",
+      fullName: "Kofi Ansa",
+      flags: [
+        { kind: "possible-duplicate", otherId: "ama-later", otherName: "Ama Ansa", via: "phone" },
+        { kind: "possible-duplicate", otherId: "ama-earlier", otherName: "Ama Ansa", via: "phone" },
+      ],
+    });
+    const later = reply({ id: "ama-later", fullName: "Ama Ansa", receivedAt: "2026-10-29T08:15:00Z" });
+    const earlier = reply({ id: "ama-earlier", fullName: "Ama Ansa", receivedAt: "2026-10-28T18:02:00Z" });
+    const [row] = toReplyRows([kofi, later, earlier], new Map(), celebrations, now);
+    expect(row.flags.map((flag) => flag.note)).toEqual([
+      "Possible duplicate of Ama Ansa on 29 Oct, 08:15 (same phone)",
+      "Possible duplicate of Ama Ansa on 28 Oct, 18:02 (same phone)",
+    ]);
   });
 });
 
@@ -112,13 +130,15 @@ describe("toReplyRows", () => {
         kind: "replied-again",
         otherId: "ama-before",
         otherName: "AMA owusu",
+        otherReceived: "28 Oct, 18:02",
         note: "Replied again: also replied as AMA owusu on 28 Oct, 18:02 (same phone)",
       },
       {
         kind: "possible-duplicate",
         otherId: "kwame",
         otherName: "Kwame Owusu",
-        note: "Possible duplicate of Kwame Owusu (same email)",
+        otherReceived: "29 Oct, 09:41",
+        note: "Possible duplicate of Kwame Owusu on 29 Oct, 09:41 (same email)",
       },
     ]);
   });

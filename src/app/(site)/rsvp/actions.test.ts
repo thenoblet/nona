@@ -162,6 +162,26 @@ describe("submitRsvp", () => {
     expect(boss.send).toHaveBeenCalledOnce();
   });
 
+  it("keeps one reply and queues one confirmation when the same reply is sent twice at once", async () => {
+    await Promise.all([
+      submitRsvp(initialRsvpState, form({ email: "ama@example.com" })),
+      submitRsvp(initialRsvpState, form({ email: "ama@example.com" })),
+    ]);
+    await settle();
+    expect(await rows()).toHaveLength(1);
+    expect(boss.send).toHaveBeenCalledOnce();
+  });
+
+  it("keeps yes, no, then yes again as three replies, each with its confirmation", async () => {
+    const answer = `answer-${contentDefaults.celebrations[0].id}`;
+    for (const value of ["yes", "no", "yes"]) {
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com", [answer]: value }));
+      await settle();
+    }
+    expect(await rows()).toHaveLength(3);
+    expect(boss.send).toHaveBeenCalledTimes(3);
+  });
+
   it("queues no fourth email to the same address within 24 hours", async () => {
     for (let index = 0; index < 4; index++) {
       await submitRsvp(

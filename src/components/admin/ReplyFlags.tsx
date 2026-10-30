@@ -12,7 +12,8 @@ function others(count: number): string {
 
 /**
  * A flagged reply's notes and the couple's two choices: "Keep this one" (after an inline confirm)
- * moves every flagged reply into this one's history; "Keep both" clears the flag for one pair.
+ * moves the flagged replies shown here into this one's history, and nothing at all if another has
+ * arrived since; "Keep both" clears the flag for one pair.
  * Each action re-renders the page on the server, so the list shows the new state without a reload,
  * and `onDone` gets a sentence saying what happened.
  */
@@ -66,7 +67,11 @@ export function ReplyFlags({
 
   const keepThisOne = () =>
     run(
-      () => keepReplyAction(replyId),
+      () =>
+        keepReplyAction(
+          replyId,
+          flags.map((flag) => flag.otherId),
+        ),
       (moved) =>
         moved > 0 ? `Kept ${replyName}'s reply and moved ${others(moved)} to its history.` : `Kept ${replyName}'s reply.`,
     );
@@ -88,7 +93,7 @@ export function ReplyFlags({
       type="button"
       className="admin-flag-btn"
       disabled={pending}
-      aria-label={`Keep ${bothOf(flag)}`}
+      aria-label={`Keep both, this reply and ${flag.otherName}'s${flag.otherReceived ? ` from ${flag.otherReceived}` : ""}`}
       onClick={() => keepBoth(flag)}
     >
       Keep both
