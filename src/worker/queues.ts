@@ -132,11 +132,19 @@ async function handleDeadLetters(jobs: JobWithMetadata<Record<string, unknown>>[
     const mediaId = mediaIdOf(job.data);
     const reason = failureReason(job.sourceOutput);
     if (mediaId && PROCESSING_QUEUES.has(source)) {
-      await markProcessingFailed(mediaId, reason);
-      console.error(`[worker] ${source} job for ${mediaId} failed for good: marked failed (${reason})`);
+      const marked = await markProcessingFailed(mediaId, reason);
+      console.error(
+        marked
+          ? `[worker] ${source} job for ${mediaId} failed for good: marked failed (${reason})`
+          : `[worker] ${source} job for ${mediaId} failed for good (${reason}): left as it was, ready or gone`,
+      );
     } else if (mediaId && source === MEDIA_QUEUES.convert) {
-      await markConversionFailed(mediaId);
-      console.error(`[worker] ${source} job for ${mediaId} failed for good: conversion marked failed (${reason})`);
+      const marked = await markConversionFailed(mediaId);
+      console.error(
+        marked
+          ? `[worker] ${source} job for ${mediaId} failed for good: conversion marked failed (${reason})`
+          : `[worker] ${source} job for ${mediaId} failed for good (${reason}): left as it was, converted already or gone`,
+      );
     } else {
       console.error(`[worker] ${source} job for ${mediaId ?? "no item"} failed for good: ${reason}`);
     }

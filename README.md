@@ -221,7 +221,9 @@ bind-mounted at `/scratch`. The image runs as uid:gid `10001:10001`, the scratch
 needs no port.
 
 **Exactly one worker container at a time: 1 replica, deployed stop-first** (Swarm
-`update_config.order: stop-first`, never start-first). Each start removes the scratch folders it
+`update_config.order: stop-first`, never start-first). Dokploy sets this in the app's Swarm
+settings, under Update Config, and defaults to start-first, so change it there when creating
+`nona26-worker`. Each start removes the scratch folders it
 finds (an earlier run's leftovers) and runs its own sweeper, so a second container running beside it,
 even for the seconds of a deploy, could remove a running job's files or queue an item twice. The
 old container stops within 8 s of SIGTERM and its interrupted jobs go back to their queues, so

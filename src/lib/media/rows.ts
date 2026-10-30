@@ -299,9 +299,10 @@ export function unfinishedUploadsQuery({
 }
 
 /**
- * Unfinished uploads that have a multipart upload and were started between `startedAfter` and
- * `startedBefore`, oldest first, after `cursor` when given: at most `limit` of them. The sweeper
- * pages through them a batch at a time, so one sweep is bounded and the next carries on.
+ * Unfinished uploads that have a multipart upload and were started more than
+ * `startedMoreThanMinutesAgo` but within `startedWithinMinutes` minutes ago, by the database's
+ * clock, oldest first, after `cursor` when given: at most `limit` of them. The sweeper pages
+ * through them a batch at a time, so one sweep is bounded and the next carries on.
  */
 export async function unfinishedUploads(page: UnfinishedUploadsPage): Promise<UploadRow[]> {
   return unfinishedUploadsQuery(page);

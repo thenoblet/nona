@@ -16,7 +16,7 @@ import { unfinishedUploadsQuery } from "@/lib/media/rows";
 import { abortMultipart, completeMultipart, startMultipart } from "@/lib/storage/objects";
 import { resetDb } from "../../test/db";
 import { dropBossSchema, startTestBoss } from "../../test/uploads";
-import { createSweeper, liveJobsQuery, queuedConversionsQuery, uploadedItemsQuery } from "./sweeper";
+import { createSweeper, liveJobsQuery, queuedConversionsQuery, uploadedItemsQuery, type SweepResult } from "./sweeper";
 
 // These run against the local MinIO and test database: docker compose up -d db minio && npm run storage:init.
 
@@ -166,6 +166,49 @@ describe("the sweeper's first step: items stuck in uploaded", () => {
   });
 });
 
+describe("the sweeper's first two steps read in one snapshot (Ruling AF)", () => {
+  /** Waits until some session of the test database is waiting for a lock. */
+  async function untilOneWaitsForALock(watcher: postgres.Sql): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const [{ waiting }] = await watcher<{ waiting: number }[]>`
+        select count(*)::integer as waiting from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'`;
+      if (waiting > 0) return;
+      if (Date.now() > deadline) throw new Error("No session waited for the lock");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  it("doesn't queue an item whose job finishes between its read of the items and its read of their jobs", async () => {
+    const photo = await insertItem();
+    await boss.send(MEDIA_QUEUES.photo, { mediaId: photo });
+    const locker = postgres({ ...dbConfig(), max: 1, onnotice: () => {} });
+    const watcher = postgres({ ...dbConfig(), max: 1, onnotice: () => {} });
+    try {
+      let sweeping: Promise<SweepResult> | undefined;
+      await locker.begin(async (transaction) => {
+        // The job finishes and its item becomes ready, in a transaction that also holds pg-boss's
+        // job table: the sweep reads the items before this commits, then its read of the jobs
+        // waits for the commit. Read apart, the jobs' read would see the job gone and queue it again.
+        await transaction`lock table ${transaction(BOSS_SCHEMA)}.job in access exclusive mode`;
+        await transaction`update ${transaction(BOSS_SCHEMA)}.job set state = 'completed', completed_on = now()
+          where data ->> 'mediaId' = ${photo}`;
+        await transaction`update media set status = 'ready', listed_at = now() where id = ${photo}`;
+        sweeping = sweeper().sweep();
+        await untilOneWaitsForALock(watcher);
+      });
+      const result = await sweeping;
+
+      expect(result?.requeuedUploads).toBe(0);
+      expect(await liveJobs(MEDIA_QUEUES.photo, photo)).toHaveLength(0);
+    } finally {
+      await locker.end();
+      await watcher.end();
+    }
+  });
+});
+
 describe("the sweeper's first step at the wedding's volume (Ruling AC d)", () => {
   it("finds nothing to queue among 3,000 uploaded items that all have a waiting job, well inside its 10 s statement timeout", async () => {
     const ids = Array.from({ length: 3_000 }, () => randomUUID());
@@ -196,8 +239,7 @@ describe("the sweeper's first step at the wedding's volume (Ruling AC d)", () =>
     const sweepMilliseconds = performance.now() - started;
 
     expect(result.requeuedUploads).toBe(0);
-    // The budget is 500 ms on an idle machine; this bound leaves room for a busy CI runner.
-    expect(sweepMilliseconds).toBeLessThan(2_000);
+    expect(sweepMilliseconds).toBeLessThan(500);
   });
 });
 

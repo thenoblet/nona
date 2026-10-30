@@ -175,6 +175,39 @@ describe("a job that fails for good", () => {
     expect(await readItem(mediaId)).toMatchObject({ status: "ready" });
   });
 
+  it("leaves a ready item ready when its re-processing fails for good, and never logs it as marked failed", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await start({
+      [MEDIA_QUEUES.photo]: async () => {
+        throw new PermanentJobError("corrupt", "Not an image: the bytes are no photo format");
+      },
+    });
+    const mediaId = await insertItem({ status: "ready", listedAt: new Date() });
+    await boss.send(MEDIA_QUEUES.photo, { mediaId });
+
+    await eventually(async () =>
+      expect(errors.mock.calls.flat().join(" ")).toContain(`media.photo job for ${mediaId} failed for good (corrupt): left as it was`),
+    );
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("marked failed");
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", failureReason: null });
+  });
+
+  it("leaves a conversion that is done as it is when a re-conversion fails for good, and never logs it as marked failed", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await start({
+      [MEDIA_QUEUES.convert]: async () => {
+        throw new PermanentJobError("corrupt", "ffmpeg could not decode the video");
+      },
+    });
+    const mediaId = await insertItem({ kind: "video", status: "ready", conversion: "done", listedAt: new Date() });
+    await boss.send(MEDIA_QUEUES.convert, { mediaId }, { priority: CONVERT_PRIORITY.onDemand });
+
+    await eventually(async () =>
+      expect(errors.mock.calls.flat().join(" ")).toContain(`media.convert job for ${mediaId} failed for good (corrupt): left as it was`),
+    );
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("marked failed");
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "done" });
+  });
 });
 
 describe("a queue with no handler yet (Ruling AA)", () => {

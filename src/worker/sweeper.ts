@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { PgBoss } from "pg-boss";
 import { getDb } from "@/lib/db/client";
+import type * as schema from "@/lib/db/schema";
 import { media } from "@/lib/db/schema";
 import { CONVERT_PRIORITY, MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
 import { describeError } from "@/lib/log-error";
@@ -67,6 +69,9 @@ export type SweeperOptions = {
   rescueBatchSize?: number;
 };
 
+/** What the sweeper's reads run on: the pool, or the read-only transaction steps 1 and 2 read in. */
+type Reader = Pick<PostgresJsDatabase<typeof schema>, "select" | "execute">;
+
 /** `now()` less this many minutes, in SQL: the database's clock, never the worker's. */
 function minutesAgo(minutes: number): SQL {
   return sql`now() - make_interval(mins => ${minutes}::integer)`;
@@ -76,8 +81,8 @@ function minutesAgo(minutes: number): SQL {
  * Up to `limit` items `uploaded` more than 5 minutes ago, oldest first, read in order from the
  * partial index of uploaded items. Exported for its plan's test.
  */
-export function uploadedItemsQuery(limit: number) {
-  return getDb()
+export function uploadedItemsQuery(limit: number, reader: Reader = getDb()) {
+  return reader
     .select({ id: media.id, purpose: media.purpose, kind: media.kind })
     .from(media)
     .where(and(sql`${media.status} = 'uploaded'`, sql`${media.uploadedAt} < ${minutesAgo(STUCK_AFTER_MINUTES)}`))
@@ -90,8 +95,8 @@ export function uploadedItemsQuery(limit: number) {
  * a phone asked) more than 5 minutes ago, oldest first, on the partial index of queued
  * conversions. Exported for its plan's test.
  */
-export function queuedConversionsQuery(limit: number) {
-  return getDb()
+export function queuedConversionsQuery(limit: number, reader: Reader = getDb()) {
+  return reader
     .select({ id: media.id, onDemand: sql<boolean>`${media.highlight} or ${media.conversionRequestedAt} is not null` })
     .from(media)
     .where(
@@ -129,10 +134,41 @@ export function liveJobsQuery(bossSchema: string, queues: MediaQueueName[], medi
  * ids: the live jobs are read once by queue and state, never once per item, so it stays linear
  * however stale the planner's statistics are after a burst.
  */
-async function itemsWithLiveJobs(bossSchema: string, queues: MediaQueueName[], mediaIds: string[]): Promise<Set<string>> {
+async function itemsWithLiveJobs(
+  reader: Reader,
+  bossSchema: string,
+  queues: MediaQueueName[],
+  mediaIds: string[],
+): Promise<Set<string>> {
   if (mediaIds.length === 0) return new Set();
-  const rows = await getDb().execute<{ mediaId: string }>(liveJobsQuery(bossSchema, queues, mediaIds));
+  const rows = await reader.execute<{ mediaId: string }>(liveJobsQuery(bossSchema, queues, mediaIds));
   return new Set(rows.map((row) => row.mediaId));
+}
+
+/**
+ * Up to a batch of the candidates `readCandidates` finds that have no live job on these queues.
+ * Both reads see one snapshot (a read-only, repeatable-read transaction), so a job that finishes
+ * between them, its item no longer stuck, can't look missing and have its item queued again. The
+ * transaction holds no locks and makes no network call; the jobs are queued after it ends.
+ */
+function stuckAmong<TCandidate extends { id: string }>(
+  bossSchema: string,
+  queues: MediaQueueName[],
+  readCandidates: (reader: Reader) => Promise<TCandidate[]>,
+): Promise<TCandidate[]> {
+  return getDb().transaction(
+    async (transaction) => {
+      const candidates = await readCandidates(transaction);
+      const withJobs = await itemsWithLiveJobs(
+        transaction,
+        bossSchema,
+        queues,
+        candidates.map((candidate) => candidate.id),
+      );
+      return candidates.filter((candidate) => !withJobs.has(candidate.id)).slice(0, REQUEUE_BATCH_SIZE);
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
 }
 
 export function createSweeper(options: SweeperOptions) {
@@ -143,13 +179,9 @@ export function createSweeper(options: SweeperOptions) {
 
   /** Step 1: items stuck in `uploaded` with no job, queued on their processing queue. */
   async function requeueUploads(): Promise<number> {
-    const candidates = await uploadedItemsQuery(CANDIDATE_BATCH_SIZE);
-    const withJobs = await itemsWithLiveJobs(
-      bossSchema,
-      PROCESSING_QUEUES,
-      candidates.map((item) => item.id),
+    const stuck = await stuckAmong(bossSchema, PROCESSING_QUEUES, (reader) =>
+      uploadedItemsQuery(CANDIDATE_BATCH_SIZE, reader),
     );
-    const stuck = candidates.filter((item) => !withJobs.has(item.id)).slice(0, REQUEUE_BATCH_SIZE);
     const byQueue = Map.groupBy(stuck, (item) => processingQueue(item));
     for (const [queue, items] of byQueue) {
       await boss.insert(
@@ -162,13 +194,9 @@ export function createSweeper(options: SweeperOptions) {
 
   /** Step 2: ready videos whose conversion is `queued` with no job: on demand if anyone asked, else the backlog. */
   async function requeueConversions(): Promise<number> {
-    const candidates = await queuedConversionsQuery(CANDIDATE_BATCH_SIZE);
-    const withJobs = await itemsWithLiveJobs(
-      bossSchema,
-      CONVERSION_QUEUES,
-      candidates.map((item) => item.id),
+    const stuck = await stuckAmong(bossSchema, CONVERSION_QUEUES, (reader) =>
+      queuedConversionsQuery(CANDIDATE_BATCH_SIZE, reader),
     );
-    const stuck = candidates.filter((item) => !withJobs.has(item.id)).slice(0, REQUEUE_BATCH_SIZE);
     if (stuck.length > 0) {
       await boss.insert(
         MEDIA_QUEUES.convert,
