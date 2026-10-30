@@ -1,8 +1,10 @@
 "use server";
 
+import { after } from "next/server";
 import { z } from "zod";
 import { getSiteContent } from "@/lib/content/get";
 import { saveRsvp } from "@/lib/data/rsvp";
+import { queueRsvpConfirmation } from "@/lib/jobs/rsvp-confirmation";
 import type { Answer } from "@/lib/data/types";
 import {
   answerField,
@@ -19,10 +21,15 @@ function text(form: FormData, key: string, max = 300) {
 }
 
 function oneOf<T extends string>(value: string, allowed: readonly T[]): T {
-  return (allowed as readonly string[]).includes(value) ? (value as T) : allowed[0];
+  return (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : allowed[0];
 }
 
-export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<RsvpState> {
+export async function submitRsvp(
+  _prev: RsvpState,
+  form: FormData,
+): Promise<RsvpState> {
   const answers: RsvpValues["answers"] = {};
   const { celebrations } = await getSiteContent();
   for (const c of celebrations) {
@@ -45,7 +52,8 @@ export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<Rsvp
     errors.fullName = "Please tell us your full name, so we know who's coming.";
   }
   if (!values.phone) {
-    errors.phone = "Please add a phone or WhatsApp number, so we can send you updates.";
+    errors.phone =
+      "Please add a phone or WhatsApp number, so we can send you updates.";
   } else if (values.phone.replace(/\D/g, "").length < 7) {
     errors.phone = "That number looks a little short. Could you check it?";
   }
@@ -59,8 +67,9 @@ export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<Rsvp
     return { status: "error", values, errors };
   }
 
+  let record: Awaited<ReturnType<typeof saveRsvp>>["record"];
   try {
-    await saveRsvp({
+    ({ record } = await saveRsvp({
       fullName: values.fullName,
       phone: values.phone,
       email: values.email || undefined,
@@ -68,14 +77,20 @@ export async function submitRsvp(_prev: RsvpState, form: FormData): Promise<Rsvp
       answers: values.answers,
       otherNames: values.otherNames || undefined,
       song: values.song || undefined,
-    });
+    }));
   } catch (err) {
     console.error("RSVP could not be saved", err);
     return {
       status: "error",
       values,
-      errors: { form: "Sorry, your reply didn't reach us. Please try again in a moment." },
+      errors: {
+        form: "Sorry, your reply didn't reach us. Please try again in a moment.",
+      },
     };
+  }
+
+  if (record.email) {
+    after(() => queueRsvpConfirmation(record.id));
   }
 
   return { status: "sent", values, errors: {} };
