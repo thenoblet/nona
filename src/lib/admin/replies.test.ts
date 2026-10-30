@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RsvpRecord } from "@/lib/data/types";
 import {
-  accraDate,
   celebrationDay,
   countByFilter,
   flagNote,
@@ -70,10 +69,6 @@ describe("receivedLabel", () => {
     expect(receivedLabel("2026-10-30T09:41:00Z", now)).toBe("Today 09:41");
     expect(receivedLabel("2026-10-29T21:15:00Z", now)).toBe("Yesterday 21:15");
     expect(receivedLabel("2026-10-27T18:02:00Z", now)).toBe("27 Oct, 18:02");
-  });
-
-  it("gives the Accra date for file names", () => {
-    expect(accraDate(new Date("2026-10-30T23:59:00Z"))).toBe("2026-10-30");
   });
 
   it("writes a celebration's date as on the stat cards", () => {

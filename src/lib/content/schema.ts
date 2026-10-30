@@ -1,5 +1,9 @@
 import * as zod from "zod";
 
+/** The celebrations are fixed: their wording is editable, but exactly these three exist. */
+export const EVENT_IDS = ["ceremony", "reception", "thanks"] as const;
+export type EventId = (typeof EVENT_IDS)[number];
+
 /** Text that may run over several lines: answers, story texts, card texts. */
 const text = zod.string().trim().min(1, "Cannot be empty");
 /** Names, titles, roles, times, places and the like: one line, so a pasted line break can't split a heading. */
@@ -21,7 +25,7 @@ const date = zod
 
 const celebration = zod
   .object({
-    id: zod.enum(["ceremony", "reception", "thanks"]),
+    id: zod.enum(EVENT_IDS),
     name: line,
     weekday: line,
     weekdayShort: line,
@@ -101,7 +105,7 @@ export const sectionSchemas = {
     .length(3, "There must be exactly three celebrations")
     .refine(
       (items) =>
-        ["ceremony", "reception", "thanks"].every((id) => items.filter((item) => item.id === id).length === 1),
+        EVENT_IDS.every((id) => items.filter((item) => item.id === id).length === 1),
       "Keep the white wedding, reception and thanksgiving, each once",
     ),
   schedule: zod

@@ -7,6 +7,7 @@ import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { Icon } from "@/components/ui/Icon";
 import { Eyebrow } from "@/components/ui/Typography";
 import { getSiteContent } from "@/lib/content/get";
+import { siteUrl } from "@/lib/site-url";
 import { RsvpForm } from "@/components/rsvp/RsvpForm";
 
 export const metadata: Metadata = {
@@ -49,8 +50,7 @@ export default function RsvpPage() {
 async function RsvpFormLoader() {
   await connection();
   const { celebrations } = await getSiteContent();
-  const siteUrl = (process.env.SITE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-  return <RsvpForm celebrations={celebrations} siteUrl={siteUrl} />;
+  return <RsvpForm celebrations={celebrations} siteUrl={siteUrl()} />;
 }
 
 function FormSkeleton() {

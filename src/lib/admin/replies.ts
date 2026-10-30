@@ -1,4 +1,5 @@
 import type { EventId } from "@/content/wedding";
+import { accraDate, accraDateTime, accraTime } from "@/lib/accra";
 import type { Answer, EmailStatus, RsvpFlag, RsvpRecord } from "@/lib/data/types";
 import { phoneKey } from "@/lib/rsvp/normalize";
 
@@ -15,37 +16,16 @@ export const emailStatusLabels: Record<EmailStatus, string> = {
 };
 
 // Ghana keeps GMT all year, so a day is always 24 hours there.
-const ACCRA = "Africa/Accra";
 const DAY_MS = 24 * 60 * 60 * 1000;
-const dateAndTime = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-  timeZone: ACCRA,
-});
-const timeOfDay = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: ACCRA });
-const isoDay = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: ACCRA });
 // A celebration's date is a calendar day with no time, so it is read as UTC.
 const shortDay = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
-
-/** "2026-10-30": the day in Accra. */
-export function accraDate(moment: Date): string {
-  return isoDay.format(moment);
-}
-
-/** "28 Oct, 18:02" in Accra. */
-export function accraDateTime(iso: string): string {
-  return dateAndTime.format(new Date(iso));
-}
 
 /** "Today 09:41", "Yesterday 21:15" or "27 Oct, 18:02", in Accra. */
 export function receivedLabel(iso: string, now: Date): string {
   const received = new Date(iso);
   const day = accraDate(received);
-  if (day === accraDate(now)) return `Today ${timeOfDay.format(received)}`;
-  if (day === accraDate(new Date(now.getTime() - DAY_MS))) return `Yesterday ${timeOfDay.format(received)}`;
+  if (day === accraDate(now)) return `Today ${accraTime(received)}`;
+  if (day === accraDate(new Date(now.getTime() - DAY_MS))) return `Yesterday ${accraTime(received)}`;
   return accraDateTime(iso);
 }
 
@@ -246,7 +226,7 @@ export function replyCsvRows(replies: RsvpRecord[], celebrations: CelebrationCol
         ...celebrations.map((celebration) => answerWord(reply.answers[celebration.id])),
         reply.otherNames ?? "",
         reply.song ?? "",
-        `${accraDate(received)} ${timeOfDay.format(received)}`,
+        `${accraDate(received)} ${accraTime(received)}`,
         emailStatusLabels[reply.emailStatus],
         reply.flags.map(flagWords).join("; "),
       ];

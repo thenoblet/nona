@@ -8,13 +8,10 @@ import { describeError } from "@/lib/log-error";
 import { renderRsvpConfirmation } from "@/lib/email/rsvp-confirmation";
 import { sendEmail } from "@/lib/email/send";
 import { emailKey } from "@/lib/rsvp/normalize";
+import { siteUrl } from "@/lib/site-url";
 import { getBoss, QUEUES } from "./boss";
 
 const DAILY_LIMIT = 3;
-
-export function siteUrl(): string {
-  return (process.env.SITE_URL || "http://localhost:3000").replace(/\/+$/, "");
-}
 
 /** Queue the confirmation. Never throws: the reply is already saved. */
 export async function queueRsvpConfirmation(rsvpId: string): Promise<void> {

@@ -1,6 +1,6 @@
-import type { Celebration, PartyMember, ScheduleItem } from "@/lib/content/schema";
+import type { Celebration, EventId, PartyMember, ScheduleItem } from "@/lib/content/schema";
 
-export type { Celebration, PartyMember, ScheduleItem };
+export type { Celebration, EventId, PartyMember, ScheduleItem };
 
 /**
  * Everything the couple knows ahead of time lives here. The pages read `couple`, `wedding` and
@@ -61,8 +61,6 @@ export const venues = {
 
 /** Landmarks guests can ask for on the way. Shown as a note over the map, not as pins. */
 export const landmarks = ["Rexco", "Amel Junction"] as const;
-
-export type EventId = "ceremony" | "reception" | "thanks";
 
 export const celebrations: Celebration[] = [
   {

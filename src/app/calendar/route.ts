@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { buildIcs, celebrationEvent } from "@/lib/calendar/ics";
 import { getSiteContent } from "@/lib/content/get";
+import { siteUrl } from "@/lib/site-url";
 
 /** A calendar file for the celebrations named in `?events=ceremony,reception` (all three if none are valid). */
 export async function GET(request: Request) {
@@ -9,8 +10,8 @@ export async function GET(request: Request) {
   const { celebrations } = await getSiteContent();
   const wanted = new Set((new URL(request.url).searchParams.get("events") ?? "").split(",").map((id) => id.trim()));
   const chosen = celebrations.filter((celebration) => wanted.has(celebration.id));
-  const siteUrl = (process.env.SITE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-  const body = buildIcs((chosen.length ? chosen : celebrations).map((celebration) => celebrationEvent(celebration, siteUrl)));
+  const site = siteUrl();
+  const body = buildIcs((chosen.length ? chosen : celebrations).map((celebration) => celebrationEvent(celebration, site)));
   return new Response(body, {
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",

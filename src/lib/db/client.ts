@@ -3,12 +3,16 @@ import postgres from "postgres";
 import { dbConfig } from "@/lib/env";
 import * as schema from "./schema";
 
-let db: PostgresJsDatabase<typeof schema> | undefined;
+// Next loads this file once per server bundle, so a module variable would open several pools.
+// The globalThis key is shared by every bundle in the process, as the job queue's is.
+const globalWithDb = globalThis as typeof globalThis & {
+  __nonaDb?: PostgresJsDatabase<typeof schema>;
+};
 
 // One pool per process, opened on first use. A stalled query is cut off after 10 s so it
 // cannot hold a guest's request.
 export function getDb(): PostgresJsDatabase<typeof schema> {
-  db ??= drizzle(
+  globalWithDb.__nonaDb ??= drizzle(
     postgres({
       ...dbConfig(),
       max: 10,
@@ -17,5 +21,5 @@ export function getDb(): PostgresJsDatabase<typeof schema> {
     }),
     { schema },
   );
-  return db;
+  return globalWithDb.__nonaDb;
 }

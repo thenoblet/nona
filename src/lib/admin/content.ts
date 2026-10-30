@@ -1,3 +1,4 @@
+import { accraDayAndMonth, accraTime } from "@/lib/accra";
 import type { SectionKey } from "@/lib/content/schema";
 
 // Shared by the "Site text" pages, their editor in the browser and the save actions.
@@ -80,11 +81,8 @@ export function parseIssues(key: SectionKey, errors: string[]): { path: string |
   });
 }
 
-const accraTime = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Africa/Accra" });
-const accraDay = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "Africa/Accra" });
-
 /** "nancy@example.com saved a newer version at 21:14 on 30 Oct. Reload to see it." ("You" for one's own.) */
 export function newerVersionMessage(newer: { savedBy: string; savedAt: Date }, currentAdmin: string): string {
   const who = newer.savedBy === currentAdmin ? "You" : newer.savedBy;
-  return `${who} saved a newer version at ${accraTime.format(newer.savedAt)} on ${accraDay.format(newer.savedAt)}. Reload to see it.`;
+  return `${who} saved a newer version at ${accraTime(newer.savedAt)} on ${accraDayAndMonth(newer.savedAt)}. Reload to see it.`;
 }

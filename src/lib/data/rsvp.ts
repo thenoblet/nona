@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import type { EventId } from "@/content/wedding";
+import { EVENT_IDS, type EventId } from "@/lib/content/schema";
 import { getDb } from "@/lib/db/client";
 import { rsvpFlagDismissals, rsvps } from "@/lib/db/schema";
 import { emailKey, nameKey, phoneKey } from "@/lib/rsvp/normalize";
@@ -26,9 +26,6 @@ function toRecord(row: Row, flags: RsvpFlag[] = []): RsvpRecord {
     flags,
   };
 }
-
-/** The celebrations are fixed: their wording is editable, but exactly these three exist. */
-const EVENT_IDS: EventId[] = ["ceremony", "reception", "thanks"];
 
 const PEOPLE: Record<string, number> = {
   "Just me": 1,
@@ -318,21 +315,6 @@ export async function rsvpTotals(): Promise<
 
 export async function setEmailStatus(id: string, status: RsvpRecord["emailStatus"]): Promise<void> {
   await getDb().update(rsvps).set({ emailStatus: status }).where(eq(rsvps.id, id));
-}
-
-/** Confirmation emails queued or sent to this address in the last 24 hours. */
-export async function confirmationsSentToday(key: string): Promise<number> {
-  const rows = await getDb()
-    .select({ id: rsvps.id })
-    .from(rsvps)
-    .where(
-      and(
-        eq(rsvps.emailKey, key),
-        inArray(rsvps.emailStatus, ["queued", "sent"]),
-        gt(rsvps.receivedAt, sql`now() - interval '24 hours'`),
-      ),
-    );
-  return rows.length;
 }
 
 /**

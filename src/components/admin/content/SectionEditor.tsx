@@ -1,4 +1,4 @@
-import { accraDateTime } from "@/lib/admin/replies";
+import { accraDateTime } from "@/lib/accra";
 import type { ContentSection } from "@/lib/admin/content";
 import { listVersions, readSection } from "@/lib/content/store";
 import { ContentEditor } from "./ContentEditor";
