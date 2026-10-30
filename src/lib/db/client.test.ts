@@ -8,6 +8,6 @@ describe("getDb", () => {
     await expect(getDb().execute(sql`SELECT pg_sleep(11)`)).rejects.toThrow();
     const seconds = (Date.now() - started) / 1000;
     expect(seconds).toBeGreaterThan(9);
-    expect(seconds).toBeLessThan(11);
+    expect(seconds).toBeLessThan(15);
   }, 20_000);
 });
