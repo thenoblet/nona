@@ -14,7 +14,10 @@ const photo = await loadPhoto(previewPhotos.rsvp.file);
 
 /**
  * Read at request time, so the card shows the reply-by date set in the admin, or that replies have
- * closed. Each version of the card is drawn once.
+ * closed. Drawing a card is CPU work that would otherwise belong in the media worker, but it
+ * happens in the web server on purpose: the card must change without a deploy, and the build has
+ * no database to draw it from. Each wording is drawn once per server process and then served from
+ * renderJpeg's cache (see lib/og.tsx), so a crawler's request costs a cache read, not a drawing.
  */
 export default async function Image() {
   await connection();

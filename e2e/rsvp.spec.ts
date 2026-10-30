@@ -87,13 +87,13 @@ async function repliesFrom(email: string): Promise<number> {
 }
 
 /** The Replies page, signed in through Cloudflare Access, and its RSVP settings panel. */
-async function rsvpSettings(browser: Browser, baseURL: string | undefined) {
-  const context = await browser.newContext({ baseURL, extraHTTPHeaders: { [ACCESS_HEADER]: await accessToken() } });
+async function rsvpSettings(browser: Browser, baseURL: string | undefined, email?: string) {
+  const context = await browser.newContext({ baseURL, extraHTTPHeaders: { [ACCESS_HEADER]: await accessToken({ email }) } });
   const page = await context.newPage();
   await page.goto("/admin/rsvps");
   // The panel works once the page has hydrated.
   await page.waitForLoadState("networkidle");
-  return { panel: page.getByRole("region", { name: "RSVP settings" }), done: () => context.close() };
+  return { page, panel: page.getByRole("region", { name: "RSVP settings" }), done: () => context.close() };
 }
 
 /** Close RSVPs or Reopen RSVPs, through the confirm step. */
@@ -109,15 +109,44 @@ async function saveReplyBy(panel: Locator, day: string) {
   await expect(panel.getByText("Saved. Guests see it now.")).toBeVisible();
 }
 
+const WHATSAPP = "WhatsApp/2.23.20.0";
+// One of the crawlers added to Next's list in next.config.ts.
+const SNAPCHAT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; Snap URL Preview Service; bot; snapchat; https://developers.snap.com/robots)";
+
 /**
- * The link-preview tags WhatsApp's crawler reads: the <head> of the first HTML, which it reads
- * without running scripts, so tags streamed in later would never reach it.
+ * The link-preview tags a crawler such as WhatsApp's reads: the <head> of the first HTML, which it
+ * reads without running scripts, so tags streamed in later would never reach it.
  */
-async function previewTags(request: APIRequestContext, path: string) {
-  const html = await (await request.get(path, { headers: { "user-agent": "WhatsApp/2.23.20.0" } })).text();
+async function previewTags(request: APIRequestContext, path: string, userAgent = WHATSAPP) {
+  const html = await (await request.get(path, { headers: { "user-agent": userAgent } })).text();
+  expect(html).toContain("</head>");
   const head = html.slice(0, html.indexOf("</head>"));
   const tag = (property: string) => new RegExp(`<meta property="${property}" content="([^"]*)"`).exec(head)?.[1];
   return { description: tag("og:description"), image: tag("og:image") };
+}
+
+/**
+ * At the end of the page, how far the last line of the closed message's section sits above the
+ * floating music pill (negative when the pill covers it), or null when no pill is beneath it.
+ */
+async function signatureClearance(page: Page): Promise<number | null> {
+  await page.getByText("Play our song").waitFor();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  return page.evaluate(() => {
+    const signature = [...document.querySelectorAll("section[aria-label='Replies have closed'] p")].at(-1)!.getBoundingClientRect();
+    const dock = document.querySelector("div.pointer-events-none.fixed")!;
+    const beneath = [...dock.querySelectorAll(":scope > div")]
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.height > 0 && rect.left < signature.right && rect.right > signature.left);
+    return beneath.length === 0 ? null : Math.min(...beneath.map((rect) => rect.top)) - signature.bottom;
+  });
+}
+
+/** Breaks the envelope's seal on /open (it never stops pulsing, so the click is forced). */
+async function openInvitation(page: Page) {
+  await page.goto("/open");
+  await page.getByRole("button", { name: "Break the seal to open your invitation" }).click({ force: true });
 }
 
 async function previewImage(request: APIRequestContext, url: string | undefined): Promise<Buffer> {
@@ -146,7 +175,7 @@ test.describe("the couple's RSVP switch", () => {
     await page.goto("/rsvp");
     await fillReply(page, "E2E Too Late", "e2e-too-late@example.com");
 
-    const { panel, done } = await rsvpSettings(browser, baseURL);
+    const { page: admin, panel, done } = await rsvpSettings(browser, baseURL);
     await expect(panel.getByText("Open", { exact: true })).toBeVisible();
     // Unsaved edits to the date or message hold the switch until they are saved or undone.
     await panel.getByLabel("Message while closed").fill("Not saved yet");
@@ -158,6 +187,7 @@ test.describe("the couple's RSVP switch", () => {
     await expect(panel.getByRole("group")).toContainText(`The RSVP page will show guests “${builtInRsvp.closedMessage}”`);
     await panel.getByRole("button", { name: "Yes, close RSVPs" }).click();
     await expect(panel.getByText(/^Closed since \d{1,2} [A-Z][a-z]{2}, \d{2}:\d{2} by couple@example\.com$/)).toBeVisible();
+    await expect(admin.getByText("Newest first. RSVPs are closed.")).toBeVisible();
     await done();
 
     // The page opened before the close still has its form: the reply is refused with the message.
@@ -167,16 +197,26 @@ test.describe("the couple's RSVP switch", () => {
 
     await page.goto("/rsvp");
     await expect(page.getByText(builtInRsvp.closedMessage).filter({ visible: true })).toBeVisible();
+    // Line breaks the couple type into the message are kept.
+    await expect(page.getByText(builtInRsvp.closedMessage).filter({ visible: true })).toHaveCSS("white-space", "pre-line");
     await expect(page.getByRole("button", { name: "Send my reply" })).toHaveCount(0);
     await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", "Replies have closed.");
+    // On a phone, scrolled to the end, the signature clears the floating music pill.
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await signatureClearance(page)).toBeGreaterThan(0);
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     await page.goto("/home?mode=before");
     // The home page streams in: until the swap, a hidden copy sits beside the visible one.
     const replySection = page.locator("section#rsvp").filter({ visible: true });
     await expect(replySection.getByRole("heading", { name: "Replies have closed" })).toBeVisible();
-    await expect(replySection.getByText(builtInRsvp.closedMessage)).toBeVisible();
+    await expect(replySection.getByText("Répondez s'il vous plaît")).toHaveCount(0);
+    await expect(replySection.getByText(builtInRsvp.closedMessage)).toHaveCSS("white-space", "pre-line");
     await expect(replySection.getByRole("link", { name: "Respond now" })).toHaveCount(0);
     await expect(page.getByLabel("Your invitation").filter({ visible: true }).getByText("Replies have closed")).toBeVisible();
+    await openInvitation(page);
+    await expect(page.getByText("Replies have closed")).toBeVisible();
+    await expect(page.getByText(/Kindly reply by/)).toHaveCount(0);
 
     const rsvpPreview = await previewTags(request, "/rsvp");
     expect(rsvpPreview.description).toBe("Replies have closed.");
@@ -221,11 +261,54 @@ test.describe("the couple's RSVP switch", () => {
     await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", /Please reply by 27 November;/);
     await page.goto("/home?mode=before");
     await expect(page.getByLabel("Your invitation").filter({ visible: true }).getByText("Kindly reply by 27 November")).toBeVisible();
+    await openInvitation(page);
+    await expect(page.getByText("Kindly reply by 27 November")).toBeVisible();
 
-    // WhatsApp's crawler gets the new date in the <head> of the first HTML.
+    // WhatsApp's and Snapchat's crawlers get the new date in the <head> of the first HTML.
     expect((await previewTags(request, "/")).description).toMatch(/Kindly reply by 27 November\.$/);
+    expect((await previewTags(request, "/", SNAPCHAT)).description).toMatch(/Kindly reply by 27 November\.$/);
     const after = await previewTags(request, "/rsvp");
     expect(after.description).toContain("Please reply by 27 November;");
     expect((await previewImage(request, after.image)).equals(cardBefore)).toBe(false);
+  });
+
+  test("a page that saw an older version is told who saved since, and nothing changes", async ({ page, browser, baseURL }) => {
+    const stale = await rsvpSettings(browser, baseURL);
+    const nancy = await rsvpSettings(browser, baseURL, "nancy@example.com");
+    await saveReplyBy(nancy.panel, "2026-11-25");
+    await nancy.done();
+
+    await stale.panel.getByRole("button", { name: "Close RSVPs" }).click();
+    await stale.panel.getByRole("button", { name: "Yes, close RSVPs" }).click();
+    await expect(
+      stale.panel.getByText(/^nancy@example\.com saved a newer version at \d{2}:\d{2} on \d{1,2} [A-Z][a-z]{2}\. Reload to see it\.$/),
+    ).toBeVisible();
+    await expect(stale.panel.getByText("Open", { exact: true })).toBeVisible();
+    await stale.done();
+
+    await page.goto("/rsvp");
+    await expect(page.getByText("Please reply by 25 November").filter({ visible: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Send my reply" })).toBeVisible();
+  });
+
+  test("Escape closes the confirm like Cancel; focus returns to the switch, or to the heading while it waits", async ({
+    browser,
+    baseURL,
+  }) => {
+    const { panel, done } = await rsvpSettings(browser, baseURL);
+    const close = panel.getByRole("button", { name: "Close RSVPs" });
+    await close.click();
+    await expect(panel.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await panel.getByRole("button", { name: "Cancel" }).press("Escape");
+    await expect(panel.getByRole("group")).toHaveCount(0);
+    await expect(close).toBeFocused();
+
+    await close.click();
+    await panel.getByLabel("Message while closed").fill("Not saved yet");
+    await panel.getByRole("button", { name: "Cancel" }).press("Escape");
+    await expect(panel.getByRole("group")).toHaveCount(0);
+    await expect(close).toBeDisabled();
+    await expect(panel.getByRole("heading", { name: "RSVP settings" })).toBeFocused();
+    await done();
   });
 });

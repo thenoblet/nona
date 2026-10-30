@@ -1,5 +1,5 @@
 import postgres from "postgres";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDb } from "../../../test/db";
 import { dbConfig } from "@/lib/env";
 import { contentDefaults } from "./defaults";
@@ -167,7 +167,31 @@ describe("validation", () => {
 });
 
 describe("contentOrDefaults", () => {
-  it("falls back to the defaults when the read fails", async () => {
-    expect(await contentOrDefaults(() => Promise.reject(new Error("db down")))).toEqual(contentDefaults);
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("falls back to the defaults when the read fails, and keeps them for 30 s without trying again", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const failing = vi.fn(() => Promise.reject(new Error("db down")));
+    expect(await contentOrDefaults(failing)).toEqual(contentDefaults);
+    expect(failing).toHaveBeenCalledOnce();
+
+    // During an outage each page would otherwise wait out the 5 s connect timeout.
+    vi.advanceTimersByTime(29_000);
+    expect(await contentOrDefaults(failing)).toEqual(contentDefaults);
+    expect(failing).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(1_000);
+    expect(await contentOrDefaults(failing)).toEqual(contentDefaults);
+    expect(failing).toHaveBeenCalledTimes(2);
+
+    // After 30 s more, the first read that works replaces the fallback, and the next read runs too.
+    vi.advanceTimersByTime(30_000);
+    const saved = { ...contentDefaults, landmarks: ["Saved landmark"] };
+    const working = vi.fn(() => Promise.resolve(saved));
+    expect(await contentOrDefaults(working)).toEqual(saved);
+    expect(await contentOrDefaults(working)).toEqual(saved);
+    expect(working).toHaveBeenCalledTimes(2);
   });
 });

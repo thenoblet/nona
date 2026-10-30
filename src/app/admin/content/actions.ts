@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/admin/access";
 import {
   EDITOR_FIELDS,
   isSectionKey,
+  isVersionNumber,
   MAX_SECTION_BYTES,
   newerVersionMessage,
   RELOAD,
@@ -24,10 +25,6 @@ import { restoreVersion, saveSection, type SaveResult } from "@/lib/content/stor
 
 function refused(message: string): SaveState {
   return { status: "error", errors: [message] };
-}
-
-function isVersionNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 /** A refusal: the newer version's saver and time, or the store's messages. */

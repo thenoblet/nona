@@ -1,10 +1,16 @@
 import type { NextConfig } from "next";
+import { HTML_LIMITED_BOT_UA_RE } from "next/dist/shared/lib/router/utils/html-bots";
 
 const nextConfig: NextConfig = {
   // Self-contained server build for the Dokploy Docker image.
   output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
+  // Link-preview crawlers that read only the first HTML get the page's metadata in its <head>
+  // rather than streamed in after it (it is read at request time; see app/layout.tsx). Next's own
+  // list, plus the crawlers of apps guests share links in that it leaves out. Next matches the
+  // pattern ignoring case.
+  htmlLimitedBots: new RegExp(`${HTML_LIMITED_BOT_UA_RE.source}|Snap URL Preview Service|Viber|Pinterest`),
   images: {
     // WebP only. Cloudflare caches /_next/image at the edge, and its free plan keeps one
     // copy per URL whatever the browser accepts, so an AVIF copy could reach iPhones

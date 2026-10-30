@@ -3,7 +3,10 @@ import { couple } from "@/content/wedding";
 import { photos } from "@/content/images";
 import { PillLink } from "@/components/ui/Button";
 
-/** Shown on /rsvp instead of the form while the couple have replies closed. */
+/**
+ * Shown on /rsvp instead of the form while the couple have replies closed. Its bottom padding
+ * (pb-28) keeps the signature clear of the floating music pill once the page is scrolled to the end.
+ */
 export function RepliesClosed({ message }: { message: string }) {
   const photo = photos.daisiesWrapped;
   return (
@@ -24,7 +27,8 @@ export function RepliesClosed({ message }: { message: string }) {
           style={{ objectPosition: photo.position }}
         />
       </div>
-      <p className="m-0 font-serif text-[22px] leading-[1.5] text-cocoa">{message}</p>
+      {/* Line breaks the couple type into the message are kept. */}
+      <p className="m-0 font-serif text-[22px] leading-[1.5] whitespace-pre-line text-cocoa">{message}</p>
       <PillLink href="/home" variant="cocoa" className="mt-2">
         Back to the website
       </PillLink>

@@ -3,7 +3,7 @@
 import { refresh, updateTag } from "next/cache";
 import * as zod from "zod";
 import { requireAdmin } from "@/lib/admin/access";
-import { newerVersionMessage, RELOAD, type SaveState } from "@/lib/admin/content";
+import { isVersionNumber, newerVersionMessage, RELOAD, type SaveState } from "@/lib/admin/content";
 import { CONTENT_TAG } from "@/lib/content/get";
 import { readSection, saveSection, type SaveResult } from "@/lib/content/store";
 import { keepBoth, keepReply, REPLY_NOT_FOUND, type KeepResult } from "@/lib/data/rsvp";
@@ -45,10 +45,6 @@ export async function keepBothAction(
 
 // The RSVP settings. Each change carries the version the page showed: if anyone saved after it,
 // nothing changes and the couple are told who did and when, as on the Site text pages.
-
-function isVersionNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
 
 /** After a save, guests' pages and the reply action read the new settings at once, and this page re-renders. */
 function settingsSaved(result: SaveResult, adminEmail: string): SaveState {

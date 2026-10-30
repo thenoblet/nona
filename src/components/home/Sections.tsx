@@ -152,9 +152,9 @@ export function RsvpBand({ rsvp }: { rsvp: RsvpSettings }) {
           />
         </Reveal>
         <div className="flex max-w-[560px] flex-1 flex-col items-center gap-5.5">
-          <Eyebrow tone="ember">Répondez s&apos;il vous plaît</Eyebrow>
           {rsvp.open ? (
             <>
+              <Eyebrow tone="ember">Répondez s&apos;il vous plaît</Eyebrow>
               <h2 className={heading}>Will you join us?</h2>
               <p className={body}>
                 Kindly respond by <span className="text-white">{accraDayAndFullMonth(rsvp.replyBy)}</span>. It takes a minute.
@@ -167,7 +167,8 @@ export function RsvpBand({ rsvp }: { rsvp: RsvpSettings }) {
           ) : (
             <>
               <h2 className={heading}>Replies have closed</h2>
-              <p className={body}>{rsvp.closedMessage}</p>
+              {/* Line breaks the couple type into the message are kept. */}
+              <p className={`${body} whitespace-pre-line`}>{rsvp.closedMessage}</p>
             </>
           )}
         </div>

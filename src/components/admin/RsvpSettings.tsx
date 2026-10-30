@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, useTransition, type FormEvent, type KeyboardEvent } from "react";
 import { closeRsvpsAction, reopenRsvpsAction, saveRsvpSettingsAction } from "@/app/admin/rsvps/actions";
 import { wedding } from "@/content/wedding";
 import { parseIssues, type SaveState } from "@/lib/admin/content";
@@ -52,16 +52,34 @@ export function RsvpSettings({
   const [draft, setDraft] = useState<Draft | null>(null);
   const unsaved = draft !== null && (draft.replyBy !== replyBy || draft.closedMessage !== closedMessage);
   const form = useRef<HTMLFormElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const switchButton = useRef<HTMLButtonElement>(null);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const focusSwitchButton = useRef(false);
 
-  // The confirm opens on its safe choice; once it closes, focus goes back to the switch.
+  // The confirm opens on its safe choice. Once it closes, focus goes back to the switch, or to the
+  // heading while the switch waits for unsaved edits (a disabled button can't take focus).
   useEffect(() => {
     if (confirming) cancelButton.current?.focus();
-    else if (focusSwitchButton.current) switchButton.current?.focus();
+    else if (focusSwitchButton.current) {
+      const target = switchButton.current;
+      if (target && !target.disabled) target.focus();
+      else heading.current?.focus();
+    }
     focusSwitchButton.current = false;
   }, [confirming]);
+
+  function cancel() {
+    focusSwitchButton.current = true;
+    setConfirming(false);
+  }
+
+  /** Escape cancels the confirm, like Cancel, unless the switch is already under way. */
+  function escape(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Escape" || switching) return;
+    event.preventDefault();
+    cancel();
+  }
 
   function switchReplies() {
     startSwitching(async () => {
@@ -124,7 +142,9 @@ export function RsvpSettings({
 
   return (
     <section className="admin-rsvp" aria-labelledby={headingId}>
-      <h2 id={headingId}>RSVP settings</h2>
+      <h2 ref={heading} id={headingId} tabIndex={-1}>
+        RSVP settings
+      </h2>
       <div className="admin-rsvp-switch">
         <p className="admin-rsvp-state">
           {open ? (
@@ -155,7 +175,7 @@ export function RsvpSettings({
         </p>
       )}
       {confirming && (
-        <div className="admin-confirm" role="group" aria-labelledby={questionId}>
+        <div className="admin-confirm" role="group" aria-labelledby={questionId} onKeyDown={escape}>
           <p id={questionId}>
             {open
               ? `Close RSVPs? The RSVP page will show guests “${closedMessage}” instead of the form, the home page and the invitation will say “Replies have closed”, and a reply sent from a page opened earlier is refused.`
@@ -176,10 +196,7 @@ export function RsvpSettings({
               type="button"
               className="admin-btn admin-btn-small"
               disabled={switching}
-              onClick={() => {
-                focusSwitchButton.current = true;
-                setConfirming(false);
-              }}
+              onClick={cancel}
             >
               Cancel
             </button>

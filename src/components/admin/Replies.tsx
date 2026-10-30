@@ -30,7 +30,9 @@ export async function Replies() {
       <div className="admin-pagehead">
         <div>
           <h1>Replies</h1>
-          <p className="admin-lede">Newest first. Replies are due {accraDayAndFullMonth(rsvp.replyBy)}.</p>
+          <p className="admin-lede">
+            Newest first. {rsvp.open ? `Replies are due ${accraDayAndFullMonth(rsvp.replyBy)}.` : "RSVPs are closed."}
+          </p>
         </div>
         {/* A plain link: the file downloads, and an expired sign-in still reaches the login page. */}
         <a className="admin-btn" href="/admin/rsvps.csv">

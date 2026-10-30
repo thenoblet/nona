@@ -12,6 +12,11 @@ export const EDITOR_FIELDS = { value: "value", baseVersion: "baseVersion" } as c
 /** An action was sent something the page it came from would never send: an old page, or not a page. */
 export const RELOAD = "This page is out of date. Reload it and try again.";
 
+/** A version the page can have shown: a whole number from 0, the built-in text being version 0. */
+export function isVersionNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 /** A section's JSON may be at most this long. The largest built-in section is about 2 KB. */
 export const MAX_SECTION_BYTES = 256 * 1024;
 export const TOO_LONG = "This section is too long to save. Shorten the longest text and try again.";
