@@ -32,13 +32,13 @@ vi.mock("@/lib/jobs/boss", async (importOriginal) => {
   };
 });
 
-const saveRsvp = vi.hoisted(() => ({ fail: false }));
+const saveRsvp = vi.hoisted(() => ({ failure: null as Error | null }));
 vi.mock("@/lib/data/rsvp", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/data/rsvp")>();
   return {
     ...real,
     saveRsvp: (input: Parameters<typeof real.saveRsvp>[0]) => {
-      if (saveRsvp.fail) return Promise.reject(new Error("database is down"));
+      if (saveRsvp.failure) return Promise.reject(saveRsvp.failure);
       return real.saveRsvp(input);
     },
   };
@@ -70,7 +70,7 @@ async function rows() {
 
 describe("submitRsvp", () => {
   beforeEach(async () => {
-    saveRsvp.fail = false;
+    saveRsvp.failure = null;
     boss.fail = false;
     boss.send.mockClear();
     await resetDb();
@@ -104,13 +104,31 @@ describe("submitRsvp", () => {
   });
 
   it("says so when the reply could not be saved", async () => {
-    saveRsvp.fail = true;
+    saveRsvp.failure = new Error("database is down");
     vi.spyOn(console, "error").mockImplementation(() => {});
     const state = await submitRsvp(initialRsvpState, form());
     expect(state.status).toBe("error");
     expect(state.errors.form).toBe(
       "Sorry, your reply didn't reach us. Please try again in a moment.",
     );
+  });
+
+  it("logs no guest details when the save fails", async () => {
+    // Drizzle's query errors repeat the query's parameters: the guest's name, phone and email.
+    const cause = Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" });
+    saveRsvp.failure = Object.assign(
+      new Error('Failed query: insert into "rsvps" params: Ama Test,024 000 0000,ama@example.com'),
+      { name: "DrizzleQueryError", cause },
+    );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+    expect(state.status).toBe("error");
+    expect(log).toHaveBeenCalled();
+    const logged = log.mock.calls.flat().map((argument) =>
+      argument instanceof Error ? `${argument.message} ${String(argument.cause)}` : String(argument),
+    );
+    expect(logged.join(" ")).not.toContain("example.com");
+    expect(logged.join(" ")).not.toContain("Ama Test");
   });
 
   async function settle() {

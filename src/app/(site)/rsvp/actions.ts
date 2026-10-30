@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getSiteContent } from "@/lib/content/get";
 import { saveRsvp } from "@/lib/data/rsvp";
 import { queueRsvpConfirmation } from "@/lib/jobs/rsvp-confirmation";
+import { describeError } from "@/lib/log-error";
 import type { Answer } from "@/lib/data/types";
 import {
   answerField,
@@ -78,8 +79,9 @@ export async function submitRsvp(
       otherNames: values.otherNames || undefined,
       song: values.song || undefined,
     }));
-  } catch (err) {
-    console.error("RSVP could not be saved", err);
+  } catch (error) {
+    // Never the error itself: a query error repeats the guest's name, phone and email.
+    console.error("RSVP could not be saved:", describeError(error));
     return {
       status: "error",
       values,

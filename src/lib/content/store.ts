@@ -1,6 +1,7 @@
 import { desc, eq, and, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { siteContent } from "@/lib/db/schema";
+import { describeError } from "@/lib/log-error";
 import { contentDefaults } from "./defaults";
 import { formatIssues, sectionKeys, sectionSchemas, type SectionKey, type SiteContent } from "./schema";
 
@@ -35,7 +36,7 @@ export async function contentOrDefaults(read: () => Promise<SiteContent>): Promi
   try {
     return await read();
   } catch (error) {
-    console.error("Could not read site content; using the built-in text.", error);
+    console.error("Could not read site content; using the built-in text:", describeError(error));
     return contentDefaults;
   }
 }
