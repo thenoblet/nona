@@ -121,20 +121,20 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
   // Chrome takes the next tap as stopping the swipe and sends no click for it. The thirds are
   // buttons too, for the keyboard and screen readers, so the click a handled tap may still
   // send (or one that ends a swipe over a link) is dropped.
-  const gesture = useRef<{ x: number; y: number } | null>(null);
+  const gesture = useRef<{ pointerX: number; pointerY: number } | null>(null);
   const handledUntil = useRef(0);
   const onPointerDown = (event: PointerEvent) => {
     handledUntil.current = 0;
     // A second finger (a pinch) cancels the gesture, as does any mouse button but the main one.
-    gesture.current = event.isPrimary && event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
+    gesture.current = event.isPrimary && event.button === 0 ? { pointerX: event.clientX, pointerY: event.clientY } : null;
   };
   const onPointerUp = (event: PointerEvent) => {
     if (!event.isPrimary) return;
     const start = gesture.current;
     gesture.current = null;
     if (!start) return;
-    const across = event.clientX - start.x;
-    const down = event.clientY - start.y;
+    const across = event.clientX - start.pointerX;
+    const down = event.clientY - start.pointerY;
     // While the guest has pinched in, a sideways move is looking around the photo, not a swipe.
     const zoomedIn = (window.visualViewport?.scale ?? 1) > 1.01;
     let direction: 1 | -1 | null = null;

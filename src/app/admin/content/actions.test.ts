@@ -107,14 +107,14 @@ describe("saveSectionAction", () => {
   it("keeps the live-stream topic on its question when the answers are edited", async () => {
     let faq: unknown = contentDefaults.faq;
     contentDefaults.faq.forEach((_item, index) => {
-      faq = setAt(faq, [index, "a"], `New answer ${index + 1}.`);
+      faq = setAt(faq, [index, "answer"], `New answer ${index + 1}.`);
     });
 
     expect((await saveSectionAction("faq", idle, editorForm(faq))).status).toBe("saved");
     const saved = (await readSiteContent()).faq;
-    expect(saved.map((item) => item.a)).toEqual(contentDefaults.faq.map((_item, index) => `New answer ${index + 1}.`));
+    expect(saved.map((item) => item.answer)).toEqual(contentDefaults.faq.map((_item, index) => `New answer ${index + 1}.`));
     expect(saved.filter((item) => item.topic === "live-stream")).toEqual([
-      { q: "Can't make it in person?", a: "New answer 5.", topic: "live-stream" },
+      { question: "Can't make it in person?", answer: "New answer 5.", topic: "live-stream" },
     ]);
   });
 
@@ -141,10 +141,10 @@ describe("saveSectionAction", () => {
   });
 
   it("refuses a save made from an older version, says who saved since and when, and saves nothing", async () => {
-    const theirs = setAt(contentDefaults.faq, [0, "a"], "Their answer.");
+    const theirs = setAt(contentDefaults.faq, [0, "answer"], "Their answer.");
     expect(await saveSection("faq", theirs, "nancy@example.com")).toEqual({ ok: true, version: 1 });
 
-    const mine = setAt(contentDefaults.faq, [0, "a"], "My answer.");
+    const mine = setAt(contentDefaults.faq, [0, "answer"], "My answer.");
     const result = await saveSectionAction("faq", idle, editorForm(mine, 0));
     expect(result.status).toBe("error");
     expect(result.errors).toHaveLength(1);
@@ -152,7 +152,7 @@ describe("saveSectionAction", () => {
       /^nancy@example\.com saved a newer version at \d{2}:\d{2} on \d{1,2} [A-Z][a-z]{2}\. Reload to see it\.$/,
     );
     expect((await listVersions("faq")).map((entry) => entry.version)).toEqual([1]);
-    expect((await readSiteContent()).faq[0].a).toBe("Their answer.");
+    expect((await readSiteContent()).faq[0].answer).toBe("Their answer.");
     expect(cache.updateTag).not.toHaveBeenCalled();
 
     // From the version it now shows, the same edit saves.
@@ -160,8 +160,8 @@ describe("saveSectionAction", () => {
   });
 
   it("says \"You\" when the newer version is the couple's own, from another tab", async () => {
-    await saveSectionAction("faq", idle, editorForm(setAt(contentDefaults.faq, [0, "a"], "First tab."), 0));
-    const result = await saveSectionAction("faq", idle, editorForm(setAt(contentDefaults.faq, [0, "a"], "Second tab."), 0));
+    await saveSectionAction("faq", idle, editorForm(setAt(contentDefaults.faq, [0, "answer"], "First tab."), 0));
+    const result = await saveSectionAction("faq", idle, editorForm(setAt(contentDefaults.faq, [0, "answer"], "Second tab."), 0));
     expect(result.errors[0]).toMatch(/^You saved a newer version at \d{2}:\d{2} on \d{1,2} [A-Z][a-z]{2}\. Reload to see it\.$/);
   });
 
@@ -178,7 +178,7 @@ describe("saveSectionAction", () => {
     noVersion.set("value", JSON.stringify(contentDefaults.faq));
     expect((await saveSectionAction("faq", idle, noVersion)).status).toBe("error");
 
-    const huge = [{ q: "Long?", a: "x".repeat(256 * 1024) }];
+    const huge = [{ question: "Long?", answer: "x".repeat(256 * 1024) }];
     const tooBig = await saveSectionAction("faq", idle, editorForm(huge));
     expect(tooBig).toEqual({ status: "error", errors: [expect.stringContaining("too long")] });
 
@@ -192,9 +192,9 @@ describe("restoreVersionAction", () => {
     admin.allowed = true;
   });
 
-  const first = setAt(contentDefaults.faq, [0, "a"], "First answer.");
-  const second = setAt(contentDefaults.faq, [0, "a"], "Second answer.");
-  const third = setAt(contentDefaults.faq, [0, "a"], "Third answer.");
+  const first = setAt(contentDefaults.faq, [0, "answer"], "First answer.");
+  const second = setAt(contentDefaults.faq, [0, "answer"], "Second answer.");
+  const third = setAt(contentDefaults.faq, [0, "answer"], "Third answer.");
 
   it("saves an earlier version again as a new version", async () => {
     await saveSectionAction("faq", idle, editorForm(first, 0));
@@ -223,7 +223,7 @@ describe("restoreVersionAction", () => {
     await saveSectionAction("faq", idle, editorForm(first, 0));
     await saveSectionAction("faq", idle, editorForm(second, 1));
     await saveSectionAction("faq", idle, editorForm(third, 2));
-    await saveSection("faq", setAt(contentDefaults.faq, [0, "a"], "Nancy's fix."), "nancy@example.com");
+    await saveSection("faq", setAt(contentDefaults.faq, [0, "answer"], "Nancy's fix."), "nancy@example.com");
     cache.updateTag.mockClear();
     cache.refresh.mockClear();
 
@@ -236,7 +236,7 @@ describe("restoreVersionAction", () => {
       );
     }
     expect((await listVersions("faq")).map((entry) => entry.version)).toEqual([4, 3, 2, 1]);
-    expect((await readSiteContent()).faq[0].a).toBe("Nancy's fix.");
+    expect((await readSiteContent()).faq[0].answer).toBe("Nancy's fix.");
     expect(cache.updateTag).not.toHaveBeenCalled();
     expect(cache.refresh).not.toHaveBeenCalled();
 

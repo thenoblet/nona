@@ -14,22 +14,22 @@ export type CalendarEvent = {
 
 const DEFAULT_LENGTH_MS = 3 * 60 * 60 * 1000;
 
-export function celebrationEvent(c: Celebration, siteUrl: string): CalendarEvent {
+export function celebrationEvent(celebration: Celebration, siteUrl: string): CalendarEvent {
   return {
-    uid: `${c.id}@nobletxnancy.com`,
-    title: `${c.name} · Noblet & Nancy`,
-    date: c.date,
-    startTime: c.startTime,
-    endTime: c.endTime,
-    location: c.place,
-    description: `${c.time}\n${siteUrl}`,
+    uid: `${celebration.id}@nobletxnancy.com`,
+    title: `${celebration.name} · Noblet & Nancy`,
+    date: celebration.date,
+    startTime: celebration.startTime,
+    endTime: celebration.endTime,
+    location: celebration.place,
+    description: `${celebration.time}\n${siteUrl}`,
   };
 }
 
 /** `20261205` or `20261205T100000Z`. */
-function stamp(d: Date, dateOnly = false): string {
-  const s = d.toISOString().replace(/[-:]/g, "");
-  return dateOnly ? s.slice(0, 8) : s.slice(0, 15) + "Z";
+function stamp(moment: Date, dateOnly = false): string {
+  const compact = moment.toISOString().replace(/[-:]/g, "");
+  return dateOnly ? compact.slice(0, 8) : compact.slice(0, 15) + "Z";
 }
 
 function utc(date: string, time: string): Date {
@@ -37,40 +37,38 @@ function utc(date: string, time: string): Date {
 }
 
 /** The start and end as calendar values: dates for all-day events, UTC date-times otherwise. */
-function span(e: CalendarEvent): { allDay: boolean; start: string; end: string } {
-  if (!e.startTime) {
-    const start = utc(e.date, "00:00");
+function span(event: CalendarEvent): { allDay: boolean; start: string; end: string } {
+  if (!event.startTime) {
+    const start = utc(event.date, "00:00");
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
     return { allDay: true, start: stamp(start, true), end: stamp(end, true) };
   }
-  const start = utc(e.date, e.startTime);
-  const end = e.endTime ? utc(e.date, e.endTime) : new Date(start.getTime() + DEFAULT_LENGTH_MS);
+  const start = utc(event.date, event.startTime);
+  const end = event.endTime ? utc(event.date, event.endTime) : new Date(start.getTime() + DEFAULT_LENGTH_MS);
   return { allDay: false, start: stamp(start), end: stamp(end) };
 }
 
-function escapeText(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+function escapeText(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
 }
 
 /** Folds a line at 75 octets (not characters), continuing with a leading space. */
 function fold(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
+  const folded: string[] = [];
+  let current = "";
   let bytes = 0;
-  let limit = 75;
-  for (const ch of line) {
-    const n = Buffer.byteLength(ch, "utf8");
-    if (bytes + n > limit) {
-      out.push(cur);
-      cur = " ";
+  for (const character of line) {
+    const size = Buffer.byteLength(character, "utf8");
+    if (bytes + size > 75) {
+      folded.push(current);
+      current = " ";
       bytes = 1;
-      limit = 75;
     }
-    cur += ch;
-    bytes += n;
+    current += character;
+    bytes += size;
   }
-  out.push(cur);
-  return out;
+  folded.push(current);
+  return folded;
 }
 
 export function buildIcs(events: CalendarEvent[], now: Date = new Date()): string {
@@ -82,17 +80,17 @@ export function buildIcs(events: CalendarEvent[], now: Date = new Date()): strin
     "METHOD:PUBLISH",
     "X-WR-TIMEZONE:Africa/Accra",
   ];
-  for (const e of events) {
-    const { allDay, start, end } = span(e);
+  for (const event of events) {
+    const { allDay, start, end } = span(event);
     lines.push(
       "BEGIN:VEVENT",
-      `UID:${e.uid}`,
+      `UID:${event.uid}`,
       `DTSTAMP:${stamp(now)}`,
       allDay ? `DTSTART;VALUE=DATE:${start}` : `DTSTART:${start}`,
       allDay ? `DTEND;VALUE=DATE:${end}` : `DTEND:${end}`,
-      `SUMMARY:${escapeText(e.title)}`,
-      `LOCATION:${escapeText(e.location)}`,
-      `DESCRIPTION:${escapeText(e.description)}`,
+      `SUMMARY:${escapeText(event.title)}`,
+      `LOCATION:${escapeText(event.location)}`,
+      `DESCRIPTION:${escapeText(event.description)}`,
       "END:VEVENT",
     );
   }
@@ -100,14 +98,14 @@ export function buildIcs(events: CalendarEvent[], now: Date = new Date()): strin
   return lines.flatMap(fold).join("\r\n") + "\r\n";
 }
 
-export function googleCalendarUrl(e: CalendarEvent): string {
-  const { start, end } = span(e);
+export function googleCalendarUrl(event: CalendarEvent): string {
+  const { start, end } = span(event);
   const params = new URLSearchParams({
     action: "TEMPLATE",
-    text: e.title,
+    text: event.title,
     dates: `${start}/${end}`,
-    location: e.location,
-    details: e.description,
+    location: event.location,
+    details: event.description,
   });
   return `https://calendar.google.com/calendar/render?${params}`;
 }

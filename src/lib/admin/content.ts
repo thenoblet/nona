@@ -2,7 +2,7 @@ import type { SectionKey } from "@/lib/content/schema";
 
 // Shared by the "Site text" pages, their editor in the browser and the save actions.
 
-/** What a save or restore did. `errors` are the store's messages, e.g. `faq[0].q: Cannot be empty`. */
+/** What a save or restore did. `errors` are the store's messages, e.g. `faq[0].question: Cannot be empty`. */
 export type SaveState = { status: "idle" | "saved" | "error"; errors: string[]; version?: number };
 
 /** The editor's form posts the whole edited section as JSON, and the version it loaded. */

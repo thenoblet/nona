@@ -3,8 +3,11 @@ import type { Celebration, PartyMember, ScheduleItem } from "@/lib/content/schem
 export type { Celebration, PartyMember, ScheduleItem };
 
 /**
- * Everything the couple knows ahead of time lives here.
- * Edit the words in this file; the pages read from it.
+ * Everything the couple knows ahead of time lives here. The pages read `couple`, `wedding` and
+ * `colours` straight from this file. The rest (celebrations, venues, landmarks, story, party,
+ * travel, gifts, FAQ, live stream and schedule) is the built-in text: the site shows it until a
+ * section is saved in the admin (/admin/content), and whenever the database can't be reached.
+ * Once a section is saved there, changing it here no longer changes the site.
  * Square brackets mark details still to confirm.
  */
 
@@ -177,18 +180,18 @@ export const gifts = [
 
 export const faq = [
   {
-    q: "Can I bring a plus-one?",
-    a: "[Your plus-one policy.] If you have a question, please reach out to [contact name].",
+    question: "Can I bring a plus-one?",
+    answer: "[Your plus-one policy.] If you have a question, please reach out to [contact name].",
   },
-  { q: "Are children welcome?", a: "[Your children policy.]" },
+  { question: "Are children welcome?", answer: "[Your children policy.]" },
   {
-    q: "Is the ceremony unplugged?",
-    a: "[Phones away during the vows?] Our photographers will capture every moment, and the shared album opens right after.",
+    question: "Is the ceremony unplugged?",
+    answer: "[Phones away during the vows?] Our photographers will capture every moment, and the shared album opens right after.",
   },
-  { q: "Where do I park?", a: "[Parking details for each venue.]" },
+  { question: "Where do I park?", answer: "[Parking details for each venue.]" },
   {
-    q: "Can't make it in person?",
-    a: "Join the live stream from this page on the day. The link appears here an hour before the ceremony.",
+    question: "Can't make it in person?",
+    answer: "Join the live stream from this page on the day. The link appears here an hour before the ceremony.",
     topic: "live-stream",
   },
 ] as const;

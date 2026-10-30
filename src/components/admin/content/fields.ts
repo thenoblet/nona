@@ -152,19 +152,19 @@ export const sectionSpecs: Record<SectionKey, SectionSpec> = {
   },
   faq: {
     layout: "list",
-    legend: named("q", "Question"),
+    legend: named("question", "Question"),
     note: (item) =>
       isLiveStreamQuestion(item)
         ? "Shown only when a live stream link is set. It can't be removed: the live stream switch uses it."
         : undefined,
     fields: [
-      { path: ["q"], label: "Question", kind: "text", span: 6 },
-      { path: ["a"], label: "Answer", kind: "textarea", span: 6 },
+      { path: ["question"], label: "Question", kind: "text", span: 6 },
+      { path: ["answer"], label: "Answer", kind: "textarea", span: 6 },
     ],
     editable: {
       noun: "question",
       addLabel: "Add a question",
-      newItem: () => ({ q: "", a: "" }),
+      newItem: () => ({ question: "", answer: "" }),
       removable: (item) => !isLiveStreamQuestion(item),
     },
   },

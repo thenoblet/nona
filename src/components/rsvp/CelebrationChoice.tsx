@@ -14,14 +14,14 @@ const choices: { value: Answer; label: string; on: string; mark: string }[] = [
 const settle = "ease-[cubic-bezier(0.16,1,0.3,1)]";
 
 /** The part before the first separator: "[Start time] · please be seated early" becomes "[Start time]". */
-const lead = (s: string, sep: string) => s.split(sep)[0].trim();
+const lead = (text: string, separator: string) => text.split(separator)[0].trim();
 
 /** The place without its town: "BN 111 Katakyie St, Tepa" becomes "BN 111 Katakyie St". */
-const withoutTown = (s: string) => (s.includes(",") ? s.slice(0, s.lastIndexOf(",")).trim() : s);
+const withoutTown = (place: string) => (place.includes(",") ? place.slice(0, place.lastIndexOf(",")).trim() : place);
 
 /** "[Start time] · Assemblies of God, Victory Worship Centre": a short time and place for the card. */
-export function whenLine(c: Celebration) {
-  return `${lead(c.time, " · ")} · ${withoutTown(c.place)}`;
+export function whenLine(celebration: Celebration) {
+  return `${lead(celebration.time, " · ")} · ${withoutTown(celebration.place)}`;
 }
 
 /**
@@ -29,7 +29,7 @@ export function whenLine(c: Celebration) {
  * Each pill shows an empty circle until chosen, so it reads as tappable from the start.
  */
 export function CelebrationChoice({
-  celebration: c,
+  celebration,
   value,
   onChange,
 }: {
@@ -46,38 +46,38 @@ export function CelebrationChoice({
     >
       <div className="flex items-center gap-3.5">
         <span className="flex w-13 shrink-0 flex-col items-center leading-none">
-          <span className="text-[10px] uppercase tracking-[0.24em] text-mocha">{c.weekdayShort}</span>
-          <span className="font-serif text-[40px] font-light lining-nums">{c.day}</span>
+          <span className="text-[10px] uppercase tracking-[0.24em] text-mocha">{celebration.weekdayShort}</span>
+          <span className="font-serif text-[40px] font-light lining-nums">{celebration.day}</span>
         </span>
         <div className="flex min-w-0 flex-col gap-[3px]">
-          <span className="font-serif text-[25px] leading-[1.1] italic">{c.name}</span>
-          <span className="text-[13px] text-mocha">{whenLine(c)}</span>
+          <span className="font-serif text-[25px] leading-[1.1] italic">{celebration.name}</span>
+          <span className="text-[13px] text-mocha">{whenLine(celebration)}</span>
         </div>
       </div>
-      <div role="radiogroup" aria-label={`Will you join us for the ${c.name.toLowerCase()}?`} className="grid gap-2 sm:grid-cols-2">
-        {choices.map((o) => {
-          const on = value === o.value;
+      <div role="radiogroup" aria-label={`Will you join us for the ${celebration.name.toLowerCase()}?`} className="grid gap-2 sm:grid-cols-2">
+        {choices.map((choice) => {
+          const on = value === choice.value;
           return (
             <label
-              key={o.value}
+              key={choice.value}
               className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-full border px-4 text-sm transition-[background-color,border-color,color,box-shadow,translate] duration-200 active:translate-y-px has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ember ${
                 on
-                  ? `${o.on} font-medium shadow-[var(--shadow-seg)]`
+                  ? `${choice.on} font-medium shadow-[var(--shadow-seg)]`
                   : "border-stone bg-white text-cocoa shadow-[0_1px_2px_rgb(61_41_39/0.08)] [@media(hover:hover)]:hover:border-mocha"
               }`}
             >
               <input
                 type="radio"
-                name={answerField(c.id)}
-                value={o.value}
+                name={answerField(celebration.id)}
+                value={choice.value}
                 checked={on}
-                onChange={() => onChange(o.value)}
+                onChange={() => onChange(choice.value)}
                 className="sr-only"
               />
               <span
                 aria-hidden
                 className={`flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${
-                  on ? o.mark : "border-stone bg-white"
+                  on ? choice.mark : "border-stone bg-white"
                 }`}
               >
                 <Icon
@@ -87,7 +87,7 @@ export function CelebrationChoice({
                   className={`transition-transform duration-300 ${settle} ${on ? "scale-100" : "scale-0"}`}
                 />
               </span>
-              {o.label}
+              {choice.label}
             </label>
           );
         })}

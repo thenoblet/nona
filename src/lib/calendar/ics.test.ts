@@ -19,7 +19,7 @@ const base: Celebration = {
 };
 const site = "https://example.com";
 const now = new Date("2026-10-29T12:30:45Z");
-const lines = (s: string) => s.split("\r\n");
+const lines = (ics: string) => ics.split("\r\n");
 
 describe("celebrationEvent", () => {
   it("maps a celebration to an event", () => {
@@ -38,13 +38,13 @@ describe("celebrationEvent", () => {
 describe("buildIcs", () => {
   it("writes an all-day event when there is no start time", () => {
     const ics = buildIcs([celebrationEvent(base, site)], now);
-    const l = lines(ics);
-    expect(l[0]).toBe("BEGIN:VCALENDAR");
-    expect(l).toContain("X-WR-TIMEZONE:Africa/Accra");
-    expect(l).toContain("DTSTART;VALUE=DATE:20261205");
-    expect(l).toContain("DTEND;VALUE=DATE:20261206");
-    expect(l).toContain("DTSTAMP:20261029T123045Z");
-    expect(l).toContain("UID:ceremony@nobletxnancy.com");
+    const written = lines(ics);
+    expect(written[0]).toBe("BEGIN:VCALENDAR");
+    expect(written).toContain("X-WR-TIMEZONE:Africa/Accra");
+    expect(written).toContain("DTSTART;VALUE=DATE:20261205");
+    expect(written).toContain("DTEND;VALUE=DATE:20261206");
+    expect(written).toContain("DTSTAMP:20261029T123045Z");
+    expect(written).toContain("UID:ceremony@nobletxnancy.com");
   });
 
   it("uses UTC times and defaults the end to three hours later", () => {
@@ -72,8 +72,8 @@ describe("buildIcs", () => {
   });
 
   it("escapes commas, semicolons, backslashes and newlines", () => {
-    const e = { ...celebrationEvent(base, site), description: "a,b;c\\d\ne" };
-    expect(buildIcs([e], now)).toContain("DESCRIPTION:a\\,b\\;c\\\\d\\ne\r\n");
+    const event = { ...celebrationEvent(base, site), description: "a,b;c\\d\ne" };
+    expect(buildIcs([event], now)).toContain("DESCRIPTION:a\\,b\\;c\\\\d\\ne\r\n");
   });
 });
 

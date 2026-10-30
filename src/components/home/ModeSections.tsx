@@ -25,7 +25,7 @@ function Perks() {
 /** Wedding weekend: the album, straight under the hero, with the newest uploads. */
 export async function LiveAlbum() {
   const [recent, stats] = await Promise.all([listMedia(), mediaStats()]);
-  const tiles = recent.filter((m) => m.src).slice(0, 5);
+  const tiles = recent.filter((item) => item.src).slice(0, 5);
   const ago = ["just now", "2 min ago", "5 min ago", "9 min ago", "12 min ago"];
   return (
     <section id="album" className="bg-tray px-5 py-20 sm:px-6 sm:py-26">
@@ -58,17 +58,17 @@ export async function LiveAlbum() {
             <span className="text-[11px] uppercase tracking-[0.2em] text-mocha">{stats.today} moments so far</span>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:gap-2.5">
-            {tiles.map((m, i) => (
-              <figure key={m.id} className="relative m-0 aspect-square overflow-hidden rounded-sm bg-tile">
-                <MediaImage item={m} sizes="(min-width: 1024px) 180px, 30vw" />
-                {m.kind === "video" ? (
+            {tiles.map((item, index) => (
+              <figure key={item.id} className="relative m-0 aspect-square overflow-hidden rounded-sm bg-tile">
+                <MediaImage item={item} sizes="(min-width: 1024px) 180px, 30vw" />
+                {item.kind === "video" ? (
                   <span aria-hidden className="absolute top-1/2 left-1/2 flex size-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/92 text-cocoa">
                     <PlayGlyph size={13} />
                   </span>
                 ) : null}
                 <figcaption className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-full bg-white/94 px-2.5 py-1 text-[11px] tracking-wide">
-                  {i === 0 ? <span className="live-dot !size-1.5" aria-hidden /> : null}
-                  {ago[i]}
+                  {index === 0 ? <span className="live-dot !size-1.5" aria-hidden /> : null}
+                  {ago[index]}
                 </figcaption>
               </figure>
             ))}
@@ -185,14 +185,14 @@ export async function WishesWall() {
           <SectionHeading eyebrow="Our guestbook" title="Your wishes" lead="Words we'll be reading for years to come." />
         </Reveal>
         <div className="columns-1 gap-7 sm:columns-2 lg:columns-3">
-          {wishes.map((w, i) => (
-            <div key={w.id} className="mb-7 break-inside-avoid">
-              {w.kind === "voice" ? (
-                <VoiceWish wish={w} index={i} />
-              ) : w.kind === "video" ? (
-                <VideoWish wish={w} index={i} />
+          {wishes.map((wish, index) => (
+            <div key={wish.id} className="mb-7 break-inside-avoid">
+              {wish.kind === "voice" ? (
+                <VoiceWish wish={wish} index={index} />
+              ) : wish.kind === "video" ? (
+                <VideoWish wish={wish} index={index} />
               ) : (
-                <TextWish wish={w} index={i} />
+                <TextWish wish={wish} index={index} />
               )}
             </div>
           ))}

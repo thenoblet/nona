@@ -1,13 +1,13 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { z } from "zod";
+import * as zod from "zod";
 import { requireAdmin } from "@/lib/admin/access";
 import { keepBoth, keepReply, REPLY_NOT_FOUND, type KeepResult } from "@/lib/data/rsvp";
 
 // Reached by a direct POST as well as from the page, so each action checks the couple first.
-const replyId = z.uuid();
-const listedReplyIds = z.array(z.uuid()).max(50);
+const replyId = zod.uuid();
+const listedReplyIds = zod.array(zod.uuid()).max(50);
 
 /**
  * "Keep this one": the replies the page showed flagged against this one (`expectedOtherIds`) move

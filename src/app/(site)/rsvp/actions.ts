@@ -1,7 +1,7 @@
 "use server";
 
 import { after } from "next/server";
-import { z } from "zod";
+import * as zod from "zod";
 import { getSiteContent } from "@/lib/content/get";
 import { saveRsvp } from "@/lib/data/rsvp";
 import { queueRsvpConfirmation } from "@/lib/jobs/rsvp-confirmation";
@@ -17,13 +17,13 @@ import {
 
 /** Trimmed text from the form, capped so nobody can post a novel. */
 function text(form: FormData, key: string, max = 300) {
-  const v = form.get(key);
-  return typeof v === "string" ? v.trim().slice(0, max) : "";
+  const value = form.get(key);
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
-function oneOf<T extends string>(value: string, allowed: readonly T[]): T {
+function oneOf<TValue extends string>(value: string, allowed: readonly TValue[]): TValue {
   return (allowed as readonly string[]).includes(value)
-    ? (value as T)
+    ? (value as TValue)
     : allowed[0];
 }
 
@@ -33,9 +33,9 @@ export async function submitRsvp(
 ): Promise<RsvpState> {
   const answers: RsvpValues["answers"] = {};
   const { celebrations } = await getSiteContent();
-  for (const c of celebrations) {
-    const a = form.get(answerField(c.id));
-    if (a === "yes" || a === "no") answers[c.id] = a as Answer;
+  for (const celebration of celebrations) {
+    const answer = form.get(answerField(celebration.id));
+    if (answer === "yes" || answer === "no") answers[celebration.id] = answer as Answer;
   }
 
   const values: RsvpValues = {
@@ -58,7 +58,7 @@ export async function submitRsvp(
   } else if (values.phone.replace(/\D/g, "").length < 7) {
     errors.phone = "That number looks a little short. Could you check it?";
   }
-  if (values.email && !z.email().safeParse(values.email).success) {
+  if (values.email && !zod.email().safeParse(values.email).success) {
     errors.email = "That email doesn't look right. Could you check it?";
   }
   if (Object.keys(answers).length === 0) {

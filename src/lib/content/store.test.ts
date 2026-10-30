@@ -13,8 +13,8 @@ beforeEach(async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
-const faqA = [{ q: "Parking?", a: "Behind the church." }];
-const faqB = [{ q: "Dress code?", a: "Formal." }];
+const faqA = [{ question: "Parking?", answer: "Behind the church." }];
+const faqB = [{ question: "Dress code?", answer: "Formal." }];
 
 describe("defaults", () => {
   it.each(sectionKeys)("%s passes its schema", (key) => {
@@ -22,7 +22,7 @@ describe("defaults", () => {
   });
 
   it("dates the celebrations with no times", () => {
-    expect(contentDefaults.celebrations.map((c) => [c.date, c.startTime, c.endTime])).toEqual([
+    expect(contentDefaults.celebrations.map((celebration) => [celebration.date, celebration.startTime, celebration.endTime])).toEqual([
       ["2026-12-05", null, null],
       ["2026-12-05", null, null],
       ["2026-12-06", null, null],
@@ -55,7 +55,7 @@ describe("versions", () => {
   it("numbers saves and lists newest first", async () => {
     await saveSection("faq", faqA, "test");
     expect(await saveSection("faq", faqB, "test")).toEqual({ ok: true, version: 2 });
-    expect((await listVersions("faq")).map((v) => v.version)).toEqual([2, 1]);
+    expect((await listVersions("faq")).map((entry) => entry.version)).toEqual([2, 1]);
   });
 
   it("restores an earlier version as a new one", async () => {
@@ -132,7 +132,7 @@ describe("validation", () => {
   });
 
   it("rejects celebrations that repeat an id", async () => {
-    const value = celebrations().map((c) => ({ ...c, id: "ceremony" }));
+    const value = celebrations().map((celebration) => ({ ...celebration, id: "ceremony" }));
     await expectRejected("celebrations", value, "celebrations: Keep the white wedding, reception and thanksgiving, each once");
   });
 
@@ -149,7 +149,7 @@ describe("validation", () => {
   it("rejects a schedule with no Sunday item", async () => {
     await expectRejected(
       "schedule",
-      contentDefaults.schedule.filter((i) => i.day === "sat"),
+      contentDefaults.schedule.filter((item) => item.day === "sat"),
       "Sunday",
     );
   });
@@ -162,7 +162,7 @@ describe("validation", () => {
   it("keeps topic on the live-stream FAQ item", async () => {
     await saveSection("faq", contentDefaults.faq, "test");
     const stored = (await readSiteContent()).faq;
-    expect(stored.filter((f) => f.topic === "live-stream")).toHaveLength(1);
+    expect(stored.filter((item) => item.topic === "live-stream")).toHaveLength(1);
   });
 });
 

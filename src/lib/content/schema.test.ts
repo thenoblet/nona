@@ -37,11 +37,13 @@ describe("one-line fields", () => {
     party[0].role = "Maid\nof honour";
     expect(problems("party", party)).toEqual(["party[0].role: Use one line"]);
 
-    expect(problems("faq", [{ q: "Parking?\nWhere?", a: "Behind the church." }])).toEqual(["faq[0].q: Use one line"]);
+    expect(problems("faq", [{ question: "Parking?\nWhere?", answer: "Behind the church." }])).toEqual([
+      "faq[0].question: Use one line",
+    ]);
   });
 
   it("leave answers and story texts free to run over several lines", () => {
-    expect(problems("faq", [{ q: "Parking?", a: "Behind the church.\nOr at the school." }])).toEqual([]);
+    expect(problems("faq", [{ question: "Parking?", answer: "Behind the church.\nOr at the school." }])).toEqual([]);
     const story = structuredClone(contentDefaults.story);
     story.met.text = "First year.\nShe was the most collected.";
     story.asked.quote = "Will you\nmarry me?";

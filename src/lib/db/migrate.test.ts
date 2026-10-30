@@ -10,7 +10,7 @@ describe("runMigrations", () => {
   it("creates the tables", async () => {
     await runMigrations();
     const rows = await sql`select table_name from information_schema.tables where table_schema = 'public'`;
-    const names = rows.map((r) => r.table_name);
+    const names = rows.map((row) => row.table_name);
     expect(names).toContain("rsvps");
     expect(names).toContain("site_content");
   });

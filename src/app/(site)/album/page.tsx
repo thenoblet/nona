@@ -108,8 +108,8 @@ function GridSkeleton() {
       <div className="h-11 w-3/4 rounded-full bg-tray" />
       <div className="mt-3.5 h-13 rounded-full bg-tray sm:max-w-md" />
       <div className="mt-17 grid grid-cols-3 gap-1.5 md:grid-cols-4 lg:grid-cols-5">
-        {Array.from({ length: 9 }, (_, i) => (
-          <div key={i} className="aspect-square animate-pulse rounded-[2px] bg-tile" />
+        {Array.from({ length: 9 }, (_tile, index) => (
+          <div key={index} className="aspect-square animate-pulse rounded-[2px] bg-tile" />
         ))}
       </div>
     </div>

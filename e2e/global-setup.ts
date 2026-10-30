@@ -9,6 +9,6 @@ export default async function globalSetup(): Promise<void> {
   Object.assign(process.env, TEST_DB_ENV);
   await runMigrations();
   await resetDb();
-  const seeded = await saveSection("faq", [...contentDefaults.faq, { q: "E2E unique question", a: "Yes." }], "e2e");
+  const seeded = await saveSection("faq", [...contentDefaults.faq, { question: "E2E unique question", answer: "Yes." }], "e2e");
   if (!seeded.ok) throw new Error(`Could not seed the e2e content: ${seeded.errors.join("; ")}`);
 }

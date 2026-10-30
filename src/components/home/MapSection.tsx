@@ -5,7 +5,8 @@ import { CopyButton } from "./CopyButton";
 import { VenueMap, type MapPlace } from "./VenueMap";
 
 type Place = {
-  n: number;
+  /** The number on its pin and in the list. */
+  number: number;
   eyebrow: string;
   tag: string;
   name: string;
@@ -18,8 +19,8 @@ type Place = {
 
 function placesFor(venues: SiteContent["venues"]): Place[] {
   return [
-    { n: 1, eyebrow: "White wedding · Thanksgiving", tag: "Church", ...venues.church },
-    { n: 2, eyebrow: "Reception", tag: "Reception", ...venues.reception },
+    { number: 1, eyebrow: "White wedding · Thanksgiving", tag: "Church", ...venues.church },
+    { number: 2, eyebrow: "Reception", tag: "Reception", ...venues.reception },
   ];
 }
 
@@ -27,7 +28,7 @@ function placesFor(venues: SiteContent["venues"]): Place[] {
 function pinsFor(places: Place[]): MapPlace[] {
   return places.flatMap((place) =>
     place.coords
-      ? [{ n: place.n, label: place.tag, name: place.name, ...place.coords, directionsUrl: place.mapsUrl }]
+      ? [{ number: place.number, label: place.tag, name: place.name, ...place.coords, directionsUrl: place.mapsUrl }]
       : [],
   );
 }
@@ -40,7 +41,7 @@ function Place({ place }: { place: Place }) {
         aria-hidden
         className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-cocoa text-sm font-medium text-white shadow-[0_0_0_5px_var(--color-halo)]"
       >
-        {place.n}
+        {place.number}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span className="text-[11px] uppercase tracking-[0.24em] text-mocha">{place.eyebrow}</span>
@@ -86,7 +87,7 @@ export function MapSection({
         <div className="flex flex-col-reverse gap-10 lg:flex-row lg:items-center lg:gap-16">
           <div className="min-w-0 flex-1 border-t border-hairline lg:basis-[380px]">
             {places.map((place) => (
-              <Place key={place.n} place={place} />
+              <Place key={place.number} place={place} />
             ))}
           </div>
           <Reveal className="min-w-0 flex-[1.4] rounded-[var(--radius-paper)] bg-tray p-4 sm:p-7 lg:basis-[520px]">

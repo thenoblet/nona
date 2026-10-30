@@ -94,9 +94,9 @@ async function TableCard({ searchParams }: Pick<PageProps<"/print/table-card">, 
           </div>
 
           <ol className="m-0 grid w-full list-none grid-cols-3 gap-12 p-0">
-            {steps.map((step, i) => (
+            {steps.map((step, index) => (
               <li key={step} className="flex flex-col items-center gap-6">
-                <span className="font-serif text-[calc(var(--spacing)*30)] leading-none text-ember">{i + 1}</span>
+                <span className="font-serif text-[calc(var(--spacing)*30)] leading-none text-ember">{index + 1}</span>
                 <span className="text-[calc(var(--spacing)*14)] leading-[1.4]">{step}</span>
               </li>
             ))}

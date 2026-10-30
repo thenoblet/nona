@@ -47,7 +47,7 @@ vi.mock("@/lib/data/rsvp", async (importOriginal) => {
 import { submitRsvp } from "./actions";
 
 function form(extra: Record<string, string> = {}) {
-  const f = new FormData();
+  const data = new FormData();
   const fields = {
     fullName: "Ama Test",
     phone: "024 000 0000",
@@ -55,8 +55,8 @@ function form(extra: Record<string, string> = {}) {
     [`answer-${contentDefaults.celebrations[0].id}`]: "yes",
     ...extra,
   };
-  for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  return f;
+  for (const [key, value] of Object.entries(fields)) data.set(key, value);
+  return data;
 }
 
 async function rows() {

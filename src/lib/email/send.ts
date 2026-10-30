@@ -16,7 +16,7 @@ export type EmailMessage = {
 export function replyToAddresses(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
-    .map((a) => a.trim())
+    .map((address) => address.trim())
     .filter(Boolean);
 }
 

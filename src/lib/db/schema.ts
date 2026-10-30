@@ -21,9 +21,9 @@ export const rsvps = pgTable(
     supersededBy: uuid("superseded_by"),
     emailStatus: text("email_status").$type<"none" | "queued" | "sent" | "failed">().notNull().default("none"),
   },
-  (t) => [
-    index("rsvps_name_key_current_idx").on(t.nameKey).where(sql`${t.supersededAt} is null`),
-    index("rsvps_email_key_idx").on(t.emailKey),
+  (table) => [
+    index("rsvps_name_key_current_idx").on(table.nameKey).where(sql`${table.supersededAt} is null`),
+    index("rsvps_email_key_idx").on(table.emailKey),
   ],
 );
 
@@ -58,5 +58,5 @@ export const siteContent = pgTable(
     savedAt: timestamp("saved_at", { withTimezone: true }).notNull().defaultNow(),
     savedBy: text("saved_by").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.key, t.version] })],
+  (table) => [primaryKey({ columns: [table.key, table.version] })],
 );

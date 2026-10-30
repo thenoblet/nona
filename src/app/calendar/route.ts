@@ -7,10 +7,10 @@ export async function GET(request: Request) {
   // Read at request time so the build never needs the database.
   await connection();
   const { celebrations } = await getSiteContent();
-  const wanted = new Set((new URL(request.url).searchParams.get("events") ?? "").split(",").map((s) => s.trim()));
-  const chosen = celebrations.filter((c) => wanted.has(c.id));
+  const wanted = new Set((new URL(request.url).searchParams.get("events") ?? "").split(",").map((id) => id.trim()));
+  const chosen = celebrations.filter((celebration) => wanted.has(celebration.id));
   const siteUrl = (process.env.SITE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-  const body = buildIcs((chosen.length ? chosen : celebrations).map((c) => celebrationEvent(c, siteUrl)));
+  const body = buildIcs((chosen.length ? chosen : celebrations).map((celebration) => celebrationEvent(celebration, siteUrl)));
   return new Response(body, {
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",

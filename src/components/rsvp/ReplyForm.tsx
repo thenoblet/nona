@@ -47,10 +47,10 @@ export function ReplyForm({
     first?.focus();
   }, [state]);
 
-  function onSubmit(e: FormEvent<HTMLFormElement>) {
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
     // Submit without React's automatic form reset, so nothing typed is lost.
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
     startTransition(() => dispatch(data));
   }
 
@@ -110,8 +110,8 @@ export function ReplyForm({
         </Field>
         <Field id="partySize" label="How many in your party?">
           <Select id="partySize" name="partySize" defaultValue={values.partySize}>
-            {partySizes.map((p) => (
-              <option key={p}>{p}</option>
+            {partySizes.map((partySize) => (
+              <option key={partySize}>{partySize}</option>
             ))}
           </Select>
         </Field>
@@ -133,12 +133,12 @@ export function ReplyForm({
               {errors.answers}
             </p>
           ) : null}
-          {celebrations.map((c) => (
+          {celebrations.map((celebration) => (
             <CelebrationChoice
-              key={c.id}
-              celebration={c}
-              value={answers[c.id]}
-              onChange={(v) => onAnswer(c.id, v)}
+              key={celebration.id}
+              celebration={celebration}
+              value={answers[celebration.id]}
+              onChange={(answer) => onAnswer(celebration.id, answer)}
             />
           ))}
         </fieldset>

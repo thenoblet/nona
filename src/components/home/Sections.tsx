@@ -29,13 +29,13 @@ export function Colours() {
           </TextLink>
         </div>
         <div className="grid flex-1 grid-cols-4 gap-3 sm:gap-4.5">
-          {colours.map((c) => (
-            <div key={c.name} className="flex flex-col items-center gap-3">
+          {colours.map((colour) => (
+            <div key={colour.name} className="flex flex-col items-center gap-3">
               <div
                 className="aspect-[1/1.5] w-full rounded-full transition-transform duration-400 [@media(hover:hover)]:hover:-translate-y-2"
-                style={{ background: c.hex, border: c.hex === "#3D2927" || c.hex === "#6A524C" ? "1px solid rgb(255 255 255 / 0.45)" : undefined }}
+                style={{ background: colour.hex, border: colour.hex === "#3D2927" || colour.hex === "#6A524C" ? "1px solid rgb(255 255 255 / 0.45)" : undefined }}
               />
-              <span className="text-center font-serif text-base text-linen italic sm:text-xl">{c.name}</span>
+              <span className="text-center font-serif text-base text-linen italic sm:text-xl">{colour.name}</span>
             </div>
           ))}
         </div>
@@ -240,12 +240,12 @@ export function Faq({ faq }: { faq: FaqItem[] }) {
         </div>
         <div className="flex flex-col border-t border-hairline">
           {faq.map((item, index) => (
-            <details key={item.q} open={index === 0} className="group border-b border-hairline py-5.5">
+            <details key={item.question} open={index === 0} className="group border-b border-hairline py-5.5">
               <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 font-serif text-[22px] transition-colors hover:text-ember-ink sm:text-[26px] [&::-webkit-details-marker]:hidden">
-                {item.q}
+                {item.question}
                 <Icon name="chevron" size={20} strokeWidth={1.6} className="shrink-0 text-ember transition-transform group-open:rotate-180" />
               </summary>
-              <p className="mt-3 mb-0 text-base leading-[1.75] font-light text-mocha">{item.a}</p>
+              <p className="mt-3 mb-0 text-base leading-[1.75] font-light text-mocha">{item.answer}</p>
             </details>
           ))}
         </div>

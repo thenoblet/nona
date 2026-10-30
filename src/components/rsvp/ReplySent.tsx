@@ -27,7 +27,7 @@ export function ReplySent({
   const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const photo = photos.daisiesWrapped;
-  const accepted = celebrations.filter((c) => values.answers[c.id] === "yes");
+  const accepted = celebrations.filter((celebration) => values.answers[celebration.id] === "yes");
 
   // The form was long; bring the thank-you into view and announce it.
   useEffect(() => {
@@ -75,22 +75,22 @@ export function ReplySent({
         className="mt-1 flex animate-rise flex-col self-stretch rounded-[var(--radius-paper)] bg-tray px-4.5 py-1.5"
         style={{ animationDelay: "450ms" }}
       >
-        {celebrations.map((c) => {
-          const a = values.answers[c.id];
+        {celebrations.map((celebration) => {
+          const answer = values.answers[celebration.id];
           return (
             <li
-              key={c.id}
+              key={celebration.id}
               className="flex items-center justify-between gap-3 border-b border-hairline py-3 text-left last:border-b-0"
             >
-              <span className="font-serif text-xl italic">{c.name}</span>
+              <span className="font-serif text-xl italic">{celebration.name}</span>
               <span
                 className={`rounded-full px-3 py-1.5 text-[11px] whitespace-nowrap uppercase tracking-[0.16em] ${
-                  a === "yes"
+                  answer === "yes"
                     ? "bg-white text-cocoa shadow-[0_1px_2px_rgb(61_41_39/0.1)]"
                     : "border border-stone text-mocha"
                 }`}
               >
-                {a ? statusLabel[a] : "No answer"}
+                {answer ? statusLabel[answer] : "No answer"}
               </span>
             </li>
           );
@@ -100,7 +100,7 @@ export function ReplySent({
       {accepted.length > 0 ? (
         <>
           <PillAnchor
-            href={`/calendar?events=${accepted.map((c) => c.id).join(",")}`}
+            href={`/calendar?events=${accepted.map((celebration) => celebration.id).join(",")}`}
             download
             variant="cocoa"
             className="mt-2.5"
@@ -111,15 +111,15 @@ export function ReplySent({
             </span>
           </PillAnchor>
           <ul aria-label="Google Calendar links" className="flex flex-wrap items-center justify-center gap-x-5.5">
-            {accepted.map((c) => (
-              <li key={c.id}>
+            {accepted.map((celebration) => (
+              <li key={celebration.id}>
                 <a
-                  href={googleCalendarUrl(celebrationEvent(c, siteUrl))}
+                  href={googleCalendarUrl(celebrationEvent(celebration, siteUrl))}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="ember-link inline-flex min-h-11 items-center py-3 text-xs uppercase tracking-[0.18em] text-cocoa no-underline"
                 >
-                  {c.name} on Google Calendar
+                  {celebration.name} on Google Calendar
                 </a>
               </li>
             ))}
