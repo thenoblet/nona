@@ -5,10 +5,13 @@ import { renderRsvpConfirmation } from "./rsvp-confirmation";
 
 const [first, second, third] = contentDefaults.celebrations;
 
-function record(answers: RsvpRecord["answers"]): RsvpRecord {
+function record(
+  answers: RsvpRecord["answers"],
+  fullName = "Ama Test",
+): RsvpRecord {
   return {
     id: "r1",
-    fullName: "Ama Test",
+    fullName,
     phone: "024 000 0000",
     email: "ama@example.com",
     partySize: "Just me",
@@ -57,5 +60,31 @@ describe("renderRsvpConfirmation", () => {
       "https://example.com",
     );
     expect(none.ics).toBeNull();
+  });
+
+  it.each(["Ama Owusu", "Akosua Ɔfori"])("greets %s by name", (name) => {
+    const mail = renderRsvpConfirmation(
+      record({ [first.id]: "yes" }, name),
+      contentDefaults,
+      "https://example.com",
+    );
+    expect(mail.text).toContain(`Dear ${name},`);
+    expect(mail.html).toContain(`Dear ${name},`);
+  });
+
+  it.each([
+    "see http://evil.test",
+    "visit www.evil.test",
+    "a@evil.test",
+    "A".repeat(61),
+  ])("greets a guest whose name is %s as a guest", (name) => {
+    const mail = renderRsvpConfirmation(
+      record({ [first.id]: "yes" }, name),
+      contentDefaults,
+      "https://example.com",
+    );
+    expect(mail.text).toContain("Dear guest,");
+    expect(mail.html).toContain("Dear guest,");
+    expect(mail.text).not.toContain(name);
   });
 });

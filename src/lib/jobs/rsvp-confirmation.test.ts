@@ -4,13 +4,30 @@ import { contentDefaults } from "@/lib/content/defaults";
 import { resetDb } from "../../../test/db";
 
 const send = vi.hoisted(() => ({ fn: vi.fn() }));
-vi.mock("@/lib/email/send", () => ({ sendEmail: (m: unknown) => send.fn(m) }));
+vi.mock("@/lib/email/send", () => ({
+  sendEmail: (message: unknown) => send.fn(message),
+}));
 vi.mock("@/lib/content/store", async () => {
   const { contentDefaults } = await import("@/lib/content/defaults");
   return { readSiteContent: async () => contentDefaults };
 });
 
-import { handleRsvpConfirmation } from "./rsvp-confirmation";
+import {
+  handleRsvpConfirmation,
+  queueRsvpConfirmation,
+} from "./rsvp-confirmation";
+
+const queue = vi.hoisted(() => ({ send: vi.fn(), fail: false }));
+vi.mock("./boss", () => ({
+  QUEUES: { rsvpConfirmation: "email-rsvp-confirmation" },
+  getBoss: async () => ({
+    send: async (...args: unknown[]) => {
+      if (queue.fail) throw new Error("queue is down for ama@example.com");
+      queue.send(...args);
+      return "job";
+    },
+  }),
+}));
 
 const input = {
   fullName: "Ama Test",
@@ -34,11 +51,11 @@ describe("handleRsvpConfirmation", () => {
   });
 
   it("sends to the reply's email and marks it sent", async () => {
-    const r = await queued();
-    await handleRsvpConfirmation(r.id, { retryCount: 0, retryLimit: 5 });
+    const reply = await queued();
+    await handleRsvpConfirmation(reply.id, { retryCount: 0, retryLimit: 5 });
     expect(send.fn).toHaveBeenCalledOnce();
     expect(send.fn.mock.calls[0][0]).toMatchObject({ to: "ama@example.com" });
-    expect((await getRsvp(r.id))?.emailStatus).toBe("sent");
+    expect((await getRsvp(reply.id))?.emailStatus).toBe("sent");
   });
 
   it("skips a superseded reply", async () => {
@@ -49,26 +66,63 @@ describe("handleRsvpConfirmation", () => {
   });
 
   it("skips a reply without an email", async () => {
-    const r = await queued({ email: undefined });
-    await handleRsvpConfirmation(r.id, { retryCount: 0, retryLimit: 5 });
+    const reply = await queued({ email: undefined });
+    await handleRsvpConfirmation(reply.id, { retryCount: 0, retryLimit: 5 });
     expect(send.fn).not.toHaveBeenCalled();
   });
 
   it("rethrows a failure and stays queued while retries remain", async () => {
-    const r = await queued();
+    const reply = await queued();
     send.fn.mockRejectedValue(new Error("provider down"));
     await expect(
-      handleRsvpConfirmation(r.id, { retryCount: 1, retryLimit: 5 }),
+      handleRsvpConfirmation(reply.id, { retryCount: 1, retryLimit: 5 }),
     ).rejects.toThrow("provider down");
-    expect((await getRsvp(r.id))?.emailStatus).toBe("queued");
+    expect((await getRsvp(reply.id))?.emailStatus).toBe("queued");
   });
 
   it("marks failed on the last attempt and still rethrows", async () => {
-    const r = await queued();
+    const reply = await queued();
     send.fn.mockRejectedValue(new Error("provider down"));
     await expect(
-      handleRsvpConfirmation(r.id, { retryCount: 5, retryLimit: 5 }),
+      handleRsvpConfirmation(reply.id, { retryCount: 5, retryLimit: 5 }),
     ).rejects.toThrow("provider down");
-    expect((await getRsvp(r.id))?.emailStatus).toBe("failed");
+    expect((await getRsvp(reply.id))?.emailStatus).toBe("failed");
+  });
+});
+
+describe("queueRsvpConfirmation", () => {
+  beforeEach(async () => {
+    queue.send.mockReset();
+    queue.fail = false;
+    await resetDb();
+  });
+
+  it("queues exactly three jobs when five replies share one email at once", async () => {
+    const ids: string[] = [];
+    for (let index = 0; index < 5; index++) {
+      const { record } = await saveRsvp({
+        ...input,
+        fullName: `Guest ${index}`,
+        phone: `024 000 000${index}`,
+      });
+      ids.push(record.id);
+    }
+    await Promise.all(ids.map((id) => queueRsvpConfirmation(id)));
+    expect(queue.send).toHaveBeenCalledTimes(3);
+    const statuses = await Promise.all(
+      ids.map(async (id) => (await getRsvp(id))?.emailStatus),
+    );
+    expect(statuses.filter((status) => status === "queued")).toHaveLength(3);
+    expect(statuses.filter((status) => status === "none")).toHaveLength(2);
+  });
+
+  it("leaves the reply at none when the job cannot be sent, and logs no address", async () => {
+    queue.fail = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reply = await saveRsvp(input).then((saved) => saved.record);
+    await queueRsvpConfirmation(reply.id);
+    expect((await getRsvp(reply.id))?.emailStatus).toBe("none");
+    expect(JSON.stringify(log.mock.calls)).not.toContain("example.com");
+    log.mockRestore();
   });
 });

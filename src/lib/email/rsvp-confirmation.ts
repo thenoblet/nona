@@ -2,35 +2,52 @@ import type { SiteContent } from "@/lib/content/schema";
 import { buildIcs, celebrationEvent } from "@/lib/calendar/ics";
 import type { RsvpRecord } from "@/lib/data/types";
 
-const escapeHtml = (s: string) =>
-  s
+const escapeHtml = (value: string) =>
+  value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
+/** Only a plain name is echoed back: the address is unverified, so a link must not ride along. */
+function greetingName(fullName: string): string {
+  const plain =
+    fullName.length <= 60 &&
+    /^[\p{L}\p{M} '.-]+$/u.test(fullName) &&
+    !/www\./i.test(fullName);
+  return plain ? fullName : "guest";
+}
+
 export function renderRsvpConfirmation(
-  r: RsvpRecord,
+  rsvp: RsvpRecord,
   content: SiteContent,
   siteUrl: string,
 ): { subject: string; text: string; html: string; ics: string | null } {
-  const replied = content.celebrations.filter((c) => r.answers[c.id]);
-  const accepted = replied.filter((c) => r.answers[c.id] === "yes");
+  const greeting = `Dear ${greetingName(rsvp.fullName)}`;
+  const replied = content.celebrations.filter(
+    (celebration) => rsvp.answers[celebration.id],
+  );
+  const accepted = replied.filter(
+    (celebration) => rsvp.answers[celebration.id] === "yes",
+  );
   const link = `${siteUrl}/rsvp`;
   const change =
     "Need to change something? Send a new reply with the same name and phone or email.";
   const signOff = "With love, Noblet & Nancy";
-  const when = (c: (typeof replied)[number]) =>
-    `${c.weekday} ${Number(c.day)} ${c.month}, ${c.time}`;
-  const status = (c: (typeof replied)[number]) =>
-    r.answers[c.id] === "yes" ? "Attending" : "Not attending";
+  const when = (celebration: (typeof replied)[number]) =>
+    `${celebration.weekday} ${Number(celebration.day)} ${celebration.month}, ${celebration.time}`;
+  const status = (celebration: (typeof replied)[number]) =>
+    rsvp.answers[celebration.id] === "yes" ? "Attending" : "Not attending";
 
   const text = [
-    `Dear ${r.fullName},`,
+    `${greeting},`,
     "",
     "Thank you for your reply. Here is what we have for you:",
     "",
-    ...replied.map((c) => `${c.name}: ${status(c)}\n${when(c)}\n${c.place}\n`),
+    ...replied.map(
+      (celebration) =>
+        `${celebration.name}: ${status(celebration)}\n${when(celebration)}\n${celebration.place}\n`,
+    ),
     `You can see the details again at ${link}`,
     "",
     change,
@@ -39,12 +56,12 @@ export function renderRsvpConfirmation(
   ].join("\n");
 
   const html = `<div style="font-family:Georgia,serif;color:#3b2a20;line-height:1.5">
-<p>Dear ${escapeHtml(r.fullName)},</p>
+<p>${escapeHtml(greeting)},</p>
 <p>Thank you for your reply. Here is what we have for you:</p>
 ${replied
   .map(
-    (c) =>
-      `<p><strong>${escapeHtml(c.name)}: ${status(c)}</strong><br>${escapeHtml(when(c))}<br>${escapeHtml(c.place)}</p>`,
+    (celebration) =>
+      `<p><strong>${escapeHtml(celebration.name)}: ${status(celebration)}</strong><br>${escapeHtml(when(celebration))}<br>${escapeHtml(celebration.place)}</p>`,
   )
   .join("\n")}
 <p><a href="${escapeHtml(link)}">See the details again</a></p>
@@ -54,7 +71,9 @@ ${replied
 
   const ics =
     accepted.length > 0
-      ? buildIcs(accepted.map((c) => celebrationEvent(c, siteUrl)))
+      ? buildIcs(
+          accepted.map((celebration) => celebrationEvent(celebration, siteUrl)),
+        )
       : null;
 
   return { subject: "Your reply to Noblet & Nancy", text, html, ics };

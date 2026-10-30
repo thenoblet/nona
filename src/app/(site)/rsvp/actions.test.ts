@@ -114,7 +114,7 @@ describe("submitRsvp", () => {
   });
 
   async function settle() {
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
   it("queues a confirmation when an email was given", async () => {
@@ -142,10 +142,10 @@ describe("submitRsvp", () => {
   });
 
   it("queues no fourth email to the same address within 24 hours", async () => {
-    for (let i = 0; i < 4; i++) {
+    for (let index = 0; index < 4; index++) {
       await submitRsvp(
         initialRsvpState,
-        form({ email: "ama@example.com", song: `Song ${i}` }),
+        form({ email: "ama@example.com", song: `Song ${index}` }),
       );
       await settle();
     }

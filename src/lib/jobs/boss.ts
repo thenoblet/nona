@@ -1,29 +1,36 @@
 import { PgBoss } from "pg-boss";
 import { dbConfig } from "@/lib/env";
+import { describeError } from "@/lib/log-error";
 import { handleRsvpConfirmation } from "./rsvp-confirmation";
 
 export const QUEUES = { rsvpConfirmation: "email-rsvp-confirmation" } as const;
 
-let started: Promise<PgBoss> | null = null;
+// Next loads this file once per server bundle, so a module variable would start several queues.
+// The globalThis key is shared by every bundle in the process.
+const globalWithQueue = globalThis as typeof globalThis & {
+  __nonaJobQueue?: Promise<PgBoss> | null;
+};
 
 /** One pg-boss per process, on its own small pool so jobs never starve the site. */
 export function getBoss(): Promise<PgBoss> {
-  started ??= (async () => {
+  globalWithQueue.__nonaJobQueue ??= (async () => {
     const boss = new PgBoss({
       ...dbConfig(),
       max: 3,
       connectionTimeoutMillis: 5000,
     });
-    boss.on("error", (error) => console.error("Job queue error", error));
+    boss.on("error", (error) =>
+      console.error("Job queue error:", describeError(error)),
+    );
     try {
       await boss.start();
     } catch (error) {
-      started = null;
+      globalWithQueue.__nonaJobQueue = null;
       throw error;
     }
     return boss;
   })();
-  return started;
+  return globalWithQueue.__nonaJobQueue;
 }
 
 export async function startJobs(): Promise<void> {

@@ -1,9 +1,10 @@
 import { readSiteContent } from "@/lib/content/store";
 import {
-  confirmationsSentToday,
   getRsvp,
+  queueWithinDailyLimit,
   setEmailStatus,
 } from "@/lib/data/rsvp";
+import { describeError } from "@/lib/log-error";
 import { renderRsvpConfirmation } from "@/lib/email/rsvp-confirmation";
 import { sendEmail } from "@/lib/email/send";
 import { emailKey } from "@/lib/rsvp/normalize";
@@ -18,15 +19,22 @@ export function siteUrl(): string {
 /** Queue the confirmation. Never throws: the reply is already saved. */
 export async function queueRsvpConfirmation(rsvpId: string): Promise<void> {
   try {
-    const r = await getRsvp(rsvpId);
-    if (!r?.email) return;
-    if ((await confirmationsSentToday(emailKey(r.email))) >= DAILY_LIMIT)
-      return;
-    const boss = await getBoss();
-    await boss.send(QUEUES.rsvpConfirmation, { rsvpId });
-    await setEmailStatus(rsvpId, "queued");
+    const rsvp = await getRsvp(rsvpId);
+    if (!rsvp?.email) return;
+    await queueWithinDailyLimit(
+      rsvpId,
+      emailKey(rsvp.email),
+      DAILY_LIMIT,
+      async () => {
+        const boss = await getBoss();
+        await boss.send(QUEUES.rsvpConfirmation, { rsvpId });
+      },
+    );
   } catch (error) {
-    console.error("Could not queue the RSVP confirmation", error);
+    console.error(
+      "Could not queue the RSVP confirmation:",
+      describeError(error),
+    );
   }
 }
 
@@ -34,15 +42,23 @@ export async function handleRsvpConfirmation(
   rsvpId: string,
   attempt: { retryCount: number; retryLimit: number },
 ): Promise<void> {
-  const r = await getRsvp(rsvpId);
-  if (!r || r.supersededAt || !r.email) return;
+  const rsvp = await getRsvp(rsvpId);
+  if (!rsvp || rsvp.supersededAt || !rsvp.email) return;
   try {
-    const mail = renderRsvpConfirmation(r, await readSiteContent(), siteUrl());
-    await sendEmail({ to: r.email, ...mail });
-    await setEmailStatus(r.id, "sent");
+    const mail = renderRsvpConfirmation(
+      rsvp,
+      await readSiteContent(),
+      siteUrl(),
+    );
+    await sendEmail({
+      to: rsvp.email,
+      idempotencyKey: `rsvp-confirmation/${rsvp.id}`,
+      ...mail,
+    });
+    await setEmailStatus(rsvp.id, "sent");
   } catch (error) {
     if (attempt.retryCount >= attempt.retryLimit)
-      await setEmailStatus(r.id, "failed");
+      await setEmailStatus(rsvp.id, "failed");
     throw error;
   }
 }

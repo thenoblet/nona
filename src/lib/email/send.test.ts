@@ -11,7 +11,7 @@ vi.mock("resend", () => ({
 
 import { replyToAddresses, sendEmail } from "./send";
 
-const msg = {
+const message = {
   to: "ama@example.com",
   subject: "Hi",
   text: "t",
@@ -40,15 +40,22 @@ describe("sendEmail", () => {
   it("sends through Resend with reply-to addresses and the calendar attachment", async () => {
     vi.stubEnv("RESEND_API_KEY", "test-key");
     vi.stubEnv("EMAIL_REPLY_TO", "a@example.com,b@example.com");
-    await sendEmail({ ...msg, ics: "BEGIN:VCALENDAR" });
+    await sendEmail({
+      ...message,
+      ics: "BEGIN:VCALENDAR",
+      idempotencyKey: "rsvp-confirmation/abc",
+    });
     const arg = resend.send.mock.calls[0] as unknown as [
       Record<string, unknown>,
+      { idempotencyKey: string; signal: AbortSignal },
     ];
     expect(arg[0]).toMatchObject({
       from: "Noblet & Nancy <rsvp@nobletxnancy.com>",
       to: "ama@example.com",
       replyTo: ["a@example.com", "b@example.com"],
     });
+    expect(arg[1].idempotencyKey).toBe("rsvp-confirmation/abc");
+    expect(arg[1].signal).toBeInstanceOf(AbortSignal);
     const attachments = arg[0].attachments as {
       filename: string;
       content: unknown;
@@ -65,20 +72,20 @@ describe("sendEmail", () => {
       data: null,
       error: { message: "rate limited" },
     } as never);
-    await expect(sendEmail(msg)).rejects.toThrow("rate limited");
+    await expect(sendEmail(message)).rejects.toThrow("rate limited");
   });
 
   it("rejects in production without a key", async () => {
     vi.stubEnv("RESEND_API_KEY", "");
     vi.stubEnv("NODE_ENV", "production");
-    await expect(sendEmail(msg)).rejects.toThrow();
+    await expect(sendEmail(message)).rejects.toThrow();
     expect(resend.send).not.toHaveBeenCalled();
   });
 
   it("logs instead of sending without a key in test", async () => {
     vi.stubEnv("RESEND_API_KEY", "");
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
-    await expect(sendEmail(msg)).resolves.toBeUndefined();
+    await expect(sendEmail(message)).resolves.toBeUndefined();
     expect(resend.send).not.toHaveBeenCalled();
     expect(log.mock.calls.flat().join(" ")).not.toContain("ama@example.com");
   });

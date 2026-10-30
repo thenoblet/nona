@@ -172,3 +172,40 @@ export async function confirmationsSentToday(key: string): Promise<number> {
     );
   return rows.length;
 }
+
+/**
+ * Mark a reply queued and enqueue its job as one step, holding a lock per email address, so
+ * replies sent at the same instant cannot pass the daily cap together. If `enqueue` throws, the
+ * status change rolls back: a reply is never queued without a job.
+ */
+export async function queueWithinDailyLimit(
+  id: string,
+  key: string,
+  limit: number,
+  enqueue: () => Promise<void>,
+): Promise<boolean> {
+  return getDb().transaction(async (transaction) => {
+    await transaction.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${key}))`,
+    );
+    const alreadyQueued = await transaction
+      .select({ id: rsvps.id })
+      .from(rsvps)
+      .where(
+        and(
+          eq(rsvps.emailKey, key),
+          inArray(rsvps.emailStatus, ["queued", "sent"]),
+          gt(rsvps.receivedAt, sql`now() - interval '24 hours'`),
+        ),
+      );
+    if (alreadyQueued.length >= limit) return false;
+    const claimed = await transaction
+      .update(rsvps)
+      .set({ emailStatus: "queued" })
+      .where(and(eq(rsvps.id, id), eq(rsvps.emailStatus, "none")))
+      .returning({ id: rsvps.id });
+    if (claimed.length === 0) return false;
+    await enqueue();
+    return true;
+  });
+}
