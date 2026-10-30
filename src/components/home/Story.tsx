@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { couple } from "@/content/wedding";
+import { couple, wedding } from "@/content/wedding";
 import type { Story as StoryContent } from "@/lib/content/schema";
 import { photos, type Photo } from "@/content/images";
 import { Reveal } from "@/components/ui/Reveal";
@@ -27,7 +27,7 @@ export function InvitationLetter() {
         </p>
         <div className="flex flex-wrap justify-center gap-2.5">
           <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">Three celebrations · two days</span>
-          <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">Kindly reply by 23 November</span>
+          <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">Kindly reply by {wedding.rsvpBy}</span>
         </div>
       </Reveal>
     </section>
