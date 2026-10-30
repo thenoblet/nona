@@ -1,20 +1,26 @@
-import { wedding } from "@/content/wedding";
+import { accraDateTime, accraDayAndFullMonth } from "@/lib/accra";
 import { celebrationDay, toReplyRows } from "@/lib/admin/replies";
 import { getSiteContent } from "@/lib/content/get";
+import { readRsvpSettings } from "@/lib/content/rsvp";
 import { listRsvps, rsvpHistories, rsvpTotals } from "@/lib/data/rsvp";
 import { RepliesList } from "./RepliesList";
+import { RsvpSettings } from "./RsvpSettings";
 
 function count(amount: number, one: string, many: string): string {
   return `${amount} ${amount === 1 ? one : many}`;
 }
 
-/** The replies page's data: totals per celebration, then every current reply. Render it only inside AdminGate. */
+/**
+ * The replies page's data: the RSVP settings, totals per celebration, then every current reply.
+ * Render it only inside AdminGate.
+ */
 export async function Replies() {
-  const [replies, histories, totals, { celebrations }] = await Promise.all([
+  const [replies, histories, totals, { celebrations, rsvp }, settings] = await Promise.all([
     listRsvps(),
     rsvpHistories(),
     rsvpTotals(),
     getSiteContent(),
+    readRsvpSettings(),
   ]);
   const columns = celebrations.map(({ id, name }) => ({ id, name }));
   const rows = toReplyRows(replies, histories, columns, new Date());
@@ -24,13 +30,22 @@ export async function Replies() {
       <div className="admin-pagehead">
         <div>
           <h1>Replies</h1>
-          <p className="admin-lede">Newest first. Replies are due {wedding.rsvpBy}.</p>
+          <p className="admin-lede">Newest first. Replies are due {accraDayAndFullMonth(rsvp.replyBy)}.</p>
         </div>
         {/* A plain link: the file downloads, and an expired sign-in still reaches the login page. */}
         <a className="admin-btn" href="/admin/rsvps.csv">
           Download CSV
         </a>
       </div>
+
+      <RsvpSettings
+        open={settings.value.open}
+        replyBy={settings.value.replyBy}
+        replyByLabel={accraDayAndFullMonth(settings.value.replyBy)}
+        closedMessage={settings.value.closedMessage}
+        version={settings.version}
+        closedSince={settings.closed ? `${accraDateTime(settings.closed.savedAt.toISOString())} by ${settings.closed.savedBy}` : null}
+      />
 
       <section className="admin-stats" aria-label="Totals">
         {celebrations.map((celebration) => {

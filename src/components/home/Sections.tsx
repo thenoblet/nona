@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { colours, couple, wedding } from "@/content/wedding";
-import type { FaqItem, GiftItem, PartyMember, TravelItem } from "@/lib/content/schema";
+import { accraDayAndFullMonth } from "@/lib/accra";
+import type { FaqItem, GiftItem, PartyMember, RsvpSettings, TravelItem } from "@/lib/content/schema";
 import { partyPhotos, photos } from "@/content/images";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
@@ -132,7 +133,10 @@ export function Travel({ travel }: { travel: TravelItem[] }) {
   );
 }
 
-export function RsvpBand() {
+/** Asks guests to reply, or, while the couple have replies closed, says so with their message. */
+export function RsvpBand({ rsvp }: { rsvp: RsvpSettings }) {
+  const heading = "m-0 font-script text-[56px] leading-[1.1] font-normal sm:text-[84px]";
+  const body = "m-0 text-base leading-[1.75] font-light text-mist sm:text-[17px]";
   return (
     <section id="rsvp" className="bg-cocoa px-5 py-20 text-center text-white sm:px-6 sm:py-28">
       <div className="mx-auto flex max-w-[1080px] flex-col items-center gap-14 lg:flex-row lg:justify-center lg:gap-20">
@@ -149,14 +153,23 @@ export function RsvpBand() {
         </Reveal>
         <div className="flex max-w-[560px] flex-1 flex-col items-center gap-5.5">
           <Eyebrow tone="ember">Répondez s&apos;il vous plaît</Eyebrow>
-          <h2 className="m-0 font-script text-[56px] leading-[1.1] font-normal sm:text-[84px]">Will you join us?</h2>
-          <p className="m-0 text-base leading-[1.75] font-light text-mist sm:text-[17px]">
-            Kindly respond by <span className="text-white">{wedding.rsvpBy}</span>. It takes a minute. Tell us who&apos;s coming
-            and which celebrations you&apos;ll join.
-          </p>
-          <PillLink href="/rsvp" variant="ember" size="lg">
-            Respond now
-          </PillLink>
+          {rsvp.open ? (
+            <>
+              <h2 className={heading}>Will you join us?</h2>
+              <p className={body}>
+                Kindly respond by <span className="text-white">{accraDayAndFullMonth(rsvp.replyBy)}</span>. It takes a minute.
+                Tell us who&apos;s coming and which celebrations you&apos;ll join.
+              </p>
+              <PillLink href="/rsvp" variant="ember" size="lg">
+                Respond now
+              </PillLink>
+            </>
+          ) : (
+            <>
+              <h2 className={heading}>Replies have closed</h2>
+              <p className={body}>{rsvp.closedMessage}</p>
+            </>
+          )}
         </div>
       </div>
     </section>

@@ -5,8 +5,10 @@ import { dbConfig } from "@/lib/env";
 import { initialRsvpState } from "@/components/rsvp/options";
 import { resetDb } from "../../../../test/db";
 
+// Replies are open unless a test closes them.
+const replies = vi.hoisted(() => ({ open: true }));
 vi.mock("@/lib/content/get", () => ({
-  getSiteContent: async () => contentDefaults,
+  getSiteContent: async () => ({ ...contentDefaults, rsvp: { ...contentDefaults.rsvp, open: replies.open } }),
 }));
 
 // after() runs its task once the response is sent; the tests wait for exactly those tasks.
@@ -86,6 +88,7 @@ const [firstCelebration] = contentDefaults.celebrations;
 
 describe("submitRsvp", () => {
   beforeEach(async () => {
+    replies.open = true;
     saveRsvp.failure = null;
     boss.fail = false;
     boss.send.mockClear();
@@ -105,6 +108,24 @@ describe("submitRsvp", () => {
     );
     expect(state.status).toBe("sent");
     expect(await rows()).toEqual([{ email: "ama@example.com" }]);
+  });
+
+  it("refuses a reply once replies are closed, with the closed message, and saves and queues nothing", async () => {
+    replies.open = false;
+    const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+    expect(state.status).toBe("error");
+    expect(state.errors).toEqual({ form: contentDefaults.rsvp.closedMessage });
+    expect(state.values.fullName).toBe("Ama Test");
+    await settle();
+    expect(await rows()).toEqual([]);
+    expect(boss.send).not.toHaveBeenCalled();
+  });
+
+  it("gives only the closed message, not the form's problems, once replies are closed", async () => {
+    replies.open = false;
+    const state = await submitRsvp(initialRsvpState, form({ fullName: "", email: "not-an-email" }));
+    expect(state.errors).toEqual({ form: contentDefaults.rsvp.closedMessage });
+    expect(await rows()).toEqual([]);
   });
 
   it("saves a reply without an email", async () => {

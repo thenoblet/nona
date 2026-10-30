@@ -1,12 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { rsvpFlagDismissals } from "@/lib/db/schema";
+import { RELOAD } from "@/lib/admin/content";
+import { contentDefaults } from "@/lib/content/defaults";
+import { listVersions, readSection, saveSection } from "@/lib/content/store";
 import { listRsvps, rsvpHistories, saveRsvp } from "@/lib/data/rsvp";
 import type { RsvpInput } from "@/lib/data/types";
 import { resetDb } from "../../../../test/db";
 
-const cache = vi.hoisted(() => ({ refresh: vi.fn() }));
-vi.mock("next/cache", () => ({ refresh: cache.refresh }));
+const cache = vi.hoisted(() => ({ refresh: vi.fn(), updateTag: vi.fn() }));
+vi.mock("next/cache", () => ({
+  refresh: cache.refresh,
+  updateTag: cache.updateTag,
+  cacheTag: vi.fn(),
+  cacheLife: vi.fn(),
+}));
 
 const admin = vi.hoisted(() => ({ allowed: false }));
 vi.mock("@/lib/admin/access", async (importOriginal) => {
@@ -20,7 +28,13 @@ vi.mock("@/lib/admin/access", async (importOriginal) => {
   };
 });
 
-import { keepBothAction, keepReplyAction } from "./actions";
+import {
+  closeRsvpsAction,
+  keepBothAction,
+  keepReplyAction,
+  reopenRsvpsAction,
+  saveRsvpSettingsAction,
+} from "./actions";
 
 const base: RsvpInput = {
   fullName: "Ama Owusu",
@@ -39,6 +53,7 @@ beforeEach(async () => {
   await resetDb();
   admin.allowed = false;
   cache.refresh.mockClear();
+  cache.updateTag.mockClear();
 });
 
 describe("without the couple", () => {
@@ -162,5 +177,106 @@ describe("keepBothAction", () => {
     expect(await keepBothAction(ama.record.id, "not-an-id")).toEqual({ ok: false, error: expect.any(String) });
     expect(await keepBothAction(ama.record.id, ama.record.id)).toEqual({ ok: false, error: expect.any(String) });
     expect(await getDb().select().from(rsvpFlagDismissals)).toEqual([]);
+  });
+});
+
+/** What the RSVP settings form posts: the reply-by date, the closed message and the version it loaded. */
+function settingsForm(fields: { replyBy?: string; closedMessage?: string; baseVersion?: string }): FormData {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(fields)) form.set(name, value);
+  return form;
+}
+
+const closedSettings = { ...contentDefaults.rsvp, open: false };
+
+describe("RSVP settings without the couple", () => {
+  it("closing, reopening and saving all throw, and nothing is saved", async () => {
+    const form = settingsForm({ replyBy: "2026-11-25", closedMessage: "Closed.", baseVersion: "0" });
+    await expect(closeRsvpsAction(0)).rejects.toThrow("Admin access refused");
+    await expect(reopenRsvpsAction(0)).rejects.toThrow("Admin access refused");
+    await expect(saveRsvpSettingsAction(form)).rejects.toThrow("Admin access refused");
+
+    expect(await listVersions("rsvp")).toEqual([]);
+    expect(cache.updateTag).not.toHaveBeenCalled();
+    expect(cache.refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("RSVP settings", () => {
+  beforeEach(() => {
+    admin.allowed = true;
+  });
+
+  it("closing saves a new version with replies closed, keeps the date and message, and updates the site's cache", async () => {
+    expect(await closeRsvpsAction(0)).toEqual({ status: "saved", errors: [], version: 1 });
+
+    expect(await readSection("rsvp")).toEqual({ value: closedSettings, version: 1 });
+    expect((await listVersions("rsvp"))[0].savedBy).toBe("couple@example.com");
+    expect(cache.updateTag).toHaveBeenCalledOnce();
+    expect(cache.updateTag).toHaveBeenCalledWith("site-content");
+    expect(cache.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("reopening saves a new version with replies open, and updates the site's cache", async () => {
+    await closeRsvpsAction(0);
+    cache.updateTag.mockClear();
+    cache.refresh.mockClear();
+
+    expect(await reopenRsvpsAction(1)).toEqual({ status: "saved", errors: [], version: 2 });
+    expect(await readSection("rsvp")).toEqual({ value: contentDefaults.rsvp, version: 2 });
+    expect(cache.updateTag).toHaveBeenCalledWith("site-content");
+    expect(cache.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("saving the date and message keeps replies closed or open as they were", async () => {
+    await closeRsvpsAction(0);
+    cache.updateTag.mockClear();
+
+    const form = settingsForm({ replyBy: "2026-11-25", closedMessage: "  We have closed replies.  ", baseVersion: "1" });
+    expect(await saveRsvpSettingsAction(form)).toEqual({ status: "saved", errors: [], version: 2 });
+    expect((await readSection("rsvp")).value).toEqual({
+      open: false,
+      replyBy: "2026-11-25",
+      closedMessage: "We have closed replies.",
+    });
+    expect((await listVersions("rsvp"))[0].savedBy).toBe("couple@example.com");
+    expect(cache.updateTag).toHaveBeenCalledWith("site-content");
+  });
+
+  it("refuses a date on or after the wedding and an empty message, and saves nothing", async () => {
+    const result = await saveRsvpSettingsAction(settingsForm({ replyBy: "2026-12-05", closedMessage: " ", baseVersion: "0" }));
+    expect(result).toEqual({
+      status: "error",
+      errors: ["rsvp.replyBy: Use a date before the wedding", "rsvp.closedMessage: Cannot be empty"],
+    });
+    expect(await listVersions("rsvp")).toEqual([]);
+    expect(cache.updateTag).not.toHaveBeenCalled();
+    expect(cache.refresh).not.toHaveBeenCalled();
+  });
+
+  it("refuses a close, a reopen or a save made from an older version, and says who saved since", async () => {
+    await saveSection("rsvp", { ...contentDefaults.rsvp, replyBy: "2026-11-22" }, "nancy@example.com");
+    const newer = /^nancy@example\.com saved a newer version at \d{2}:\d{2} on \d{1,2} [A-Z][a-z]{2}\. Reload to see it\.$/;
+
+    for (const result of [
+      await closeRsvpsAction(0),
+      await reopenRsvpsAction(0),
+      await saveRsvpSettingsAction(settingsForm({ replyBy: "2026-11-25", closedMessage: "Closed.", baseVersion: "0" })),
+    ]) {
+      expect(result.status).toBe("error");
+      expect(result.errors).toEqual([expect.stringMatching(newer)]);
+    }
+    expect(await readSection("rsvp")).toEqual({ value: { ...contentDefaults.rsvp, replyBy: "2026-11-22" }, version: 1 });
+    expect(cache.updateTag).not.toHaveBeenCalled();
+  });
+
+  it("asks for a reload when the version or a field is missing or not one", async () => {
+    const reload = { status: "error", errors: [RELOAD] };
+    expect(await closeRsvpsAction(-1)).toEqual(reload);
+    expect(await reopenRsvpsAction(1.5)).toEqual(reload);
+    expect(await saveRsvpSettingsAction(settingsForm({ replyBy: "2026-11-25", closedMessage: "Closed." }))).toEqual(reload);
+    expect(await saveRsvpSettingsAction(settingsForm({ closedMessage: "Closed.", baseVersion: "0" }))).toEqual(reload);
+    expect(await saveRsvpSettingsAction(settingsForm({ replyBy: "2026-11-25", baseVersion: "zero" }))).toEqual(reload);
+    expect(await listVersions("rsvp")).toEqual([]);
   });
 });

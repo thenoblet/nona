@@ -7,6 +7,7 @@ import {
   isSectionKey,
   MAX_SECTION_BYTES,
   newerVersionMessage,
+  RELOAD,
   TOO_LONG,
   type SaveState,
 } from "@/lib/admin/content";
@@ -20,8 +21,6 @@ import { restoreVersion, saveSection, type SaveResult } from "@/lib/content/stor
 // and trusts nothing it is sent. Both carry the version the page was showing as live: if anyone
 // saved after that, nothing changes and the couple are told who did and when, so neither of them
 // overwrites the other's change unseen.
-
-const RELOAD = "This page is out of date. Reload it and try again.";
 
 function refused(message: string): SaveState {
   return { status: "error", errors: [message] };

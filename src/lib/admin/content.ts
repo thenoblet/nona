@@ -9,11 +9,17 @@ export type SaveState = { status: "idle" | "saved" | "error"; errors: string[]; 
 /** The editor's form posts the whole edited section as JSON, and the version it loaded. */
 export const EDITOR_FIELDS = { value: "value", baseVersion: "baseVersion" } as const;
 
+/** An action was sent something the page it came from would never send: an old page, or not a page. */
+export const RELOAD = "This page is out of date. Reload it and try again.";
+
 /** A section's JSON may be at most this long. The largest built-in section is about 2 KB. */
 export const MAX_SECTION_BYTES = 256 * 1024;
 export const TOO_LONG = "This section is too long to save. Shorten the longest text and try again.";
 
-/** The sections in the admin's order, with their address under /admin/content/ and their name. */
+/**
+ * The sections in the admin's order, with their address under /admin/content/ and their name. The
+ * RSVP settings are not among them: they live on the Replies page (/admin/rsvps).
+ */
 export const contentSections = [
   { key: "celebrations", slug: "celebrations", label: "Celebrations" },
   { key: "schedule", slug: "schedule", label: "Order of the day" },
@@ -28,12 +34,13 @@ export const contentSections = [
 ] as const satisfies readonly { key: SectionKey; slug: string; label: string }[];
 
 export type ContentSection = (typeof contentSections)[number];
+export type ContentSectionKey = ContentSection["key"];
 
 export function sectionBySlug(slug: string): ContentSection | undefined {
   return contentSections.find((section) => section.slug === slug);
 }
 
-export function isSectionKey(key: unknown): key is SectionKey {
+export function isSectionKey(key: unknown): key is ContentSectionKey {
   return contentSections.some((section) => section.key === key);
 }
 

@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { ACCESS_HEADER, accessToken } from "./cloudflare-access";
 
-// The e2e server is a production build with no Cloudflare Access settings, like a request that
-// reaches the origin without passing Access: the admin must hand out nothing.
+// The e2e server is a production build that checks Cloudflare Access tokens against a local key
+// server (cloudflare-access.ts). A request without a token is like one that reaches the origin
+// without passing Access: the admin must hand out nothing.
 test("without Cloudflare Access the admin shows no replies and refuses the CSV", async ({ page, request }) => {
   await page.goto("/rsvp");
   await page.getByLabel("Your full name").fill("E2E Admin Check");
@@ -53,4 +55,20 @@ test("without Cloudflare Access the site text pages show only their shell", asyn
   expect(unknown).toContain("This page could not be found.");
   expect(unknown).toContain('<meta name="robots" content="noindex"/>');
   expect(unknown).not.toContain("This page is for the couple.");
+});
+
+test("a Cloudflare Access token for another application is refused like none at all", async ({ request }) => {
+  const otherApplication = { [ACCESS_HEADER]: await accessToken({ audience: "another-application" }) };
+  const refused = await (await request.get("/admin/rsvps", { headers: otherApplication })).text();
+  expect(refused).toContain("This page is for the couple.");
+  expect(refused).not.toContain("RSVP settings");
+  const csv = await request.get("/admin/rsvps.csv", { headers: otherApplication });
+  expect(csv.status()).toBe(403);
+
+  // The same request with this application's token gets in, so the refusal is the audience's doing.
+  const signedIn = { [ACCESS_HEADER]: await accessToken() };
+  const replies = await (await request.get("/admin/rsvps", { headers: signedIn })).text();
+  expect(replies).toContain("RSVP settings");
+  expect(replies).not.toContain("This page is for the couple.");
+  expect((await request.get("/admin/rsvps.csv", { headers: signedIn })).status()).toBe(200);
 });

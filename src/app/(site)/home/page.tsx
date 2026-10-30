@@ -40,7 +40,7 @@ export default function HomePage({ searchParams }: PageProps<"/home">) {
 async function Home({ searchParams }: { searchParams: PageProps<"/home">["searchParams"] }) {
   await connection();
   const content = await getSiteContent();
-  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts } = content;
+  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts, rsvp } = content;
   const faq = visibleFaq(content);
   const params = await searchParams;
   // One moment for the whole page, so the version, the schedule and the live stream agree.
@@ -58,7 +58,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
         {mode === "before" ? (
           <>
             <HeroBefore />
-            <InvitationLetter />
+            <InvitationLetter rsvp={rsvp} />
             <Story story={story} />
             <Celebrations celebrations={celebrations} />
             <MapSection venues={venues} landmarks={landmarks} />
@@ -66,7 +66,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <Party party={party} />
             <Gallery />
             <Travel travel={travel} />
-            <RsvpBand />
+            <RsvpBand rsvp={rsvp} />
             <Gifts gifts={gifts} />
             <AlbumTeaser />
             <Faq faq={faq} />

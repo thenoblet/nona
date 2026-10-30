@@ -32,7 +32,7 @@ export async function submitRsvp(
   form: FormData,
 ): Promise<RsvpState> {
   const answers: RsvpValues["answers"] = {};
-  const { celebrations } = await getSiteContent();
+  const { celebrations, rsvp } = await getSiteContent();
   for (const celebration of celebrations) {
     const answer = form.get(answerField(celebration.id));
     if (answer === "yes" || answer === "no") answers[celebration.id] = answer as Answer;
@@ -47,6 +47,12 @@ export async function submitRsvp(
     otherNames: text(form, "otherNames"),
     song: text(form, "song", 120),
   };
+
+  // A phone may have had the form open since before the couple closed replies: the form keeps
+  // what was typed, and shows the closed message instead of saving.
+  if (!rsvp.open) {
+    return { status: "error", values, errors: { form: rsvp.closedMessage } };
+  }
 
   const errors: RsvpErrors = {};
   if (values.fullName.length < 2) {

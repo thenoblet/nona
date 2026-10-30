@@ -1,5 +1,5 @@
 import { describeDate } from "@/lib/admin/content";
-import type { SectionKey } from "@/lib/content/schema";
+import type { ContentSectionKey } from "@/lib/admin/content";
 import { endsNextDay } from "@/lib/content/times";
 import { getAt } from "./editing";
 
@@ -89,7 +89,7 @@ const chapterFields = (body: "text" | "quote"): readonly FieldSpec[] => [
   ...(body === "quote" ? [{ path: ["answer"], label: "Her answer", kind: "text", span: 6 } as const] : []),
 ];
 
-export const sectionSpecs: Record<SectionKey, SectionSpec> = {
+export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
   celebrations: {
     layout: "list",
     legend: named("name", "Celebration"),

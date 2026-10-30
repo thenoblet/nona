@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { sectionKeys } from "@/lib/content/schema";
-import { contentSections, describeDate, newerVersionMessage, parseIssues, sectionBySlug } from "./content";
+import { contentSections, describeDate, isSectionKey, newerVersionMessage, parseIssues, sectionBySlug } from "./content";
 
 describe("contentSections", () => {
-  it("lists every section once, in the admin's order, with its slug and label", () => {
-    expect(contentSections.map((section) => section.key).toSorted()).toEqual([...sectionKeys].toSorted());
+  it("lists every section but the RSVP settings once, in the admin's order, with its slug and label", () => {
+    expect(contentSections.map((section) => section.key).toSorted()).toEqual(
+      sectionKeys.filter((key) => key !== "rsvp").toSorted(),
+    );
     expect(contentSections.map((section) => [section.slug, section.label])).toEqual([
       ["celebrations", "Celebrations"],
       ["schedule", "Order of the day"],
@@ -17,6 +19,12 @@ describe("contentSections", () => {
       ["story", "Our story"],
       ["live-stream", "Live stream"],
     ]);
+  });
+
+  it("leaves the RSVP settings to the Replies page, so the Site text pages and actions refuse them", () => {
+    expect(sectionBySlug("rsvp")).toBeUndefined();
+    expect(isSectionKey("rsvp")).toBe(false);
+    expect(isSectionKey("faq")).toBe(true);
   });
 
   it("finds a section by its slug only", () => {
