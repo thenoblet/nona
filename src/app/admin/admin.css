@@ -1,0 +1,47 @@
+/* The admin's own look. Colours are tokens here and are not part of the guest site's theme. */
+.admin {
+  --admin-bg: #f4f4f3;
+  --admin-surface: #fff;
+  --admin-text: #1c1a19;
+  --admin-muted: #5c5856;
+  --admin-border: #d4d1cf;
+  --admin-disabled: #8d8986;
+  --admin-accent: #b4541a;
+  --admin-gutter: 16px;
+  min-height: 100dvh;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--admin-text);
+  background: var(--admin-bg);
+}
+.admin a { color: var(--admin-accent); }
+.admin :focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--admin-accent) 45%, transparent);
+  outline-offset: 2px;
+}
+.admin h1 { font-size: 22px; line-height: 1.2; margin: 0; }
+
+.admin-topbar { position: sticky; top: 0; z-index: 5; background: var(--admin-surface); border-bottom: 1px solid var(--admin-border); }
+.admin-topbar-inner {
+  max-width: 1200px; margin: 0 auto; padding: 0 var(--admin-gutter);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0 20px; min-height: 56px;
+}
+.admin .admin-brand { font-weight: 600; text-decoration: none; color: var(--admin-text); white-space: nowrap; }
+.admin-brand span { font-weight: 400; color: var(--admin-muted); }
+.admin-tabs { display: flex; gap: 4px; }
+.admin .admin-tabs > a, .admin-tabs > span {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px;
+  text-decoration: none; color: var(--admin-muted); border-bottom: 2px solid transparent; white-space: nowrap;
+}
+.admin .admin-tabs a[aria-current="page"] { color: var(--admin-text); border-bottom-color: var(--admin-accent); font-weight: 600; }
+.admin-tabs .admin-tab-disabled { color: var(--admin-disabled); cursor: not-allowed; }
+.admin-tab-disabled small { font-size: 11px; }
+.admin .admin-viewsite { margin-left: auto; white-space: nowrap; text-decoration: none; font-size: 14px; }
+@media (max-width: 599px) {
+  .admin-topbar-inner { gap: 0 12px; padding-top: 6px; }
+  .admin-tabs { order: 3; width: 100%; margin: 0 calc(var(--admin-gutter) * -1); padding: 0 calc(var(--admin-gutter) - 12px); overflow-x: auto; }
+}
+
+.admin-page { max-width: 1200px; margin: 0 auto; padding: 20px var(--admin-gutter) 120px; }
+.admin-denied { margin: 0; color: var(--admin-muted); }
