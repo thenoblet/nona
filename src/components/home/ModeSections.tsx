@@ -9,7 +9,6 @@ import { Reveal } from "@/components/ui/Reveal";
 import { Eyebrow, Ornament, SectionHeading } from "@/components/ui/Typography";
 import { MediaImage } from "@/components/album/MediaImage";
 import { AlbumBrowser } from "@/components/album/AlbumBrowser";
-import { SeatFinder } from "@/components/today/SeatFinder";
 import { OrderOfDay } from "@/components/today/OrderOfDay";
 import { TextWish, VideoWish, VoiceWish } from "@/components/wishes/WishCards";
 
@@ -87,7 +86,7 @@ export async function LiveAlbum() {
   );
 }
 
-/** Wedding weekend: the order of the day and the seat finder. */
+/** Wedding weekend: the order of the day and directions. */
 export function TodaySection({
   todayLabel,
   secondDay,
@@ -116,9 +115,6 @@ export function TodaySection({
             <OrderOfDay schedule={schedule} secondDay={secondDay} />
           </div>
           <Reveal className="flex min-w-0 flex-col gap-5.5 rounded-[var(--radius-paper)] bg-tray p-4 sm:p-7 lg:w-[420px] lg:flex-none">
-            <div className="rounded-[var(--radius-paper)] bg-white p-5 shadow-[var(--shadow-paper)] sm:p-7" style={{ transform: "rotate(-0.6deg)" }}>
-              <SeatFinder />
-            </div>
             <div className="flex flex-wrap justify-center gap-x-7 gap-y-1">
               <a
                 href={reception.mapsUrl}

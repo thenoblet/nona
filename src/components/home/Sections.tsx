@@ -8,7 +8,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Reveal } from "@/components/ui/Reveal";
 import { SwipeRow } from "@/components/ui/SwipeRow";
 import { Eyebrow, Motto, SectionHeading } from "@/components/ui/Typography";
-import { QrCode } from "@/components/slideshow/QrCode";
+import { QrCode } from "@/components/ui/QrCode";
 import { albumUrl, displayUrl, qrSvg } from "@/lib/qr";
 
 export function Colours() {

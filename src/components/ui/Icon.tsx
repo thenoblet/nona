@@ -60,15 +60,6 @@ const paths = {
       <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
     </>
   ),
-  seat: (
-    <>
-      <circle cx="12" cy="12" r="4" />
-      <circle cx="12" cy="3.5" r="1.5" />
-      <circle cx="12" cy="20.5" r="1.5" />
-      <circle cx="3.5" cy="12" r="1.5" />
-      <circle cx="20.5" cy="12" r="1.5" />
-    </>
-  ),
   playlist: (
     <>
       <path d="M4 6h11M4 12h11M4 18h7" />
@@ -81,12 +72,6 @@ const paths = {
       <path d="M9 18V5l11-2v13" />
       <circle cx="6" cy="18" r="3" />
       <circle cx="17" cy="16" r="3" />
-    </>
-  ),
-  slideshow: (
-    <>
-      <rect x="3" y="5" width="18" height="13" rx="1.5" />
-      <path d="M10 9l5 2.5-5 2.5z" />
     </>
   ),
   back: <path d="M15 6l-6 6 6 6" />,

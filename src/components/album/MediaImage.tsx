@@ -12,14 +12,11 @@ export function MediaImage({
   sizes,
   className = "",
   loading,
-  fit = "cover",
 }: {
   item: Pick<MediaItem, "src" | "alt" | "position">;
   sizes: string;
   className?: string;
   loading?: "eager" | "lazy";
-  /** "contain" shows the whole photo, for the slideshow stage. */
-  fit?: "cover" | "contain";
 }) {
   if (!item.src) {
     return <span className="sr-only">{item.alt} (preview not ready yet)</span>;
@@ -34,7 +31,7 @@ export function MediaImage({
       loading={loading}
       unoptimized={remote}
       placeholder={remote ? "empty" : "blur"}
-      className={`${fit === "contain" ? "object-contain" : "object-cover"} ${className}`}
+      className={`object-cover ${className}`}
       style={{ objectPosition: item.position ?? "center" }}
     />
   );

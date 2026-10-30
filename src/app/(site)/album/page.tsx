@@ -8,8 +8,7 @@ import { getSiteContent } from "@/lib/content/get";
 import { listMedia, SAMPLE_DEVICE } from "@/lib/data/media";
 import { resolveMode } from "@/lib/mode";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
-import { PillLink, TextLink } from "@/components/ui/Button";
-import { Icon } from "@/components/ui/Icon";
+import { TextLink } from "@/components/ui/Button";
 import { AlbumBrowser } from "@/components/album/AlbumBrowser";
 import { SharingAs } from "@/components/album/SharingAs";
 import { ShareButtons, ShareButtonsSkeleton, UploadProgress, UploadProvider } from "@/components/album/Upload";
@@ -70,12 +69,6 @@ export default function AlbumPage({ searchParams }: PageProps<"/album">) {
         </Suspense>
 
         <div className="mt-7 mb-9 flex flex-wrap items-center justify-center gap-x-6.5 gap-y-3">
-          <PillLink href="/slideshow" variant="cocoa">
-            <span className="flex items-center gap-2.5">
-              <Icon name="slideshow" size={15} className="text-ember" />
-              Slideshow
-            </span>
-          </PillLink>
           <TextLink href="/wishes" className="text-cocoa">
             Wishes wall
           </TextLink>

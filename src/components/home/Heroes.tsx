@@ -91,7 +91,7 @@ export function HeroDay({ todayLabel, now }: { todayLabel: string; now: { title:
             Share your photos &amp; videos
           </PillLink>
           <TextLink href="#today" className="text-white">
-            Find your seat
+            See today&apos;s order
           </TextLink>
         </div>
       </div>

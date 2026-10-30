@@ -12,14 +12,13 @@ import { HappeningNow } from "@/components/today/HappeningNow";
 import { OrderOfDay } from "@/components/today/OrderOfDay";
 import { liveStreamState } from "@/lib/content/live";
 import { QuickActions } from "@/components/today/QuickActions";
-import { SeatFinder } from "@/components/today/SeatFinder";
 
 export const metadata: Metadata = { title: "Today" };
 
 const column = "mx-auto w-full max-w-xl sm:px-8";
 
 /**
- * The wedding-day screen: what's on now, your seat, and sharing photos. The header, buttons and
+ * The wedding-day screen: what's on now and sharing photos. The header, buttons and
  * headings are static; only the pieces that read the day's times are streamed in at request time
  * (see ByDay), each behind a placeholder that reads no content.
  */
@@ -84,12 +83,6 @@ function TodayLayout({ dayLabel: dayLabelSlot, happeningNow, orderOfDay, quickAc
           </PillLink>
         </div>
       </header>
-
-      <section aria-labelledby="seat-h" className="bg-tray">
-        <div className={`${column} px-4 py-7`}>
-          <SeatFinder />
-        </div>
-      </section>
 
       <section aria-labelledby="sched-h" className={`${column} px-5 pt-8 pb-3`}>
         <h2 id="sched-h" className="mb-3 font-serif text-[30px] italic">

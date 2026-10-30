@@ -1,7 +1,7 @@
 # NONA'26
 
 The wedding website for Noblet & Nancy: the invitation, RSVP, a shared photo and video
-album guests use from their phones (no app, no sign-up), a guestbook, and screens for the venue.
+album guests use from their phones (no app, no sign-up), a guestbook, and a wedding-day screen.
 
 Mobile-first: every page is designed for a phone, then widened for larger screens.
 
@@ -10,13 +10,12 @@ Mobile-first: every page is designed for a phone, then widened for larger screen
 | Route | What it is |
 |---|---|
 | `/` | Landing page (editorial cover). "Open the invitation" starts the music and opens `/home`. |
-| `/home` | The homepage. The date picks one of three versions: **before** (the invitation), **wedding weekend** (5 and 6 Dec: photo sharing, today's schedule, seat finder) and **after** (thank you, full album, wishes). |
-| `/rsvp` | Reply form. |
+| `/home` | The homepage. The date picks one of three versions: **before** (the invitation), **wedding weekend** (5 and 6 Dec: photo sharing and today's schedule) and **after** (thank you, full album, wishes). |
+| `/rsvp` | Reply form. A confirmation email follows, with calendar files (`/calendar`). |
 | `/album` | The shared album the table QR codes open. |
 | `/wishes` | Guestbook: written, voice or video wishes. |
-| `/today` | Wedding-day screen: what's happening now, seat finder, quick actions. |
+| `/today` | Wedding-day screen: what's happening now, the schedule, quick actions. |
 | `/open` | Envelope opener, an optional phone entry with a wax seal. |
-| `/slideshow` | Venue TV screen showing guests' newest photos, with a QR code. |
 | `/print/table-card?table=7` | Printable A5 QR card for each table. |
 
 ### Previewing the homepage versions
@@ -34,11 +33,14 @@ src/
     ui/                buttons, halo icons, paper cards, fields, segmented switch, reveal
     music/             MusicProvider (songs play across pages), MusicPlayer, Dock
     home/              homepage sections
-    album/ wishes/ rsvp/ today/ open/ slideshow/ landing/ layout/
+    album/ wishes/ rsvp/ today/ open/ landing/ layout/
   content/             the words and facts you edit: wedding.ts, songs.ts, images.ts
   lib/
     mode.ts            before / wedding weekend / after
-    data/              rsvp.ts, media.ts, wishes.ts: stand-in data (see below)
+    db/ content/       Postgres client, schema, migrations; editable site content
+    data/              rsvp.ts (Postgres), media.ts and wishes.ts (stand-ins, see below)
+    email/ jobs/       confirmation emails (Resend), sent from a pg-boss job queue
+    calendar/          calendar files for each celebration
     qr.ts              album QR codes
   fonts/               self-hosted fonts (no request to Google)
 public/
@@ -49,29 +51,45 @@ public/
 **To change wording, dates, places or the wedding party, edit `src/content/wedding.ts`.**
 Anything still to confirm is in square brackets, like `[Start time]` and `[Guest hotel]`.
 
-## Stand-in data (to replace)
+## Data: Postgres, and what is still a stand-in
 
-Everything in `src/lib/data/` is a stub with the final function signatures, so the pages
+RSVPs and the site's editable content (times, venues, text) are stored in Postgres. Schema
+migrations (`drizzle/`) run at server start. Confirmation emails go out through Resend from a
+pg-boss job queue, never in the request itself.
+
+Two files in `src/lib/data/` are still stubs with their final function signatures, so the pages
 won't change when the real backend arrives:
 
-- `rsvp.ts`: replies are kept in memory and lost on restart. Next: Postgres, plus SMS confirmations.
-- `media.ts`: a fixed set of sample photos. Next: Postgres rows pointing at S3 objects served through CloudFront.
-- `wishes.ts`: sample wishes plus any sent while the server runs. Next: Postgres, voice and video in S3.
+- `media.ts`: a fixed set of sample photos. Next: Postgres rows pointing at objects in Cloudflare R2.
+- `wishes.ts`: sample wishes plus any sent while the server runs. Next: Postgres, with voice and
+  video in R2.
 
-Search for `TODO` to find the other placeholders: uploads (S3 presigned multipart), downloads
-(per-celebration zips), voice and video recording, calendar files, the seat lookup, the
-device cookie for "My uploads", and live updates for the album and slideshow (Server-Sent Events).
+Search for `TODO` to find the other placeholders: uploads (presigned multipart to R2), downloads
+(per-celebration zips, built by a separate media worker), voice and video recording, the device
+cookie for "My uploads", and live updates for the album (it will poll every 30 s).
 
-When guest media moves to CloudFront, add its host to `images.remotePatterns` in `next.config.ts`.
+When guest media is served from R2, add its host to `images.remotePatterns` in `next.config.ts`.
 
 ## Develop
 
 ```bash
 npm install
-npm run dev        # http://localhost:3000
+cp .env.example .env.local   # local settings; the Postgres values match docker compose
+docker compose up -d db      # local Postgres
+npm run dev                  # http://localhost:3000
 npm run lint
 npm run build
 ```
+
+### Tests
+
+```bash
+docker compose up -d db
+npm test             # Vitest, against the nona_test database
+npm run test:e2e     # Playwright, against a production build on port 3100
+```
+
+Without `RESEND_API_KEY`, development only logs the email instead of sending it.
 
 Built with Next.js 16 (App Router, Cache Components), React 19, TypeScript and Tailwind CSS 4.
 Colours and shadows are Tailwind tokens in `src/app/globals.css` (`cocoa`, `mocha`, `ember`,

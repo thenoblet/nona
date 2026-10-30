@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { albumUrl, displayUrl, qrSvg } from "@/lib/qr";
-import { QrCode } from "@/components/slideshow/QrCode";
+import { QrCode } from "@/components/ui/QrCode";
 import { PrintButton } from "./PrintButton";
 
 export const metadata: Metadata = {
