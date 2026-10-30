@@ -71,7 +71,11 @@ function fold(line: string): string[] {
   return folded;
 }
 
-export function buildIcs(events: CalendarEvent[], now: Date = new Date()): string {
+/**
+ * A calendar file. `stampedAt` is its DTSTAMP: a confirmation email passes the reply's time, so
+ * every retry of one email is the same bytes under the same idempotency key.
+ */
+export function buildIcs(events: CalendarEvent[], stampedAt: Date): string {
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -85,7 +89,7 @@ export function buildIcs(events: CalendarEvent[], now: Date = new Date()): strin
     lines.push(
       "BEGIN:VEVENT",
       `UID:${event.uid}`,
-      `DTSTAMP:${stamp(now)}`,
+      `DTSTAMP:${stamp(stampedAt)}`,
       allDay ? `DTSTART;VALUE=DATE:${start}` : `DTSTART:${start}`,
       allDay ? `DTEND;VALUE=DATE:${end}` : `DTEND:${end}`,
       `SUMMARY:${escapeText(event.title)}`,

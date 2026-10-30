@@ -53,6 +53,15 @@ describe("renderRsvpConfirmation", () => {
     expect(out.ics).not.toContain(`UID:${second.id}@nobletxnancy.com`);
   });
 
+  it("renders the same calendar file on every retry, stamped with the reply's time", async () => {
+    const reply = { ...record({ [first.id]: "yes" }), receivedAt: "2026-10-29T09:41:07.123Z" };
+    const firstTry = renderRsvpConfirmation(reply, contentDefaults, "https://example.com");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const retry = renderRsvpConfirmation(reply, contentDefaults, "https://example.com");
+    expect(retry).toEqual(firstTry);
+    expect(firstTry.ics).toContain("DTSTAMP:20261029T094107Z\r\n");
+  });
+
   it("has no calendar file when every reply is no", () => {
     const none = renderRsvpConfirmation(
       record({ [first.id]: "no" }),

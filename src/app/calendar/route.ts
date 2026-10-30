@@ -11,7 +11,10 @@ export async function GET(request: Request) {
   const wanted = new Set((new URL(request.url).searchParams.get("events") ?? "").split(",").map((id) => id.trim()));
   const chosen = celebrations.filter((celebration) => wanted.has(celebration.id));
   const site = siteUrl();
-  const body = buildIcs((chosen.length ? chosen : celebrations).map((celebration) => celebrationEvent(celebration, site)));
+  const body = buildIcs(
+    (chosen.length ? chosen : celebrations).map((celebration) => celebrationEvent(celebration, site)),
+    new Date(),
+  );
   return new Response(body, {
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",

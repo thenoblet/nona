@@ -72,6 +72,7 @@ ${replied
     accepted.length > 0
       ? buildIcs(
           accepted.map((celebration) => celebrationEvent(celebration, siteUrl)),
+          new Date(rsvp.receivedAt),
         )
       : null;
 
