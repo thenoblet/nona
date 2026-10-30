@@ -27,6 +27,8 @@ const nextConfig: NextConfig = {
     return [
       { source: "/images/:path*", headers: [week] },
       { source: "/audio/:path*", headers: [week] },
+      // The email header: every confirmation loads it, and Gmail's image proxy fetches it too.
+      { source: "/email/:path*", headers: [week] },
     ];
   },
   turbopack: {

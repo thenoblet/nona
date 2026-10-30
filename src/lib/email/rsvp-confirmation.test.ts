@@ -130,6 +130,29 @@ describe("renderRsvpConfirmation", () => {
     }
   });
 
+  it("puts each celebration's day on its ticket stub in the html only, a written day as written", async () => {
+    const withDay = (day: string): SiteContent => ({
+      ...contentDefaults,
+      celebrations: contentDefaults.celebrations.map((celebration) =>
+        celebration.id === first.id ? { ...celebration, day } : celebration,
+      ),
+    });
+    const stubText = (html: string) =>
+      [...html.matchAll(/<td[^>]*class="nn-stub"[^>]*>([\s\S]*?)<\/td>/g)].map((match) =>
+        withoutTags(match[1]).trim(),
+      );
+    const numeric = await render(record({ [first.id]: "yes" }), withDay("5"));
+    expect(stubText(numeric.html)).toEqual([
+      `${first.weekday.slice(0, 3)}05${first.month.slice(0, 3)}`,
+    ]);
+    // The stub repeats the date line, so the plain text has the date once.
+    expect(numeric.text.split(`${first.weekday} 5 ${first.month}`)).toHaveLength(2);
+    expect(numeric.text).not.toContain(`\n05\n`);
+
+    const written = await render(record({ [first.id]: "yes" }), withDay("[Day]"));
+    expect(stubText(written.html)[0]).toContain(asHtml("[Day]"));
+  });
+
   it("shows a celebration's GhanaPost GPS line under its place when it has one, and none when it doesn't", async () => {
     const withGps = contentDefaults.celebrations.filter((celebration) => celebration.placeDetail);
     const withoutGps = contentDefaults.celebrations.filter((celebration) => !celebration.placeDetail);
@@ -201,7 +224,7 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.html).not.toContain("data-outlook-only");
     // Straight around the 600 px container: opened inside the page's padding, closed before it ends.
     const [beforeOpen, afterOpen] = mail.html.split(outlookOpen);
-    expect(beforeOpen).toMatch(/<td style="padding:36px 14px 40px">$/);
+    expect(beforeOpen).toMatch(/<td style="padding:0 0 44px">$/);
     expect(afterOpen).toMatch(/^<table align="center" width="100%"[^>]*style="max-width:600px">/);
     const [beforeClose, afterClose] = mail.html.split(outlookClose);
     expect(beforeClose).toMatch(/nobletxnancy\.com|example\.com/);
@@ -270,7 +293,7 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.html).toContain("Church &lt;b&gt;&quot;hall&quot;&lt;/b&gt;");
     expect(mail.html).toContain("Hall &lt;img src=x&gt; &amp; garden");
     expect(mail.html).not.toContain("<b>");
-    expect(mail.html).not.toContain("<img");
+    expect(mail.html).not.toContain("<img src=x");
   });
 
   it.each(["Ama Owusu", "Akosua Ɔfori", "J. Doe", "Kwame Mensah Jr."])(
