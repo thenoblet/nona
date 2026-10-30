@@ -30,7 +30,7 @@ vi.mock("pg-boss", () => ({
   },
 }));
 
-import { CONFIRMATION_QUEUE, getBoss } from "./boss";
+import { CONFIRMATION_QUEUE, getBoss, JOB_QUEUE_SCHEMA } from "./boss";
 
 const globalWithQueue = globalThis as { __nonaJobQueue?: unknown };
 
@@ -51,6 +51,19 @@ describe("getBoss", () => {
       connectionTimeoutMillis: 5000,
       options: "-c statement_timeout=10000",
     });
+  });
+
+  it("opens the web app's small pool by default, in pg-boss's own schema", async () => {
+    await getBoss();
+    expect(fake.instances[0].options).toMatchObject({ max: 3, schema: JOB_QUEUE_SCHEMA });
+    expect(JOB_QUEUE_SCHEMA).toBe("pgboss");
+  });
+
+  it("opens the pool size its first caller asks for (the media worker's), and later calls share it", async () => {
+    const workerQueue = await getBoss(10);
+    expect(await getBoss()).toBe(workerQueue);
+    expect(fake.instances).toHaveLength(1);
+    expect(fake.instances[0].options).toMatchObject({ max: 10 });
   });
 
   it("stops a queue that failed to start, and starts a new one next time", async () => {

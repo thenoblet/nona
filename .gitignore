@@ -66,3 +66,6 @@ next-env.d.ts
 
 # superpowers specs and plans stay local, never committed
 docs/superpowers/
+
+# the media worker bundle (npm run build:worker)
+/dist/

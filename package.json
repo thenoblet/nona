@@ -5,12 +5,15 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:worker": "node scripts/build-worker.mjs",
+    "worker": "npm run build:worker && node --env-file-if-exists=.env.local --enable-source-maps dist/worker/main.mjs",
     "start": "next start",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:worker": "vitest run --config vitest.worker.config.ts",
     "email:preview": "email dev --dir src/emails --port 3030",
     "storage:init": "tsx scripts/storage-init.ts",
     "seed": "tsx --conditions=react-server scripts/seed-local.ts"

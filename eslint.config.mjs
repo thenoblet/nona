@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The media worker's bundle (npm run build:worker).
+    "dist/**",
   ]),
 ]);
 

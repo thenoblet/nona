@@ -194,6 +194,16 @@ export const media = pgTable(
     index("media_resume_idx")
       .on(table.guestId, table.sizeBytes, table.fileFingerprint)
       .where(sql`${table.status} = 'uploading'`),
+    // The media worker's sweeper (Task 8), every 10 minutes. Each holds only the rows in transit:
+    // items waiting to be processed, conversions waiting, and unfinished uploads in the order the
+    // sweeper pages through them.
+    index("media_uploaded_idx").on(table.uploadedAt).where(sql`${table.status} = 'uploaded'`),
+    index("media_conversion_queued_idx")
+      .on(table.listedAt)
+      .where(sql`${table.status} = 'ready' and ${table.conversion} = 'queued'`),
+    index("media_unfinished_upload_idx")
+      .on(table.startedAt, table.id)
+      .where(sql`${table.status} = 'uploading' and ${table.multipartUploadId} is not null`),
     check("media_purpose_check", oneOf(table.purpose, MEDIA_PURPOSES)),
     check("media_kind_check", oneOf(table.kind, MEDIA_FILE_KINDS)),
     check("media_status_check", oneOf(table.status, MEDIA_STATUSES)),

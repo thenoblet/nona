@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { EventId } from "@/lib/content/schema";
 import { isUuid } from "@/lib/data/ids";
 import { getDb } from "@/lib/db/client";
@@ -223,6 +223,76 @@ export async function uploadOwners(mediaIds: string[]): Promise<Map<string, stri
     .from(media)
     .where(inArray(media.id, ids));
   return new Map(rows.map((row) => [row.id, row.guestId]));
+}
+
+/*
+ * The media worker's queries (Task 8).
+ */
+
+/**
+ * Marks an item whose processing failed for good (a corrupt file, or retries used up) `failed`, with
+ * the short reason its uploader is shown. True if the item exists.
+ */
+export async function markProcessingFailed(mediaId: string, reason: string): Promise<boolean> {
+  const rows = await getDb()
+    .update(media)
+    .set({ status: "failed", failureReason: reason })
+    .where(eq(media.id, mediaId))
+    .returning({ id: media.id });
+  return rows.length > 0;
+}
+
+/** Marks a video's conversion failed for good. The video itself stays as it was, poster and all. */
+export async function markConversionFailed(mediaId: string): Promise<boolean> {
+  const rows = await getDb()
+    .update(media)
+    .set({ conversion: "failed" })
+    .where(eq(media.id, mediaId))
+    .returning({ id: media.id });
+  return rows.length > 0;
+}
+
+/** Where a sweep through unfinished uploads stopped: the last row it looked at. */
+export type UploadCursor = { startedAt: Date; id: string };
+
+export type UnfinishedUploadsPage = {
+  startedBefore: Date;
+  startedAfter: Date;
+  cursor: UploadCursor | null;
+  limit: number;
+};
+
+/**
+ * The query behind unfinishedUploads, exported so a test can check its plan: the partial index of
+ * unfinished uploads, read in its own order, so no sort. `status = 'uploading'` is a literal, so
+ * Postgres can prove the index applies under a generic plan.
+ */
+export function unfinishedUploadsQuery({ startedBefore, startedAfter, cursor, limit }: UnfinishedUploadsPage) {
+  return getDb()
+    .select(uploadColumns)
+    .from(media)
+    .where(
+      and(
+        sql`${media.status} = 'uploading'`,
+        isNotNull(media.multipartUploadId),
+        lt(media.startedAt, startedBefore),
+        gt(media.startedAt, startedAfter),
+        cursor
+          ? or(gt(media.startedAt, cursor.startedAt), and(eq(media.startedAt, cursor.startedAt), gt(media.id, cursor.id)))
+          : undefined,
+      ),
+    )
+    .orderBy(asc(media.startedAt), asc(media.id))
+    .limit(limit);
+}
+
+/**
+ * Unfinished uploads that have a multipart upload and were started between `startedAfter` and
+ * `startedBefore`, oldest first, after `cursor` when given: at most `limit` of them. The sweeper
+ * pages through them a batch at a time, so one sweep is bounded and the next carries on.
+ */
+export async function unfinishedUploads(page: UnfinishedUploadsPage): Promise<UploadRow[]> {
+  return unfinishedUploadsQuery(page);
 }
 
 export type NewUploadEvent = {

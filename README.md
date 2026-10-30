@@ -47,6 +47,8 @@ src/
     data/              rsvp.ts (Postgres), media.ts and wishes.ts (stand-ins, see below)
     email/ jobs/       confirmation emails (Resend), sent from a pg-boss job queue
     storage/           Cloudflare R2 (MinIO locally): object keys, multipart uploads, manifests
+    media/             the upload API's work and the media table's queries
+  worker/              the media worker, a process and image of its own (see below)
     calendar/          calendar files for each celebration
     qr.ts              album QR codes
   fonts/               self-hosted fonts (no request to Google)
@@ -121,6 +123,14 @@ npm test             # Vitest, against the nona_test database and MinIO
 npm run test:e2e     # Playwright, against a production build on port 3100
 ```
 
+The media worker's tests (`npm run test:worker`, `src/worker/`) run ffmpeg and libheif's tools, so
+they run in the worker image's test target, against the same database and MinIO:
+
+```bash
+docker build -f Dockerfile.worker --target test -t nona-worker-test .
+docker run --rm --network host nona-worker-test
+```
+
 Without `RESEND_API_KEY`, development only logs the email instead of sending it.
 
 ### Email preview
@@ -179,3 +189,55 @@ To deploy automatically, put the Dokploy app's deploy URL in the repository secr
 Only `main` builds the image and deploys; running the workflow by hand on another branch runs the
 tests only. To freeze deploys (the wedding week), blank that secret. To roll back, point the app at an earlier
 `:sha-` tag.
+
+## The media worker
+
+Guests' photos and videos are processed by a second process, the media worker (`src/worker/`): its
+own image (`Dockerfile.worker`, Debian trixie with ffmpeg and libheif), on its own box
+(`nona-worker-01`). It takes the jobs the site queues in Postgres (pg-boss): thumbnails, posters,
+conversions, wish recordings, hiding and preview cards, each queue at its own concurrency, so a long
+conversion never holds up a photo (conversions run under `nice -n 19` with capped threads). A job
+that fails for good marks its item `failed`, with the reason its uploader sees.
+
+- It never migrates the database: it waits ("waiting for schema") until the site has applied every
+  migration it was built with, then logs "ready".
+- It saves a heartbeat every 30 s. `GET /api/worker-health` on the site answers 200 while the last
+  one is under 2 minutes old and 503 otherwise, for the uptime check.
+- Every 10 minutes a sweeper queues anything left behind: items uploaded with no job, conversions
+  with no job, and uploads whose phone dropped at the very last step (it completes them when R2
+  holds every part).
+- On SIGTERM it stops taking jobs, kills ffmpeg and the other tools, and exits within 8 s; the
+  interrupted jobs go back to their queues.
+
+To run it locally against docker compose's database and MinIO: `npm run worker` (it builds
+`dist/worker` first, with `npm run build:worker`). The site must have migrated the database.
+
+**Deploy.** On every push to `main`, GitHub Actions builds the image and pushes it to
+`ghcr.io/thenoblet/nona-worker` (private) as `:latest` and `:sha-<short>`, then calls the repository
+secret `DOKPLOY_WORKER_DEPLOY_URL` (skipped when blank: blank it to freeze the worker's deploys).
+In Dokploy, the `nona26-worker` app runs that image on `nona-worker-01`, with the same `ghcr.io`
+registry login as the site, about 3 CPUs and 12 GB, one replica, and the box's scratch folder
+`/mnt/nona-worker` bind-mounted at `/scratch`. The image runs as uid:gid `10001:10001`, the scratch
+folder's owner. It needs no port. Its environment:
+
+| Variable | Default | What it is |
+|---|---|---|
+| `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | | The site's database. |
+| `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`, `MEDIA_BASE_URL` | | Cloudflare R2, as the site has them. |
+| `WORKER_SCRATCH_DIR` | required | `/scratch`, where the scratch folder is mounted. Without it the worker refuses to start, rather than fill the container's own disk. |
+| `WORKER_PHOTO_CONCURRENCY` | 2 | Photos processed at once. |
+| `WORKER_POSTER_CONCURRENCY` | 1 | Videos probed and given a poster at once. |
+| `WORKER_WISH_CONCURRENCY` | 1 | Voice and video wishes at once. |
+| `WORKER_JPEG_CONCURRENCY` | 1 | Full-size JPEGs of HEIC photos at once. |
+| `WORKER_VISIBILITY_CONCURRENCY` | 2 | Hides and unhides at once. |
+| `WORKER_CARD_CONCURRENCY` | 1 | Link-preview cards at once. |
+| `WORKER_CONVERT_ON_DEMAND_CONCURRENCY` | 1 | Conversions a phone asked for, or highlights, at once. |
+| `WORKER_CONVERT_BACKLOG_CONCURRENCY` | 1 | Backlog conversions at once, while the admin's backlog switch is on. |
+| `WORKER_X264_THREADS` | 2 | x264's threads in each conversion. |
+| `WORKER_SHARP_THREADS` | 1 | sharp's threads in each photo. |
+| `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job. |
+| `WORKER_QUEUE_POOL_SIZE` | 10 | Database connections for the job queue. |
+
+The defaults suit about 3 CPUs and 12 GB. Thread counts never follow the machine's core count,
+which inside Docker is the host's, not the container's share; for a bigger box (the backlog week),
+raise the container's CPUs and these numbers together.

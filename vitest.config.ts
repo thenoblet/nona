@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { TEST_DB_ENV, TEST_STORAGE_ENV } from "./test/env";
 
 // globalSetup runs in the main process and doesn't see test.env, so set it here.
@@ -18,6 +18,8 @@ export default defineConfig({
     environment: "node",
     globalSetup: ["./test/global-setup.ts"],
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    // The media worker's tests run ffmpeg and libheif's tools: npm run test:worker, in its image.
+    exclude: [...configDefaults.exclude, "src/worker/**"],
     fileParallelism: false,
   },
 });

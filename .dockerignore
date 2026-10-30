@@ -5,6 +5,7 @@
 # dependencies and build output (rebuilt inside the image)
 node_modules
 .next
+dist
 *.tsbuildinfo
 next-env.d.ts
 
@@ -47,6 +48,8 @@ design
 .DS_Store
 *.log
 
-# the image's own build files
+# the images' own build files
 Dockerfile
 .dockerignore
+Dockerfile.worker
+Dockerfile.worker.dockerignore

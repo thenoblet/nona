@@ -2,7 +2,7 @@ import { PgBoss } from "pg-boss";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { dbConfig } from "@/lib/env";
-import { createMediaQueues, MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES } from "./media-queues";
+import { CONVERT_PRIORITY, createMediaQueues, MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES } from "./media-queues";
 
 const allQueues = Object.values(MEDIA_QUEUES);
 const jobQueues = allQueues.filter((name) => name !== MEDIA_QUEUES.dead);
@@ -67,6 +67,10 @@ describe("the media queues' options", () => {
     for (const name of allQueues.filter((name) => name !== MEDIA_QUEUES.convert)) {
       expect(MEDIA_QUEUE_OPTIONS[name].expireInSeconds, name).toBe(900);
     }
+  });
+
+  it("put a conversion someone asked for at 20, the worker's on-demand floor, above the backlog's", () => {
+    expect(CONVERT_PRIORITY).toEqual({ onDemand: 20, backlog: 0 });
   });
 
   it("send a job that runs out of retries to media.dead, which keeps its own", () => {

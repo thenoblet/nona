@@ -18,6 +18,13 @@ export const MEDIA_QUEUES = {
 export type MediaQueueName = (typeof MEDIA_QUEUES)[keyof typeof MEDIA_QUEUES];
 
 /**
+ * media.convert's priorities. A conversion a guest's phone asked for, or a highlight the couple
+ * picked, is sent at `onDemand`; the worker's on-demand conversions take only those (priority 20 and
+ * up), and its backlog conversions take the rest, while the admin's backlog switch is on.
+ */
+export const CONVERT_PRIORITY = { onDemand: 20, backlog: 0 } as const;
+
+/**
  * A queue's options. createQueue takes them all; updateQueue takes all but the policy, which
  * pg-boss fixes when the queue is created and refuses to change after.
  */
