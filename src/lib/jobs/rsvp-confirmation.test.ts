@@ -36,9 +36,12 @@ vi.mock("./boss", () => ({
   },
 }));
 
+/** Advisory locks held in the test database only: another app's queue on the same server takes its own. */
 async function advisoryLocks(): Promise<number> {
   const result = await getDb().execute<{ count: number }>(
-    sql`select count(*)::int as count from pg_locks where locktype = 'advisory'`,
+    sql`select count(*)::int as count from pg_locks
+        where locktype = 'advisory'
+          and database = (select oid from pg_database where datname = current_database())`,
   );
   return result[0].count;
 }
