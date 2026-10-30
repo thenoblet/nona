@@ -64,11 +64,19 @@ describe("handleRsvpConfirmation", () => {
     await resetDb();
   });
 
-  it("sends to the reply's email and marks it sent", async () => {
+  it("sends the rendered email to the reply's address, once per reply, and marks it sent", async () => {
     const reply = await queued();
     await handleRsvpConfirmation(reply.id, { retryCount: 0, retryLimit: 5 });
     expect(send.fn).toHaveBeenCalledOnce();
-    expect(send.fn.mock.calls[0][0]).toMatchObject({ to: "ama@example.com" });
+    const message = send.fn.mock.calls[0][0];
+    expect(message).toMatchObject({
+      to: "ama@example.com",
+      subject: "Your reply to Noblet & Nancy",
+      idempotencyKey: `rsvp-confirmation/${reply.id}`,
+    });
+    expect(message.html).toContain("Dear Ama Test,");
+    expect(message.text).toContain("Dear Ama Test,");
+    expect(message.ics).toContain("BEGIN:VCALENDAR");
     expect((await getRsvp(reply.id))?.emailStatus).toBe("sent");
   });
 

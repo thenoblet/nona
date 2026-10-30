@@ -1,80 +1,79 @@
+import { createElement } from "react";
+import { render, toPlainText } from "react-email";
+import RsvpConfirmation, { type ConfirmationCelebration } from "@/emails/rsvp-confirmation";
+import { buildIcs, celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
 import type { SiteContent } from "@/lib/content/schema";
-import { buildIcs, celebrationEvent } from "@/lib/calendar/ics";
 import type { RsvpRecord } from "@/lib/data/types";
 
-const escapeHtml = (value: string) =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+const SUBJECT = "Your reply to Noblet & Nancy";
 
 /** Only a plain name is echoed back: the address is unverified, so a link must not ride along. */
-function greetingName(fullName: string): string {
+function greetingName(fullName: string): string | null {
   // A period only ends an initial or suffix ("J. Doe", "Jr."), so "bit.ly" is not a name.
   const plain =
     fullName.length <= 60 && /^(?:[\p{L}\p{M}' -]|\.(?= |$))+$/u.test(fullName);
-  return plain ? fullName : "guest";
+  return plain ? fullName : null;
 }
 
-export function renderRsvpConfirmation(
+/** "05" reads as "5"; a day the couple wrote some other way is shown as written. */
+const dayOfMonth = (day: string) => (/^\d+$/.test(day) ? String(Number(day)) : day);
+
+/**
+ * The confirmation email for a reply, rendered from the template in `src/emails`. The same reply
+ * always renders the same bytes (the calendar file is stamped with the reply's time), so a retry
+ * under the same idempotency key sends exactly what the first try did.
+ */
+export async function renderRsvpConfirmation(
   rsvp: RsvpRecord,
   content: SiteContent,
   siteUrl: string,
-): { subject: string; text: string; html: string; ics: string | null } {
-  const greeting = `Dear ${greetingName(rsvp.fullName)}`;
-  const replied = content.celebrations.filter(
+): Promise<{ subject: string; text: string; html: string; ics: string | null }> {
+  const answered = content.celebrations.filter(
     (celebration) => rsvp.answers[celebration.id],
   );
-  const accepted = replied.filter(
+  const attending = answered.filter(
     (celebration) => rsvp.answers[celebration.id] === "yes",
   );
-  const link = `${siteUrl}/rsvp`;
-  const change =
-    "Need to change something? Send a new reply with the same name and phone or email.";
-  const signOff = "With love, Noblet & Nancy";
-  const when = (celebration: (typeof replied)[number]) =>
-    `${celebration.weekday} ${Number(celebration.day)} ${celebration.month}, ${celebration.time}`;
-  const status = (celebration: (typeof replied)[number]) =>
-    rsvp.answers[celebration.id] === "yes" ? "Attending" : "Not attending";
+  const celebrations: ConfirmationCelebration[] = answered.map((celebration) => {
+    const comingTo = rsvp.answers[celebration.id] === "yes";
+    return {
+      id: celebration.id,
+      name: celebration.name,
+      date: `${celebration.weekday} ${dayOfMonth(celebration.day)} ${celebration.month}`,
+      time: celebration.time,
+      place: celebration.place,
+      placeDetail: celebration.placeDetail,
+      attending: comingTo,
+      googleCalendarUrl: comingTo
+        ? googleCalendarUrl(celebrationEvent(celebration, siteUrl))
+        : null,
+    };
+  });
 
-  const text = [
-    `${greeting},`,
-    "",
-    "Thank you for your reply. Here is what we have for you:",
-    "",
-    ...replied.map(
-      (celebration) =>
-        `${celebration.name}: ${status(celebration)}\n${when(celebration)}\n${celebration.place}\n`,
-    ),
-    `You can see the details again at ${link}`,
-    "",
-    change,
-    "",
-    signOff,
-  ].join("\n");
-
-  const html = `<div style="font-family:Georgia,serif;color:#3b2a20;line-height:1.5">
-<p>${escapeHtml(greeting)},</p>
-<p>Thank you for your reply. Here is what we have for you:</p>
-${replied
-  .map(
-    (celebration) =>
-      `<p><strong>${escapeHtml(celebration.name)}: ${status(celebration)}</strong><br>${escapeHtml(when(celebration))}<br>${escapeHtml(celebration.place)}</p>`,
-  )
-  .join("\n")}
-<p><a href="${escapeHtml(link)}">See the details again</a></p>
-<p>${change}</p>
-<p>${signOff}</p>
-</div>`;
+  const html = await render(
+    createElement(RsvpConfirmation, {
+      guestName: greetingName(rsvp.fullName),
+      celebrations,
+      siteUrl,
+    }),
+  );
+  const text = toPlainText(html, {
+    selectors: [
+      // The headings are the greeting and the celebrations' names: written as they are, not shouted.
+      { selector: "h1", options: { uppercase: false } },
+      { selector: "h2", options: { uppercase: false, leadingLineBreaks: 2, trailingLineBreaks: 1 } },
+      // The footer's link already reads as the address it goes to.
+      { selector: "a[data-text-without-href=true]", format: "anchor", options: { ignoreHref: true } },
+    ],
+  });
 
   const ics =
-    accepted.length > 0
+    attending.length > 0
       ? buildIcs(
-          accepted.map((celebration) => celebrationEvent(celebration, siteUrl)),
+          attending.map((celebration) => celebrationEvent(celebration, siteUrl)),
           new Date(rsvp.receivedAt),
         )
       : null;
 
-  return { subject: "Your reply to Noblet & Nancy", text, html, ics };
+  return { subject: SUBJECT, text, html, ics };
 }

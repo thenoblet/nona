@@ -66,7 +66,7 @@ export async function handleRsvpConfirmation(
   const rsvp = await getRsvp(rsvpId);
   if (!rsvp || rsvp.supersededAt || !rsvp.email) return;
   try {
-    const mail = renderRsvpConfirmation(
+    const mail = await renderRsvpConfirmation(
       rsvp,
       await readSiteContent(),
       siteUrl(),
