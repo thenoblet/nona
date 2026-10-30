@@ -18,6 +18,14 @@ describe("phoneKey", () => {
   it("turns +233 into a leading 0", () => {
     expect(phoneKey("+233 24 000 0000")).toBe("0240000000");
   });
+  it("reads every way of writing a Ghana number as the same key", () => {
+    for (const written of ["024 000 0000", "+233 24 000 0000", "+233 (0)24 000 0000", "+2330240000000", "00233 24 000 0000", "00233 (0)24 000 0000"]) {
+      expect(phoneKey(written)).toBe("0240000000");
+    }
+  });
+  it("reads 00 as + for numbers from abroad", () => {
+    expect(phoneKey("0044 7700 900123")).toBe(phoneKey("+44 7700 900123"));
+  });
   it("keeps digits only", () => {
     expect(phoneKey("024-000-0000")).toBe("0240000000");
     expect(phoneKey("0240000000")).toBe("0240000000");

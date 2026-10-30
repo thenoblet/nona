@@ -71,7 +71,7 @@ export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }
       })
       .from(rsvps)
       .where(and(eq(rsvps.nameKey, guestName), isNull(rsvps.supersededAt), sameGuest))
-      .orderBy(desc(rsvps.receivedAt))
+      .orderBy(desc(rsvps.receivedAt), desc(rsvps.id))
       .limit(1);
     if (newest?.repeated) return { record: toRecord(newest.reply) };
 
@@ -88,6 +88,9 @@ export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }
         answers: input.answers,
         otherNames,
         song,
+        // The time now, with the lock held, not when the transaction began: a reply that waited
+        // for the lock is never dated before the one it waited for.
+        receivedAt: sql`clock_timestamp()`,
       })
       .returning();
     return { record: toRecord(created) };

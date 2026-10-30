@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
+import postgres from "postgres";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
+import { dbConfig } from "@/lib/env";
 import { resetDb } from "../../../test/db";
 import type { RsvpInput } from "./types";
 import {
@@ -34,6 +36,26 @@ async function receivedMinutesAgo(id: string, minutes: number): Promise<void> {
 async function flagsOf(id: string) {
   return (await listRsvps()).find((reply) => reply.id === id)?.flags;
 }
+
+describe("saveRsvp's received time", () => {
+  it("is read once the reply holds its name's lock, so a reply that waited is never dated before the one it waited for", async () => {
+    const holder = postgres({ ...dbConfig(), max: 1 });
+    try {
+      let saving: ReturnType<typeof saveRsvp> | undefined;
+      let released = new Date(0);
+      await holder.begin(async (transaction) => {
+        await transaction`select pg_advisory_xact_lock(hashtext(${"ama owusu"}))`;
+        saving = saveRsvp(base);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        [{ released }] = await transaction<{ released: Date }[]>`select clock_timestamp() as released`;
+      });
+      const { record } = await saving!;
+      expect(new Date(record.receivedAt).getTime()).toBeGreaterThanOrEqual(released.getTime());
+    } finally {
+      await holder.end();
+    }
+  });
+});
 
 describe("saveRsvp keeps every reply", () => {
   it("keeps a second reply from the same name and phone, and flags both as replied again", async () => {

@@ -68,6 +68,17 @@ async function rows() {
   }
 }
 
+async function savedAnswers() {
+  const sql = postgres({ ...dbConfig(), max: 1 });
+  try {
+    return (await sql<{ answers: Record<string, string> }[]>`SELECT answers FROM rsvps`).map((row) => row.answers);
+  } finally {
+    await sql.end();
+  }
+}
+
+const [firstCelebration] = contentDefaults.celebrations;
+
 describe("submitRsvp", () => {
   beforeEach(async () => {
     saveRsvp.failure = null;
@@ -100,6 +111,22 @@ describe("submitRsvp", () => {
     expect(state.errors.email).toBe(
       "That email doesn't look right. Could you check it?",
     );
+    expect(await rows()).toEqual([]);
+  });
+
+  it("keeps only the answers for celebrations that exist", async () => {
+    const state = await submitRsvp(initialRsvpState, form({ "answer-party": "yes", "answer-__proto__": "yes" }));
+    expect(state.status).toBe("sent");
+    expect(await savedAnswers()).toEqual([{ [firstCelebration.id]: "yes" }]);
+  });
+
+  it("asks for an answer when none is a yes or no to a celebration that exists", async () => {
+    const state = await submitRsvp(
+      initialRsvpState,
+      form({ [`answer-${firstCelebration.id}`]: "maybe", "answer-party": "yes" }),
+    );
+    expect(state.status).toBe("error");
+    expect(state.errors.answers).toBe("Please let us know about at least one celebration.");
     expect(await rows()).toEqual([]);
   });
 
