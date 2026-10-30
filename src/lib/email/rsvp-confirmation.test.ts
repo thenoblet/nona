@@ -190,6 +190,27 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.text.trim().split("\n").at(-1)).toBe("example.com");
   });
 
+  it("holds the email at 600 px in classic Outlook for Windows, which ignores max-width", async () => {
+    const mail = await render(record({ [first.id]: "yes", [second.id]: "no" }));
+    const outlookOpen =
+      '<!--[if mso]><table role="presentation" align="center" width="600" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->';
+    const outlookClose = "<!--[if mso]></td></tr></table><![endif]-->";
+    // Written once each, as comments only Outlook reads, with no element left around them.
+    expect(mail.html.split(outlookOpen)).toHaveLength(2);
+    expect(mail.html.split(outlookClose)).toHaveLength(2);
+    expect(mail.html).not.toContain("data-outlook-only");
+    // Straight around the 600 px container: opened inside the page's padding, closed before it ends.
+    const [beforeOpen, afterOpen] = mail.html.split(outlookOpen);
+    expect(beforeOpen).toMatch(/<td style="padding:36px 14px 40px">$/);
+    expect(afterOpen).toMatch(/^<table align="center" width="100%"[^>]*style="max-width:600px">/);
+    const [beforeClose, afterClose] = mail.html.split(outlookClose);
+    expect(beforeClose).toMatch(/nobletxnancy\.com|example\.com/);
+    expect(beforeClose).toMatch(/<\/table>$/);
+    expect(afterClose).toMatch(/^<\/td><\/tr><\/tbody><\/table>/);
+    // The plain text never sees them.
+    expect(mail.text).not.toContain("mso");
+  });
+
   it("uses only https links", async () => {
     const mail = await render(record({ [first.id]: "yes", [second.id]: "no" }));
     const htmlLinks = [...mail.html.matchAll(/(?<![\w-])(?:href|src)="([^"]*)"|url\(([^)]*)\)/g)].map(

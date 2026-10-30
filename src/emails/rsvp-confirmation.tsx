@@ -2,6 +2,7 @@ import { Button, Container, Head, Heading, Html, Preview, Section, Text } from "
 import { CelebrationCard, type ConfirmationCelebration } from "./components/CelebrationCard";
 import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
+import { OutlookFixedWidth } from "./components/OutlookOnly";
 import { sampleReply } from "./components/sample";
 import { clientStyles, colours, fontFaces, fonts } from "./components/theme";
 
@@ -49,81 +50,84 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl }: R
       <body className="nn-page" style={{ margin: 0, padding: 0, backgroundColor: colours.blush }}>
         <Preview>{intro}</Preview>
         <Section className="nn-page" style={{ backgroundColor: colours.blush, padding: "36px 14px 40px" }}>
-          <Container style={{ maxWidth: "600px" }}>
-            <Header />
-            <Heading
-              as="h1"
-              className="nn-ink"
-              style={{
-                margin: "0 0 10px",
-                textAlign: "center",
-                fontFamily: fonts.serif,
-                fontStyle: "italic",
-                fontWeight: 500,
-                fontSize: "30px",
-                lineHeight: "38px",
-                color: colours.cocoa,
-              }}
-            >
-              {`Dear ${guestName ?? "guest"},`}
-            </Heading>
-            <Text className="nn-soft" style={paragraph}>
-              {intro}
-            </Text>
-
-            <Section style={{ paddingTop: "14px" }}>
-              {celebrations.map((celebration) => (
-                <CelebrationCard key={celebration.id} celebration={celebration} />
-              ))}
-            </Section>
-
-            {comingToAny ? (
-              <Text className="nn-soft" style={{ ...paragraph, margin: "18px 0 0", fontSize: "14px", lineHeight: "22px" }}>
-                For Apple, Outlook and other calendars, open the calendar file attached to this email.
-              </Text>
-            ) : null}
-
-            <Text className="nn-soft" style={{ ...paragraph, margin: "34px 0 0" }}>
-              Need to change something? Send a new reply with the same name and phone or email.
-            </Text>
-            <Section style={{ paddingTop: "18px", textAlign: "center" }}>
-              <Button
-                href={`${siteUrl}/rsvp`}
-                className="nn-button"
+          {/* Classic Outlook for Windows ignores max-width: there, a 600 px table holds the email's width. */}
+          <OutlookFixedWidth width={600}>
+            <Container style={{ maxWidth: "600px" }}>
+              <Header />
+              <Heading
+                as="h1"
+                className="nn-ink"
                 style={{
-                  padding: "15px 30px",
-                  borderRadius: "999px",
-                  backgroundColor: colours.cocoa,
-                  color: colours.white,
-                  fontFamily: fonts.sans,
-                  fontSize: "12px",
+                  margin: "0 0 10px",
+                  textAlign: "center",
+                  fontFamily: fonts.serif,
+                  fontStyle: "italic",
                   fontWeight: 500,
-                  letterSpacing: "0.2em",
-                  textTransform: "uppercase",
+                  fontSize: "30px",
+                  lineHeight: "38px",
+                  color: colours.cocoa,
                 }}
               >
-                Change my reply
-              </Button>
-            </Section>
+                {`Dear ${guestName ?? "guest"},`}
+              </Heading>
+              <Text className="nn-soft" style={paragraph}>
+                {intro}
+              </Text>
 
-            <Text
-              className="nn-accent"
-              style={{
-                margin: "34px 0 0",
-                textAlign: "center",
-                fontFamily: fonts.script,
-                fontStyle: "italic",
-                fontSize: "30px",
-                lineHeight: "40px",
-                color: colours.emberInk,
-              }}
-            >
-              {/* Too long for a narrow screen, it breaks after "With love,". */}
-              With love, <span style={{ whiteSpace: "nowrap" }}>Noblet &amp; Nancy</span>
-            </Text>
+              <Section style={{ paddingTop: "14px" }}>
+                {celebrations.map((celebration) => (
+                  <CelebrationCard key={celebration.id} celebration={celebration} />
+                ))}
+              </Section>
 
-            <Footer siteUrl={siteUrl} />
-          </Container>
+              {comingToAny ? (
+                <Text className="nn-soft" style={{ ...paragraph, margin: "18px 0 0", fontSize: "14px", lineHeight: "22px" }}>
+                  For Apple, Outlook and other calendars, open the calendar file attached to this email.
+                </Text>
+              ) : null}
+
+              <Text className="nn-soft" style={{ ...paragraph, margin: "34px 0 0" }}>
+                Need to change something? Send a new reply with the same name and phone or email.
+              </Text>
+              <Section style={{ paddingTop: "18px", textAlign: "center" }}>
+                <Button
+                  href={`${siteUrl}/rsvp`}
+                  className="nn-button"
+                  style={{
+                    padding: "15px 30px",
+                    borderRadius: "999px",
+                    backgroundColor: colours.cocoa,
+                    color: colours.white,
+                    fontFamily: fonts.sans,
+                    fontSize: "12px",
+                    fontWeight: 500,
+                    letterSpacing: "0.2em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Change my reply
+                </Button>
+              </Section>
+
+              <Text
+                className="nn-accent"
+                style={{
+                  margin: "34px 0 0",
+                  textAlign: "center",
+                  fontFamily: fonts.script,
+                  fontStyle: "italic",
+                  fontSize: "30px",
+                  lineHeight: "40px",
+                  color: colours.emberInk,
+                }}
+              >
+                {/* Too long for a narrow screen, it breaks after "With love,". */}
+                With love, <span style={{ whiteSpace: "nowrap" }}>Noblet &amp; Nancy</span>
+              </Text>
+
+              <Footer siteUrl={siteUrl} />
+            </Container>
+          </OutlookFixedWidth>
         </Section>
       </body>
     </Html>

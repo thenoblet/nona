@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { render, toPlainText } from "react-email";
+import { unwrapOutlookOnly } from "@/emails/components/OutlookOnly";
 import RsvpConfirmation, { type ConfirmationCelebration } from "@/emails/rsvp-confirmation";
 import { buildIcs, celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
 import type { SiteContent } from "@/lib/content/schema";
@@ -50,12 +51,14 @@ export async function renderRsvpConfirmation(
     };
   });
 
-  const html = await render(
-    createElement(RsvpConfirmation, {
-      guestName: greetingName(rsvp.fullName),
-      celebrations,
-      siteUrl,
-    }),
+  const html = unwrapOutlookOnly(
+    await render(
+      createElement(RsvpConfirmation, {
+        guestName: greetingName(rsvp.fullName),
+        celebrations,
+        siteUrl,
+      }),
+    ),
   );
   const text = toPlainText(html, {
     selectors: [
