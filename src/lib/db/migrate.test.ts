@@ -23,9 +23,10 @@ describe("runMigrations", () => {
     const holder = postgres({ ...dbConfig(), max: 1 });
     await holder`SELECT pg_advisory_lock(472026)`;
     try {
-      const started = Date.now();
+      // performance.now() is monotonic: the wall clock can jump (WSL resyncs it) mid-test.
+      const started = performance.now();
       await expect(runMigrations()).rejects.toThrow();
-      expect(Date.now() - started).toBeLessThan(12_000);
+      expect(performance.now() - started).toBeLessThan(12_000);
     } finally {
       await holder`SELECT pg_advisory_unlock(472026)`;
       await holder.end();

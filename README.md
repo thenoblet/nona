@@ -154,5 +154,6 @@ The database is backed up every night at 02:30 UTC by Dokploy, to a private Clou
 Backups are kept forever.
 
 To deploy automatically, put the Dokploy app's deploy URL in the repository secret `DOKPLOY_DEPLOY_URL`.
-To freeze deploys (the wedding week), blank that secret. To roll back, point the app at an earlier
+Only `main` builds the image and deploys; running the workflow by hand on another branch runs the
+tests only. To freeze deploys (the wedding week), blank that secret. To roll back, point the app at an earlier
 `:sha-` tag.

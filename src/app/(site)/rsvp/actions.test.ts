@@ -1,5 +1,5 @@
 import postgres from "postgres";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { contentDefaults } from "@/lib/content/defaults";
 import { dbConfig } from "@/lib/env";
 import { initialRsvpState } from "@/components/rsvp/options";
@@ -9,13 +9,18 @@ vi.mock("@/lib/content/get", () => ({
   getSiteContent: async () => contentDefaults,
 }));
 
+// after() runs its task once the response is sent; the tests wait for exactly those tasks.
+const afterTasks = vi.hoisted(() => [] as Promise<unknown>[]);
 vi.mock("next/server", () => ({
-  after: (fn: () => unknown) => {
-    Promise.resolve()
-      .then(fn)
-      .catch(() => {});
+  after: (task: () => unknown) => {
+    afterTasks.push(Promise.resolve().then(task));
   },
 }));
+
+/** Waits for every task the action handed to after(). */
+async function settle() {
+  await Promise.all(afterTasks.splice(0));
+}
 
 const boss = vi.hoisted(() => ({ send: vi.fn(), fail: false }));
 vi.mock("@/lib/jobs/boss", async (importOriginal) => {
@@ -84,7 +89,13 @@ describe("submitRsvp", () => {
     saveRsvp.failure = null;
     boss.fail = false;
     boss.send.mockClear();
+    afterTasks.length = 0;
     await resetDb();
+  });
+
+  afterEach(async () => {
+    await settle();
+    vi.restoreAllMocks();
   });
 
   it("saves a reply with an email", async () => {
@@ -157,10 +168,6 @@ describe("submitRsvp", () => {
     expect(logged.join(" ")).not.toContain("example.com");
     expect(logged.join(" ")).not.toContain("Ama Test");
   });
-
-  async function settle() {
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
 
   it("queues a confirmation when an email was given", async () => {
     await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));

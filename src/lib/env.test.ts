@@ -25,6 +25,16 @@ describe("dbConfig", () => {
       "Missing database setting: POSTGRES_PASSWORD",
     );
   });
+
+  it("treats an empty value as missing", () => {
+    expect(() => dbConfig({ ...full, POSTGRES_HOST: "" })).toThrow("Missing database setting: POSTGRES_HOST");
+  });
+
+  it("refuses a port that isn't a whole positive number", () => {
+    for (const port of ["five-four-three-two", "5432.5", "-1", "0"]) {
+      expect(() => dbConfig({ ...full, POSTGRES_PORT: port })).toThrow();
+    }
+  });
 });
 
 describe("isDbConfigured", () => {
@@ -34,5 +44,9 @@ describe("isDbConfigured", () => {
 
   it("is true when all five are set", () => {
     expect(isDbConfigured(full)).toBe(true);
+  });
+
+  it("is false when one is set but empty", () => {
+    expect(isDbConfigured({ ...full, POSTGRES_DB: "" })).toBe(false);
   });
 });

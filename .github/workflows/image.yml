@@ -1,5 +1,6 @@
 # Builds the production image on every push to main and pushes it to GHCR.
 # Dokploy pulls the image; nothing is built on the server.
+# A manual run on any other branch runs the tests only: only main builds :latest and deploys.
 # To freeze deploys (e.g. the wedding week), blank the DOKPLOY_DEPLOY_URL secret.
 
 name: Image
@@ -9,9 +10,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
+# Each job asks for what it needs; nothing by default.
+permissions: {}
 
 concurrency:
   group: image
@@ -20,6 +20,8 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:18
@@ -66,7 +68,11 @@ jobs:
 
   build:
     needs: test
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     env:
       IMAGE: ghcr.io/${{ github.repository }}
       DOKPLOY_DEPLOY_URL: ${{ secrets.DOKPLOY_DEPLOY_URL }}
