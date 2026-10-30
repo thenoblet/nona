@@ -156,6 +156,7 @@ in this repository.
 |---|---|
 | `SITE_URL` | The public address, `https://nobletxnancy.com`, without a trailing slash. Used in QR codes, emails, calendar files and link previews; also passed to the build, because static pages bake it in. |
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | The database on the private network. Without them the site shows its built-in text, but replies, the admin and emails are off. |
+| `GUEST_COOKIE_SECRET` | Signs the cookie that recognises a guest's browser: at least 32 random bytes (`openssl rand -base64 32`). Without it, every page and route that reads the guest cookie fails. Changing it forgets every browser's guests; their personal links bring them back. |
 | `RESEND_API_KEY` | Sends the confirmation emails. Without it, or once Resend's daily limit is reached, a confirmation shows "Sending" in the admin for about 24 to 28 hours of retries, then ends "Failed"; it never claims to have sent. |
 | `EMAIL_FROM` | The sender: a name and an address on a domain verified in Resend. Optional; it defaults to the RSVP address in `src/lib/email/send.ts`. |
 | `EMAIL_REPLY_TO` | Where a guest's reply to the email goes. Several addresses, separated by commas, all receive it. |

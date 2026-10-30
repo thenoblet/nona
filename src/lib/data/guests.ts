@@ -45,6 +45,13 @@ export async function findGuestByToken(token: string): Promise<Guest | null> {
   return row ? toGuest(row) : null;
 }
 
+/** The guest with this id, or null. Anything that isn't a uuid finds no one. */
+export async function findGuestById(id: string): Promise<Guest | null> {
+  if (!isUuid(id)) return null;
+  const [row] = await getDb().select().from(guests).where(eq(guests.id, id)).limit(1);
+  return row ? toGuest(row) : null;
+}
+
 /** Changes the guest's name (trimmed, cut to 80 characters; empty clears it). Null when there is no such guest. */
 export async function setGuestName(id: string, name: string | null): Promise<Guest | null> {
   if (!isUuid(id)) return null;

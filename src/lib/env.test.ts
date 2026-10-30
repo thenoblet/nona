@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dbConfig, isDbConfigured, mediaBaseUrl, storageConfig } from "./env";
+import { dbConfig, guestCookieSecret, isDbConfigured, mediaBaseUrl, storageConfig } from "./env";
 
 const full = {
   POSTGRES_HOST: "localhost",
@@ -104,5 +104,44 @@ describe("mediaBaseUrl", () => {
 
   it("refuses an address that isn't http(s)", () => {
     expect(() => mediaBaseUrl({ MEDIA_BASE_URL: "media.example.com" })).toThrow("MEDIA_BASE_URL");
+  });
+});
+
+describe("guestCookieSecret", () => {
+  const secret = "a".repeat(32);
+
+  it("reads GUEST_COOKIE_SECRET", () => {
+    expect(guestCookieSecret({ NODE_ENV: "production", GUEST_COOKIE_SECRET: secret })).toBe(secret);
+  });
+
+  it("refuses to run production without one, naming the variable", () => {
+    expect(() => guestCookieSecret({ NODE_ENV: "production" })).toThrow(
+      "Missing guest cookie setting: GUEST_COOKIE_SECRET",
+    );
+    expect(() => guestCookieSecret({ NODE_ENV: "production", GUEST_COOKIE_SECRET: "" })).toThrow(
+      "Missing guest cookie setting: GUEST_COOKIE_SECRET",
+    );
+  });
+
+  it("refuses a secret shorter than 32 bytes, in any environment", () => {
+    for (const NODE_ENV of ["production", "development", "test"]) {
+      expect(() => guestCookieSecret({ NODE_ENV, GUEST_COOKIE_SECRET: "a".repeat(31) })).toThrow(
+        "GUEST_COOKIE_SECRET must be at least 32 bytes",
+      );
+    }
+  });
+
+  it("counts bytes, not characters", () => {
+    // 16 characters of two bytes each: 32 bytes.
+    expect(guestCookieSecret({ NODE_ENV: "production", GUEST_COOKIE_SECRET: "Ɔ".repeat(16) })).toBe("Ɔ".repeat(16));
+    expect(() => guestCookieSecret({ NODE_ENV: "production", GUEST_COOKIE_SECRET: "Ɔ".repeat(15) })).toThrow();
+  });
+
+  it("falls back to a fixed development value outside production, never inside it", () => {
+    const development = guestCookieSecret({ NODE_ENV: "development" });
+    expect(Buffer.byteLength(development)).toBeGreaterThanOrEqual(32);
+    expect(guestCookieSecret({ NODE_ENV: "test" })).toBe(development);
+    expect(guestCookieSecret({})).toBe(development);
+    expect(() => guestCookieSecret({ NODE_ENV: "production" })).toThrow();
   });
 });

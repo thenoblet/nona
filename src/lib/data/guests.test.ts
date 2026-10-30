@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetDb } from "../../../test/db";
-import { createGuest, findGuestByToken, setGuestName } from "./guests";
+import { createGuest, findGuestById, findGuestByToken, setGuestName } from "./guests";
 
 beforeEach(resetDb);
 
@@ -52,6 +52,20 @@ describe("findGuestByToken", () => {
     expect(await findGuestByToken("")).toBeNull();
     expect(await findGuestByToken("not a token")).toBeNull();
     expect(await findGuestByToken("a".repeat(10_000))).toBeNull();
+  });
+});
+
+describe("findGuestById", () => {
+  it("finds the guest with that id", async () => {
+    const guest = await createGuest("Abena");
+    expect(await findGuestById(guest.id)).toEqual(guest);
+  });
+
+  it("finds no one for an unknown id, or an id that isn't one", async () => {
+    await createGuest("Abena");
+    expect(await findGuestById(randomUUID())).toBeNull();
+    expect(await findGuestById("guest-1")).toBeNull();
+    expect(await findGuestById("")).toBeNull();
   });
 });
 

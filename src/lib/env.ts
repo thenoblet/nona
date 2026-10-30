@@ -88,3 +88,21 @@ export function mediaBaseUrl(env: Env = process.env): string {
   const settings = zod.object({ MEDIA_BASE_URL: httpAddress }).parse(env);
   return settings.MEDIA_BASE_URL.replace(/\/+$/, "");
 }
+
+// Development and tests only: never used when NODE_ENV is production.
+const DEVELOPMENT_GUEST_COOKIE_SECRET = "nona-development-only-guest-cookie-secret";
+
+/**
+ * The key that signs the guest cookie: GUEST_COOKIE_SECRET, at least 32 bytes. Production refuses
+ * to run without it rather than sign with a known value; development and tests fall back to a fixed
+ * one so they work without setup.
+ */
+export function guestCookieSecret(env: Env = process.env): string {
+  const secret = env.GUEST_COOKIE_SECRET;
+  if (!secret) {
+    if (env.NODE_ENV === "production") throw new Error("Missing guest cookie setting: GUEST_COOKIE_SECRET");
+    return DEVELOPMENT_GUEST_COOKIE_SECRET;
+  }
+  if (Buffer.byteLength(secret, "utf8") < 32) throw new Error("GUEST_COOKIE_SECRET must be at least 32 bytes");
+  return secret;
+}
