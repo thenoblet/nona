@@ -1,11 +1,6 @@
-import { Suspense } from "react";
-import { AdminGate } from "@/components/admin/AdminGate";
+import { redirect } from "next/navigation";
 
-// Placeholder until the Replies page replaces it.
+/** The admin opens on the replies. */
 export default function AdminPage() {
-  return (
-    <Suspense>
-      <AdminGate>{() => <h1>Admin</h1>}</AdminGate>
-    </Suspense>
-  );
+  redirect("/admin/rsvps");
 }

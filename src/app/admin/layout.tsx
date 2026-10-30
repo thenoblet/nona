@@ -15,7 +15,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     <div className="admin">
       <header className="admin-topbar">
         <div className="admin-topbar-inner">
-          <Link href="/admin" className="admin-brand">
+          <Link href="/admin/rsvps" className="admin-brand">
             Noblet &amp; Nancy <span>· admin</span>
           </Link>
           {/* usePathname can suspend during a prerender, so the tabs keep their links either way. */}

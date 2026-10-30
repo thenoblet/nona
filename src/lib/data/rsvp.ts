@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { EventId } from "@/content/wedding";
 import { getDb } from "@/lib/db/client";
 import { rsvps } from "@/lib/db/schema";
@@ -79,10 +79,13 @@ export async function saveRsvp(
       await tx
         .update(rsvps)
         .set({ supersededAt: created.receivedAt, supersededBy: created.id })
-        .where(inArray(rsvps.id, earlier.map((r) => r.id)));
+        .where(inArray(rsvps.id, earlier.map((row) => row.id)));
     }
 
-    const replaced = earlier.length > 0 ? earlier.reduce((a, b) => (a.receivedAt > b.receivedAt ? a : b)) : null;
+    const replaced =
+      earlier.length > 0
+        ? earlier.reduce((newest, row) => (newest.receivedAt > row.receivedAt ? newest : row))
+        : null;
     return {
       record: toRecord(created),
       replaced: replaced ? toRecord({ ...replaced, supersededAt: created.receivedAt }) : null,
@@ -104,23 +107,23 @@ export async function listRsvps(): Promise<RsvpRecord[]> {
     .where(isNull(rsvps.supersededAt))
     .orderBy(desc(rsvps.receivedAt));
 
-  const names = (key: (r: Row) => string | null) => {
+  const names = (keyOf: (row: Row) => string | null) => {
     const byKey = new Map<string, Set<string>>();
-    for (const r of rows) {
-      const k = key(r);
-      if (!k) continue;
-      byKey.set(k, (byKey.get(k) ?? new Set()).add(r.nameKey));
+    for (const row of rows) {
+      const key = keyOf(row);
+      if (!key) continue;
+      byKey.set(key, (byKey.get(key) ?? new Set()).add(row.nameKey));
     }
     return byKey;
   };
-  const byPhone = names((r) => r.phoneKey);
-  const byEmail = names((r) => r.emailKey);
+  const byPhone = names((row) => row.phoneKey);
+  const byEmail = names((row) => row.emailKey);
 
-  return rows.map((r) =>
+  return rows.map((row) =>
     toRecord(
-      r,
-      (byPhone.get(r.phoneKey)?.size ?? 0) > 1 ||
-        (r.emailKey !== null && (byEmail.get(r.emailKey)?.size ?? 0) > 1),
+      row,
+      (byPhone.get(row.phoneKey)?.size ?? 0) > 1 ||
+        (row.emailKey !== null && (byEmail.get(row.emailKey)?.size ?? 0) > 1),
     ),
   );
 }
@@ -132,7 +135,43 @@ export async function rsvpHistory(id: string): Promise<RsvpRecord[]> {
     .from(rsvps)
     .where(eq(rsvps.supersededBy, id))
     .orderBy(desc(rsvps.receivedAt));
-  return rows.map((r) => toRecord(r));
+  return rows.map((row) => toRecord(row));
+}
+
+/**
+ * Every changed reply's earlier versions, keyed by the current reply's id, newest first.
+ * One query loads all replaced replies; the supersededBy links are then followed in memory,
+ * through replies replaced more than once and replies that replaced two at a time.
+ */
+export async function rsvpHistories(): Promise<Map<string, RsvpRecord[]>> {
+  const replaced = await getDb().select().from(rsvps).where(isNotNull(rsvps.supersededAt));
+
+  const replacedBy = new Map<string, Row[]>();
+  for (const row of replaced) {
+    if (!row.supersededBy) continue;
+    replacedBy.set(row.supersededBy, [...(replacedBy.get(row.supersededBy) ?? []), row]);
+  }
+
+  // A reply that replaced others but was never replaced itself is a current one.
+  const replacedIds = new Set(replaced.map((row) => row.id));
+  const histories = new Map<string, RsvpRecord[]>();
+  for (const currentId of replacedBy.keys()) {
+    if (replacedIds.has(currentId)) continue;
+    const earlier: Row[] = [];
+    const seen = new Set([currentId]);
+    const toVisit = [currentId];
+    while (toVisit.length > 0) {
+      for (const row of replacedBy.get(toVisit.pop()!) ?? []) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        earlier.push(row);
+        toVisit.push(row.id);
+      }
+    }
+    earlier.sort((first, second) => second.receivedAt.getTime() - first.receivedAt.getTime());
+    histories.set(currentId, earlier.map((row) => toRecord(row)));
+  }
+  return histories;
 }
 
 export async function rsvpTotals(): Promise<

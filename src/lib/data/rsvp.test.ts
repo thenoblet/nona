@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetDb } from "../../../test/db";
 import type { RsvpInput } from "./types";
-import { listRsvps, rsvpHistory, rsvpTotals, saveRsvp } from "./rsvp";
+import { listRsvps, rsvpHistories, rsvpHistory, rsvpTotals, saveRsvp } from "./rsvp";
 
 const base: RsvpInput = {
   fullName: "Ama Owusu",
@@ -22,7 +22,7 @@ describe("saveRsvp replacement rules", () => {
     expect(current).toHaveLength(1);
     expect(current[0].answers).toEqual({ ceremony: "no" });
     const history = await rsvpHistory(second.record.id);
-    expect(history.map((r) => r.id)).toContain(first.record.id);
+    expect(history.map((reply) => reply.id)).toContain(first.record.id);
   });
 
   it("matches names and phones after normalising", async () => {
@@ -51,13 +51,13 @@ describe("saveRsvp replacement rules", () => {
     await saveRsvp({ ...base, fullName: "Kofi Mensah" });
     const current = await listRsvps();
     expect(current).toHaveLength(2);
-    expect(current.every((r) => r.possibleDuplicate)).toBe(true);
+    expect(current.every((reply) => reply.possibleDuplicate)).toBe(true);
   });
 
   it("leaves unrelated replies unflagged", async () => {
     await saveRsvp(base);
     await saveRsvp({ ...base, fullName: "Kofi Mensah", phone: "055 111 2222" });
-    expect((await listRsvps()).some((r) => r.possibleDuplicate)).toBe(false);
+    expect((await listRsvps()).some((reply) => reply.possibleDuplicate)).toBe(false);
   });
 
   it("keeps one current reply when two identical saves race", async () => {
@@ -82,5 +82,44 @@ describe("rsvpTotals", () => {
       reception: { accepted: 0, declined: 1, people: 0 },
       thanks: { accepted: 0, declined: 1, people: 0 },
     });
+  });
+});
+
+describe("rsvpHistories", () => {
+  it("gives a reply changed twice its full earlier history, newest first", async () => {
+    const first = await saveRsvp({ ...base, partySize: "Just me" });
+    const second = await saveRsvp({ ...base, partySize: "2 people" });
+    const third = await saveRsvp({ ...base, partySize: "3 people" });
+    const other = await saveRsvp({ ...base, fullName: "Kofi Mensah", phone: "055 111 2222" });
+
+    const histories = await rsvpHistories();
+    expect(histories.get(third.record.id)?.map((reply) => reply.id)).toEqual([
+      second.record.id,
+      first.record.id,
+    ]);
+    expect(histories.get(third.record.id)?.map((reply) => reply.partySize)).toEqual(["2 people", "Just me"]);
+    expect(histories.has(other.record.id)).toBe(false);
+    expect(histories.size).toBe(1);
+  });
+
+  it("follows a reply that replaced two earlier ones", async () => {
+    // Same name on two phones stays as two replies until one reply matches both (phone and email).
+    const byPhone = await saveRsvp(base);
+    const byEmail = await saveRsvp({ ...base, phone: "055 111 2222", email: "ama@example.com" });
+    const merged = await saveRsvp({ ...base, email: "ama@example.com" });
+    const latest = await saveRsvp({ ...base, email: "ama@example.com", partySize: "2 people" });
+
+    const histories = await rsvpHistories();
+    expect(histories.get(latest.record.id)?.map((reply) => reply.id)).toEqual([
+      merged.record.id,
+      byEmail.record.id,
+      byPhone.record.id,
+    ]);
+    expect(histories.size).toBe(1);
+  });
+
+  it("is empty when nothing was changed", async () => {
+    await saveRsvp(base);
+    expect((await rsvpHistories()).size).toBe(0);
   });
 });
