@@ -144,6 +144,31 @@ describe("a photo that fails to load", () => {
     expect(currentId(run(waiting, { type: "loaded", id: "c" }))).toBe("c");
   });
 
+  it("moves on at once when a waited-for photo fails and the one after it has already loaded", () => {
+    // Two photos playing; a refresh queues a new one, b, after the current photo.
+    let playlist = run(startPlaylist(slides("a", "c")), { type: "loaded", id: "a" }, { type: "loaded", id: "c" });
+    playlist = run(playlist, { type: "tick" }, { type: "tick" });
+    expect(currentId(playlist)).toBe("a");
+    playlist = run(playlist, { type: "replaced", slides: slides("a", "b", "c") }, { type: "tick" });
+    expect(playlist.due).toBe(true);
+
+    // b never arrives; c, already loaded underneath, is next. No load event will come for it.
+    playlist = run(playlist, { type: "failed", id: "b" });
+    expect(currentId(playlist)).toBe("c");
+    expect(playlist.due).toBe(false);
+  });
+
+  it("forgets a pending move when the slide it was for goes away", () => {
+    const waiting = run(startPlaylist(slides("a", "b", "c")), { type: "tick" });
+    expect(waiting.due).toBe(true);
+    const replaced = run(waiting, { type: "failed", id: "a" });
+    expect(currentId(replaced)).toBe("b");
+    expect(replaced.due).toBe(false);
+    const refreshed = run(waiting, { type: "replaced", slides: slides("b", "c") });
+    expect(currentId(refreshed)).toBe("b");
+    expect(refreshed.due).toBe(false);
+  });
+
   it("leaves nothing to show when every photo fails, without throwing", () => {
     const playlist = run(startPlaylist(slides("a", "b")), { type: "failed", id: "a" }, { type: "failed", id: "b" });
     expect(viewPlaylist(playlist).current).toBeNull();
@@ -185,6 +210,17 @@ describe("a refresh", () => {
     const refreshed = run(playlist, { type: "replaced", slides: slides("a", "b") });
     expect(refreshed.failed.size).toBe(0);
     expect(nextId(refreshed)).toBe("b");
+  });
+
+  it("moves on at once when it was waiting and the refreshed list's next photo is already loaded", () => {
+    // On a, with c loaded underneath; the timer is waiting on b, which the refresh removes.
+    let playlist = run(startPlaylist(slides("a", "c")), { type: "loaded", id: "a" }, { type: "loaded", id: "c" });
+    playlist = run(playlist, { type: "tick" }, { type: "tick" });
+    playlist = run(playlist, { type: "replaced", slides: slides("a", "b", "c") }, { type: "tick" });
+    expect(playlist.due).toBe(true);
+    const refreshed = run(playlist, { type: "replaced", slides: slides("a", "c") });
+    expect(currentId(refreshed)).toBe("c");
+    expect(refreshed.due).toBe(false);
   });
 
   it("starts showing photos when the first ones arrive", () => {

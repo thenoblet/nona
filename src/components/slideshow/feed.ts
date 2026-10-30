@@ -61,12 +61,20 @@ export function pollSlides({
     if (!stopped) timer = setTimeout(refresh, delay);
   };
 
+  // Whatever happens in a round, the next one is always scheduled: nothing can stop the polling.
   async function refresh() {
-    if (isHidden()) return schedule(REFRESH_MS);
-    const slides = await load();
-    if (stopped) return;
-    if (slides) onSlides(slides);
-    schedule(slides ? REFRESH_MS : RETRY_MS);
+    let delay = REFRESH_MS;
+    try {
+      if (isHidden()) return;
+      const slides = await load();
+      if (stopped) return;
+      if (slides) onSlides(slides);
+      else delay = RETRY_MS;
+    } catch {
+      delay = RETRY_MS;
+    } finally {
+      schedule(delay);
+    }
   }
 
   schedule(REFRESH_MS);

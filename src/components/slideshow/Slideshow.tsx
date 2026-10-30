@@ -84,18 +84,20 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
     });
   }, [live]);
 
-  // Arrows move, space pauses, F toggles full screen (the venue laptop's keyboard).
+  // Arrows move, space pauses, F toggles full screen (the venue laptop's keyboard). Space always
+  // pauses or plays, whatever has focus: a focused button never takes it (Enter still does).
   const toggleFullscreen = fullscreen.toggle;
   useEffect(() => {
+    const ignored = (event: KeyboardEvent) =>
+      event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented || event.isComposing || isEditable(event.target);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
-      const onControl = event.target instanceof Element && event.target.closest("button, a, input, select, textarea") !== null;
+      if (ignored(event)) return;
       if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
         event.preventDefault();
         step(event.key === "ArrowRight" ? 1 : -1);
-      } else if (event.key === " " && !onControl && !event.repeat) {
+      } else if (event.key === " ") {
         event.preventDefault();
-        togglePause();
+        if (!event.repeat) togglePause();
       } else if ((event.key === "f" || event.key === "F") && !event.repeat) {
         toggleFullscreen();
       } else {
@@ -103,8 +105,16 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
       }
       wake();
     };
+    // A focused button acts on space when the key comes up; that is the pause, not the button.
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === " " && !ignored(event)) event.preventDefault();
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, [step, togglePause, toggleFullscreen, wake]);
 
   // Swipes, and taps on the outer thirds, read from the pointer itself: after a quick swipe
@@ -114,17 +124,21 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
   const gesture = useRef<{ x: number; y: number } | null>(null);
   const handledUntil = useRef(0);
   const onPointerDown = (event: PointerEvent) => {
-    gesture.current = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
     handledUntil.current = 0;
+    // A second finger (a pinch) cancels the gesture, as does any mouse button but the main one.
+    gesture.current = event.isPrimary && event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
   };
   const onPointerUp = (event: PointerEvent) => {
+    if (!event.isPrimary) return;
     const start = gesture.current;
     gesture.current = null;
     if (!start) return;
     const across = event.clientX - start.x;
     const down = event.clientY - start.y;
+    // While the guest has pinched in, a sideways move is looking around the photo, not a swipe.
+    const zoomedIn = (window.visualViewport?.scale ?? 1) > 1.01;
     let direction: 1 | -1 | null = null;
-    if (Math.abs(across) >= SWIPE_PX && Math.abs(across) > Math.abs(down) * 1.5) {
+    if (!zoomedIn && Math.abs(across) >= SWIPE_PX && Math.abs(across) > Math.abs(down) * 1.5) {
       direction = across < 0 ? 1 : -1;
     } else if (Math.abs(across) < TAP_PX && Math.abs(down) < TAP_PX && event.target instanceof Element) {
       const third = event.target.closest("[data-third]")?.getAttribute("data-third");
@@ -176,6 +190,7 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
                     type="button"
                     aria-label="Previous photo"
                     data-third="previous"
+                    onMouseDown={keepFocusAway}
                     onClick={() => step(-1)}
                     className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-pointer focus-visible:-outline-offset-4"
                   />
@@ -183,6 +198,7 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
                     type="button"
                     aria-label="Next photo"
                     data-third="next"
+                    onMouseDown={keepFocusAway}
                     onClick={() => step(1)}
                     className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-pointer focus-visible:-outline-offset-4"
                   />
@@ -206,11 +222,13 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
           <PhoneBar paused={playlist.paused} canPause={count > 1} onTogglePause={togglePause} />
 
           <div
+            role="group"
+            aria-label="Slideshow controls"
             className={`absolute top-0 right-0 z-30 hidden gap-[max(6px,calc(var(--spacing)*8))] p-[max(8px,calc(var(--spacing)*16))] transition-opacity tv:flex ${
               showControls
                 ? "opacity-100 duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
                 : "pointer-events-none opacity-0 duration-250 ease-[cubic-bezier(0.4,0,1,1)]"
-            } focus-within:pointer-events-auto focus-within:opacity-100`}
+            } has-focus-visible:pointer-events-auto has-focus-visible:opacity-100`}
           >
             {count > 1 ? (
               <>
@@ -243,7 +261,13 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
             <div className="bg-white p-12">
               {qrSvg ? <QrCode svg={qrSvg} className="size-168" /> : <div className="size-168 bg-white" />}
             </div>
-            <p className="m-0 font-serif text-[max(15px,calc(var(--spacing)*28))] leading-tight">Add yours</p>
+            {/* The QR is for guests at the venue; a phone on its side can tap instead. */}
+            <Link
+              href="/album"
+              className="inline-flex min-h-[44px] items-center font-serif text-[max(15px,calc(var(--spacing)*28))] leading-tight text-white no-underline"
+            >
+              <span className="ember-link">Add yours</span>
+            </Link>
             <p className="m-0 text-[max(11px,calc(var(--spacing)*14))] leading-normal text-mist">
               Scan to share your photos. They&apos;ll appear here.
             </p>
@@ -254,6 +278,18 @@ export function Slideshow({ slides, qrSvg }: { slides: Slide[] | null; qrSvg: st
       </div>
     </div>
   );
+}
+
+function isEditable(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select") !== null);
+}
+
+/**
+ * The side thirds and the TV buttons never take focus from a click or a tap: a focused control
+ * would keep the TV controls on screen. The keyboard still reaches them with Tab.
+ */
+function keepFocusAway(event: MouseEvent) {
+  event.preventDefault();
 }
 
 /** Phones: who shared it and when, the time left on this photo, where we are, and Add yours. */
@@ -369,8 +405,9 @@ function TvButton({ label, onClick, children }: { label: string; onClick: () => 
     <button
       type="button"
       aria-label={label}
+      onMouseDown={keepFocusAway}
       onClick={onClick}
-      className="press flex size-[max(40px,calc(var(--spacing)*44))] cursor-pointer items-center justify-center rounded-full bg-cocoa/75 text-white shadow-[var(--shadow-pill-dark)] backdrop-blur-sm hover:bg-cocoa"
+      className="press flex size-[max(44px,calc(var(--spacing)*44))] cursor-pointer items-center justify-center rounded-full bg-cocoa/75 text-white shadow-[var(--shadow-pill-dark)] backdrop-blur-sm hover:bg-cocoa"
     >
       {children}
     </button>

@@ -17,8 +17,9 @@ export function useDocumentHidden(): boolean {
 
 /**
  * Asks the browser to keep the screen awake. The browser drops the lock whenever the tab is
- * hidden, so it is asked again each time the tab comes back, and on a tap or key press in case
- * it was refused before the page was touched. Browsers without the API just sleep as usual.
+ * hidden, and may drop it while visible too (power saver), so it is asked again when the tab
+ * comes back, a second after it is dropped while visible, and on a tap or key press in case it
+ * was refused before the page was touched. Browsers without the API just sleep as usual.
  */
 export function useWakeLock(): void {
   useEffect(() => {
@@ -26,6 +27,7 @@ export function useWakeLock(): void {
     let sentinel: WakeLockSentinel | null = null;
     let requesting = false;
     let unmounted = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
 
     const request = async () => {
       if (unmounted || requesting || document.visibilityState !== "visible") return;
@@ -33,14 +35,24 @@ export function useWakeLock(): void {
       requesting = true;
       try {
         const granted = await navigator.wakeLock.request("screen");
-        if (unmounted) void granted.release();
-        else sentinel = granted;
+        if (unmounted) {
+          void granted.release().catch(() => {});
+        } else {
+          sentinel = granted;
+          granted.addEventListener("release", onRelease, { once: true });
+        }
       } catch {
         // Refused (battery saver, no permission) or the tab was hidden meanwhile: asked again later.
       } finally {
         requesting = false;
       }
     };
+    // Dropped while the tab is still showing: ask again shortly (not at once, so a browser that
+    // keeps dropping it can't spin). Dropped because the tab was hidden: visibilitychange asks.
+    function onRelease() {
+      clearTimeout(retry);
+      if (!unmounted && document.visibilityState === "visible") retry = setTimeout(() => void request(), 1000);
+    }
     const onVisibility = () => void request();
     const onInteraction = () => void request();
 
@@ -50,6 +62,7 @@ export function useWakeLock(): void {
     document.addEventListener("keydown", onInteraction);
     return () => {
       unmounted = true;
+      clearTimeout(retry);
       document.removeEventListener("visibilitychange", onVisibility);
       document.removeEventListener("pointerdown", onInteraction);
       document.removeEventListener("keydown", onInteraction);

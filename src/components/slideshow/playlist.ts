@@ -100,21 +100,27 @@ export function viewPlaylist(playlist: Playlist): PlaylistView {
 
 /**
  * Points the playlist at slides that can still be shown, and forgets what is no longer on
- * screen, so its sets never outgrow the three photos mounted at once.
+ * screen, so its sets never outgrow the three photos mounted at once. A move the timer was
+ * waiting for is dropped when the current slide changes, and made at once when the photo now
+ * next has already loaded (no load event will come for it).
  */
 function settle(playlist: Playlist): Playlist {
   const view = viewPlaylist(playlist);
   const currentId = view.current?.id ?? null;
+  const currentChanged = currentId !== playlist.currentId;
   const onScreen = new Set(view.layers.map((layer) => layer.slide.id));
-  return {
+  const settled: Playlist = {
     ...playlist,
     currentId,
     previousId: view.previous?.id ?? null,
     position: view.index,
     loaded: new Set([...playlist.loaded].filter((id) => onScreen.has(id))),
-    // A slide that takes the place of one that failed or went away fades in.
-    entrance: currentId === playlist.currentId ? playlist.entrance : "fade",
+    // A slide that takes the place of one that failed or went away fades in, with its own time.
+    entrance: currentChanged ? "fade" : playlist.entrance,
+    due: currentChanged ? false : playlist.due,
   };
+  if (settled.due && !settled.paused && view.next && settled.loaded.has(view.next.id)) return move(settled, 1, "fade");
+  return settled;
 }
 
 function move(playlist: Playlist, step: 1 | -1, entrance: Entrance): Playlist {

@@ -109,6 +109,31 @@ describe("pollSlides", () => {
     stop();
   });
 
+  it("keeps polling when the loader throws, retrying sooner", async () => {
+    const load = vi
+      .fn<() => Promise<Slide[] | null>>()
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValue([slide]);
+    const onSlides = vi.fn();
+    const stop = pollSlides({ load, onSlides, isHidden: () => false });
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    expect(onSlides).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    expect(onSlides).toHaveBeenCalledWith([slide]);
+    stop();
+  });
+
+  it("keeps polling when handing over a list throws", async () => {
+    const load = vi.fn(async () => [slide]);
+    const onSlides = vi.fn(() => {
+      throw new Error("render failed");
+    });
+    const stop = pollSlides({ load, onSlides, isHidden: () => false });
+    await vi.advanceTimersByTimeAsync(REFRESH_MS + RETRY_MS);
+    expect(load).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
   it("does not ask while the screen is hidden", async () => {
     let hidden = true;
     const load = vi.fn(async () => [slide]);
