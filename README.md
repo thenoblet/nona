@@ -1,7 +1,8 @@
 # NONA'26
 
 The wedding website for Noblet & Nancy: the invitation, RSVP, a shared photo and video
-album guests use from their phones (no app, no sign-up), a guestbook, and a wedding-day screen.
+album guests use from their phones (no app, no sign-up), a guestbook, a wedding-day screen, and a
+slideshow of guests' photos for the venue TV that also works on phones.
 
 Mobile-first: every page is designed for a phone, then widened for larger screens.
 
@@ -16,6 +17,7 @@ Mobile-first: every page is designed for a phone, then widened for larger screen
 | `/wishes` | Guestbook: written, voice or video wishes. |
 | `/today` | Wedding-day screen: what's happening now, the schedule, quick actions. |
 | `/open` | Envelope opener, an optional phone entry with a wax seal. |
+| `/slideshow` | Guests' newest photos. On the venue TV (and any landscape screen): the photo, a QR code to the album and the latest thumbnails. On a phone held upright: the photo full screen; swipe or tap the sides to move, with pause, close and "Add yours". |
 | `/print/table-card?table=7` | Printable A5 QR card for each table. |
 
 ### Previewing the homepage versions
@@ -33,7 +35,7 @@ src/
     ui/                buttons, halo icons, paper cards, fields, segmented switch, reveal
     music/             MusicProvider (songs play across pages), MusicPlayer, Dock
     home/              homepage sections
-    album/ wishes/ rsvp/ today/ open/ landing/ layout/
+    album/ wishes/ rsvp/ today/ open/ slideshow/ landing/ layout/
   content/             the words and facts you edit: wedding.ts, songs.ts, images.ts
   lib/
     mode.ts            before / wedding weekend / after
@@ -66,9 +68,23 @@ won't change when the real backend arrives:
 
 Search for `TODO` to find the other placeholders: uploads (presigned multipart to R2), downloads
 (per-celebration zips, built by a separate media worker), voice and video recording, the device
-cookie for "My uploads", and live updates for the album (it will poll every 30 s).
+cookie for "My uploads", and live updates for the album (it will poll every 30 s, as the slideshow
+already does).
 
 When guest media is served from R2, add its host to `images.remotePatterns` in `next.config.ts`.
+
+## The venue TV
+
+Open `/slideshow` in Chrome or Edge on the laptop plugged into the TV, then press **F** (or move
+the mouse and click the full-screen button). It runs on its own all evening:
+
+- the screen is kept awake while the page is open (Screen Wake Lock), and the pointer and the
+  controls fade away after a few seconds without movement;
+- it asks for new photos every 30 s; if the network drops it keeps showing what it has and tries
+  again, and a photo that fails to load is skipped;
+- keys: **←** and **→** move, **space** pauses, **F** toggles full screen.
+
+Set the laptop itself never to sleep as well: the wake lock only holds while the tab is visible.
 
 ## Develop
 

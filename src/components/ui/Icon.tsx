@@ -74,7 +74,16 @@ const paths = {
       <circle cx="17" cy="16" r="3" />
     </>
   ),
+  slideshow: (
+    <>
+      <rect x="3" y="5" width="18" height="13" rx="1.5" />
+      <path d="M10 9l5 2.5-5 2.5z" />
+    </>
+  ),
   back: <path d="M15 6l-6 6 6 6" />,
+  forward: <path d="M9 6l6 6-6 6" />,
+  expand: <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />,
+  collapse: <path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" />,
   chevron: <path d="M6 9l6 6 6-6" />,
   menu: <path d="M4 7h16M4 12h16M4 17h10" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,

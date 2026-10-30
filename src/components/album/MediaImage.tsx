@@ -1,4 +1,4 @@
-import Image from "next/image";
+import Image, { type ImageProps } from "next/image";
 import type { MediaItem } from "@/lib/data/types";
 
 /**
@@ -12,11 +12,20 @@ export function MediaImage({
   sizes,
   className = "",
   loading,
+  fit = "cover",
+  fetchPriority,
+  onLoad,
+  onError,
 }: {
   item: Pick<MediaItem, "src" | "alt" | "position">;
   sizes: string;
   className?: string;
   loading?: "eager" | "lazy";
+  /** "contain" shows the whole photo, centred, for the slideshow stage. */
+  fit?: "cover" | "contain";
+  fetchPriority?: ImageProps["fetchPriority"];
+  onLoad?: ImageProps["onLoad"];
+  onError?: ImageProps["onError"];
 }) {
   if (!item.src) {
     return <span className="sr-only">{item.alt} (preview not ready yet)</span>;
@@ -29,10 +38,17 @@ export function MediaImage({
       fill
       sizes={sizes}
       loading={loading}
+      fetchPriority={fetchPriority}
       unoptimized={remote}
-      placeholder={remote ? "empty" : "blur"}
-      className={`object-cover ${className}`}
-      style={{ objectPosition: item.position ?? "center" }}
+      // No blur placeholder on a contained photo: next/image doesn't draw it to the photo's exact
+      // shape, so it shows as bands beside the photo until the page has loaded its script. The
+      // slideshow's blurred backdrop fills that space instead.
+      placeholder={remote || fit === "contain" ? "empty" : "blur"}
+      className={`${fit === "contain" ? "object-contain" : "object-cover"} ${className}`}
+      // A contained photo is centred; the crop position only matters when it is cropped.
+      style={{ objectPosition: fit === "contain" ? "center" : (item.position ?? "center") }}
+      onLoad={onLoad}
+      onError={onError}
     />
   );
 }
