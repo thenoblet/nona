@@ -5,10 +5,10 @@ import type { IconName } from "@/components/ui/Icon";
 
 type Tile = { href: string; label: string; icon: IconName; primary?: boolean; external?: boolean };
 
-function tilesFor(reception: Venue): Tile[] {
+function tilesFor(reception: Venue, liveUrl: string | null): Tile[] {
   return [
     { href: "/album", label: "Share photos", icon: "camera", primary: true },
-    { href: "#live", label: "Watch live", icon: "video" },
+    ...(liveUrl ? [{ href: liveUrl, label: "Watch live", icon: "video" as const, external: true }] : []),
     { href: reception.mapsUrl, label: "Directions", icon: "pin", external: true },
     { href: "/wishes", label: "Leave a wish", icon: "heart" },
   ];
@@ -26,16 +26,20 @@ function TileBody({ tile }: { tile: Tile }) {
   );
 }
 
-/** The 2 x 2 grid of things guests reach for on the day. */
-export function QuickActions({ reception }: { reception: Venue }) {
+/**
+ * The 2 x 2 grid of things guests reach for on the day. `liveUrl` is set only once the live
+ * stream is showing; without it the last tile spans both columns so the grid stays even.
+ */
+export function QuickActions({ reception, liveUrl }: { reception: Venue; liveUrl: string | null }) {
+  const tiles = tilesFor(reception, liveUrl);
   return (
     <ul className="grid grid-cols-2 gap-3">
-      {tilesFor(reception).map((tile) => (
-        <li key={tile.label} className="flex">
+      {tiles.map((tile, index) => (
+        <li key={tile.label} className={`flex ${tiles.length % 2 === 1 && index === tiles.length - 1 ? "col-span-2" : ""}`}>
           {tile.external ? (
             <a href={tile.href} target="_blank" rel="noopener noreferrer" className={`${tileClass} w-full`}>
               <TileBody tile={tile} />
-              <span className="sr-only">(opens Google Maps)</span>
+              <span className="sr-only">{tile.label === "Watch live" ? "(opens the live stream)" : "(opens Google Maps)"}</span>
             </a>
           ) : (
             <Link href={tile.href} className={`${tileClass} w-full`}>

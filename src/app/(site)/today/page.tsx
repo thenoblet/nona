@@ -10,6 +10,7 @@ import { ByDay } from "@/components/today/ByDay";
 import { dayLabel } from "@/components/today/day";
 import { HappeningNow } from "@/components/today/HappeningNow";
 import { OrderOfDay } from "@/components/today/OrderOfDay";
+import { liveStreamState } from "@/lib/content/live";
 import { QuickActions } from "@/components/today/QuickActions";
 import { SeatFinder } from "@/components/today/SeatFinder";
 
@@ -42,7 +43,10 @@ export default function TodayPage() {
         quickActions={
           <ByDay
             fallback={<div className="h-56 animate-pulse rounded-[var(--radius-paper)] bg-white" />}
-            render={(_secondDay, content) => <QuickActions reception={content.venues.reception} />}
+            render={(_secondDay, content) => {
+              const live = liveStreamState(content, new Date());
+              return <QuickActions reception={content.venues.reception} liveUrl={live.show ? live.url : null} />;
+            }}
           />
         }
       />

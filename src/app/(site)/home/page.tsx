@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { getSiteContent } from "@/lib/content/get";
+import { liveStreamState, visibleFaq } from "@/lib/content/live";
 import { isSecondDay, resolveMode, type Mode } from "@/lib/mode";
 import { Autoplay } from "@/components/music/Autoplay";
 import { DockItem } from "@/components/music/Dock";
@@ -39,7 +40,9 @@ export default function HomePage({ searchParams }: PageProps<"/home">) {
 async function Home({ searchParams }: { searchParams: PageProps<"/home">["searchParams"] }) {
   await connection();
   const content = await getSiteContent();
-  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts, faq } = content;
+  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts } = content;
+  const faq = visibleFaq(content);
+  const live = liveStreamState(content, new Date());
   const params = await searchParams;
   const now = new Date();
   const mode: Mode = resolveMode(now, params.mode);
@@ -76,7 +79,10 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
               now={current ? { title: current.title, place: current.place.replace(", Tepa", "") } : null}
             />
             <LiveAlbum />
-            <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule} reception={venues.reception} />
+            <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule}
+              reception={venues.reception}
+              liveUrl={live.show ? live.url : null}
+            />
             <Celebrations celebrations={celebrations} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Story story={story} />

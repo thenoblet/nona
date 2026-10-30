@@ -93,11 +93,14 @@ export function TodaySection({
   secondDay,
   schedule,
   reception,
+  liveUrl,
 }: {
   todayLabel: string;
   secondDay: boolean;
   schedule: ScheduleItem[];
   reception: Venue;
+  /** Set only once the live stream is showing. */
+  liveUrl: string | null;
 }) {
   return (
     <section id="today" className="bg-white px-5 py-20 sm:px-6 sm:py-26">
@@ -125,7 +128,17 @@ export function TodaySection({
               >
                 Directions to the reception
               </a>
-              <TextLink href="#today">Watch live</TextLink>
+              {liveUrl ? (
+                <a
+                  href={liveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ember-link inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] no-underline"
+                >
+                  Watch live
+                  <span className="sr-only"> (opens the live stream)</span>
+                </a>
+              ) : null}
             </div>
           </Reveal>
         </div>
