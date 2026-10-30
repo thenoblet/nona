@@ -6,6 +6,9 @@
 export const RATE_LIMITS = {
   start: { burst: 100, refillEveryMs: 500 },
   presign: { burst: 100, refillEveryMs: 500 },
+  // Completing or cancelling an upload: one per file, apart from its start, so a 60-photo batch
+  // takes 60 from each bucket and never 120 from one.
+  complete: { burst: 100, refillEveryMs: 500 },
   events: { burst: 100, refillEveryMs: 500 },
   playable: { burst: 100, refillEveryMs: 500 },
   download: { burst: 100, refillEveryMs: 500 },

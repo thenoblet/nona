@@ -2,9 +2,10 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { guests, NAME_MAX_CHARACTERS } from "@/lib/db/schema";
+import { guests } from "@/lib/db/schema";
 import { isUuid } from "./ids";
-import { clampCharacters } from "./text";
+// The name as kept: printable, trimmed and cut to 80 characters (text.ts).
+import { cleanName } from "./text";
 import type { Guest } from "./types";
 
 // 32 random bytes in base64url, without padding.
@@ -17,16 +18,6 @@ function toGuest(row: typeof guests.$inferSelect): Guest {
     linkToken: row.linkToken,
     createdAt: row.createdAt.toISOString(),
   };
-}
-
-/**
- * The name as kept: trimmed and cut to 80 characters, as it shows on every album tile and in
- * emails; an empty one is kept as none.
- */
-function cleanName(name: string | null): string | null {
-  const trimmed = name?.trim();
-  if (!trimmed) return null;
-  return clampCharacters(trimmed, NAME_MAX_CHARACTERS).trimEnd();
 }
 
 /** A new guest with their own personal-link token: 32 random bytes, URL-safe as it is. */

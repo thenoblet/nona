@@ -106,9 +106,22 @@ async function secondsToFail(
 }
 
 describe("a call that isn't a stream", () => {
-  it("gives up after 15 s in all against a stalling R2, body and retry included", async () => {
-    const seconds = await secondsToFail(callsThatArentStreams());
+  it("gives up after 15 s in all against a stalling R2, body and retry included, even with a caller's signal that never fires", async () => {
+    // Ruling K: a route passes request.signal, which may never fire while the guest's phone keeps
+    // the connection open; the 15 s bound must hold all the same. Both run at once, so the test
+    // still takes 15 s.
+    const neverFires = new AbortController().signal;
+    const seconds = await secondsToFail({
+      ...callsThatArentStreams(),
+      ...Object.fromEntries(
+        Object.entries(callsThatArentStreams({ signal: neverFires })).map(([name, call]) => [
+          `${name} with the caller's signal`,
+          call,
+        ]),
+      ),
+    });
     const deadline = CALL_DEADLINE_MILLISECONDS / 1000;
+    expect(Object.keys(seconds)).toHaveLength(16);
     for (const [name, taken] of Object.entries(seconds)) {
       expect(taken, name).toBeGreaterThanOrEqual(deadline - 0.5);
       expect(taken, name).toBeLessThan(deadline + 2);

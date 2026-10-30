@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { settings } from "@/lib/db/schema";
 import { resetDb } from "../../../test/db";
-import { getSetting, SETTING_DEFAULTS, setSetting, type SettingKey } from "./settings";
+import { getSetting, getSettings, SETTING_DEFAULTS, setSetting, type SettingKey } from "./settings";
 
 beforeEach(resetDb);
 
@@ -74,5 +74,17 @@ describe("setSetting", () => {
       .from(settings)
       .where(eq(settings.key, "worker_heartbeat"));
     expect(row.fresh).toBe(true);
+  });
+});
+
+describe("getSettings", () => {
+  it("reads several settings in one query, each its saved value or its fallback", async () => {
+    const fallbacks = { uploads_open: false, uploads_closed_at: null };
+    expect(await getSettings(fallbacks)).toEqual({ uploads_open: false, uploads_closed_at: null });
+    await setSetting("uploads_closed_at", "2026-12-20T18:00:00.000Z");
+    await setSetting("convert_backlog", false);
+    expect(await getSettings(fallbacks)).toEqual({ uploads_open: false, uploads_closed_at: "2026-12-20T18:00:00.000Z" });
+    await setSetting("uploads_open", true);
+    expect(await getSettings({ uploads_open: false })).toEqual({ uploads_open: true });
   });
 });

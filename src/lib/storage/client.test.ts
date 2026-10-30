@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import type { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { storageConfig } from "@/lib/env";
-import { createStorageClient, cutOffWhenIdle, storageClient } from "./client";
+import { CALL_DEADLINE_MILLISECONDS, createStorageClient, cutOffWhenIdle, storageClient, withDeadline } from "./client";
 
 // A stand-in for an R2 edge that misbehaves: /silent accepts the request and never answers,
 // /stall answers and then stops sending, /steady sends a little every 100 ms and finishes.
@@ -103,5 +103,31 @@ describe("cutOffWhenIdle", () => {
   it("lets a slow but steady download finish", async () => {
     const stream = cutOffWhenIdle(await download("/steady"), 1000);
     expect(await readAll(stream)).toBe("chunk".repeat(8));
+  });
+});
+
+describe("withDeadline", () => {
+  it("gives a call the 15 s deadline when the caller passes no signal", () => {
+    const { abortSignal } = withDeadline();
+    expect(abortSignal.aborted).toBe(false);
+  });
+
+  it("Ruling K: combines the caller's signal with the deadline instead of replacing it", () => {
+    const caller = new AbortController();
+    const { abortSignal } = withDeadline({ signal: caller.signal });
+    // A combined signal, not the caller's own: the caller's alone would drop the 15 s bound.
+    expect(abortSignal).not.toBe(caller.signal);
+    expect(abortSignal.aborted).toBe(false);
+    caller.abort(new Error("the guest closed the page"));
+    expect(abortSignal.aborted).toBe(true);
+    expect((abortSignal.reason as Error).message).toBe("the guest closed the page");
+  });
+
+  it("ends at once when the caller's signal has already fired", () => {
+    expect(withDeadline({ signal: AbortSignal.abort() }).abortSignal.aborted).toBe(true);
+  });
+
+  it("keeps the deadline at 15 s", () => {
+    expect(CALL_DEADLINE_MILLISECONDS).toBe(15_000);
   });
 });

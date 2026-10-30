@@ -18,7 +18,7 @@ function takeMany(guestId: string, bucket: RateLimitBucket, count: number, now: 
   return allowed;
 }
 
-const UPLOAD_BUCKETS = ["start", "presign", "events", "playable", "download", "wish"] as const;
+const UPLOAD_BUCKETS = ["start", "presign", "complete", "events", "playable", "download", "wish"] as const;
 
 beforeEach(() => {
   // Make sure the map exists, then empty it, so each test starts from nothing.

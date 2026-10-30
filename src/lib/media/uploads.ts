@@ -1,0 +1,382 @@
+import "server-only";
+import { randomUUID } from "node:crypto";
+import { getSiteContent } from "@/lib/content/get";
+import { getSettings } from "@/lib/data/settings";
+import type { MEDIA_FILE_KINDS, MEDIA_PURPOSES, UPLOAD_EVENT_KINDS } from "@/lib/db/schema";
+import { getBoss } from "@/lib/jobs/boss";
+import { MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
+import { describeError } from "@/lib/log-error";
+import { originalKey } from "@/lib/storage/keys";
+import { writeManifest } from "@/lib/storage/manifest";
+import {
+  abortMultipart,
+  completeMultipart,
+  headOriginal,
+  listUploadedParts,
+  presignParts,
+  startMultipart,
+  type PartUrl,
+  type UploadedPart,
+} from "@/lib/storage/objects";
+import { assignCelebration } from "./celebration";
+import { PART_SIZE_BYTES, partCount } from "./limits";
+import {
+  attachMultipartUpload,
+  deleteUnfinishedUpload,
+  insertUpload,
+  markUploaded,
+  recordUploadEvents,
+  type UploadRow,
+} from "./rows";
+
+/*
+ * The upload API's work, apart from HTTP: starting or resuming an upload, presigning its parts,
+ * verifying and completing it, and cancelling it. Phones send the bytes straight to R2; this never
+ * touches them. The routes under /api/uploads call it, and Task 19's site-photo route can too.
+ *
+ * Each step is a single statement or an R2 call, never an R2 call inside a transaction. A step that
+ * fails part-way leaves a row the next re-pick of the file can carry on from (see resumeUpload) or
+ * that the worker's sweeper picks up (an `uploaded` row whose job never got queued).
+ */
+
+type MediaPurpose = (typeof MEDIA_PURPOSES)[number];
+type MediaFileKind = (typeof MEDIA_FILE_KINDS)[number];
+type UploadEventKind = (typeof UPLOAD_EVENT_KINDS)[number];
+
+/** How long after the couple close uploads an upload started before the close may still finish. */
+export const UPLOADS_GRACE_MILLISECONDS = 24 * 60 * 60 * 1000;
+
+export const UPLOADS_CLOSED_MESSAGE =
+  "Uploads to the album have closed. Thank you for every photo and video you shared!";
+
+/** The couple's uploads switch: open, or closed since `closedAt`. */
+export type UploadsSwitch = { open: boolean; closedAt: Date | null };
+
+/** For uploads the switch doesn't govern (wishes). */
+export const UPLOADS_ALWAYS_OPEN: UploadsSwitch = { open: true, closedAt: null };
+
+/** The uploads switch, in one query. Fails closed: nothing saved, or anything but true, is closed. */
+export async function readUploadsSwitch(): Promise<UploadsSwitch> {
+  const saved = await getSettings({ uploads_open: false, uploads_closed_at: null });
+  const closedAt = typeof saved.uploads_closed_at === "string" ? new Date(saved.uploads_closed_at) : null;
+  return {
+    open: saved.uploads_open === true,
+    closedAt: closedAt && !Number.isNaN(closedAt.getTime()) ? closedAt : null,
+  };
+}
+
+/** Whether a new upload for this purpose may start: wishes always, album uploads while open. */
+export function mayStartUpload(purpose: MediaPurpose, uploads: UploadsSwitch): boolean {
+  return purpose !== "album" || uploads.open;
+}
+
+/**
+ * Whether an unfinished upload may go on (resume, presign, complete): wishes always; album uploads
+ * while open, or, once closed, one started before the close and only for 24 hours after it.
+ */
+export function mayContinueUpload(
+  upload: Pick<UploadRow, "purpose" | "startedAt">,
+  uploads: UploadsSwitch,
+  now: Date = new Date(),
+): boolean {
+  if (upload.purpose !== "album" || uploads.open) return true;
+  if (!uploads.closedAt) return false;
+  const closedAt = uploads.closedAt.getTime();
+  return upload.startedAt.getTime() < closedAt && now.getTime() < closedAt + UPLOADS_GRACE_MILLISECONDS;
+}
+
+/** Whether anyone may still see the item: not hidden, removed or deleted (isVisible, from a row in hand). */
+export function isVisibleUpload(upload: Pick<UploadRow, "hiddenAt" | "deletedAt" | "removedByUploader">): boolean {
+  return upload.hiddenAt === null && upload.deletedAt === null && !upload.removedByUploader;
+}
+
+/** What the phone needs to send an upload's parts, the same for a new upload and a resumed one. */
+export type UploadSession = {
+  mediaId: string;
+  uploadId: string;
+  key: string;
+  partSize: number;
+  partCount: number;
+  /** The parts R2 already holds, which the phone skips. */
+  uploadedParts: UploadedPart[];
+};
+
+/** Runs a task after the response is sent: the routes pass Next's after(). */
+export type Defer = (task: () => Promise<void>) => void;
+
+export type UploadOptions = {
+  /** Ends the R2 calls early (the request's signal, or a budget for several calls). */
+  signal?: AbortSignal;
+  defer: Defer;
+};
+
+function toSession(upload: UploadRow, uploadId: string, uploadedParts: UploadedPart[]): UploadSession {
+  return {
+    mediaId: upload.id,
+    uploadId,
+    key: upload.originalKey,
+    partSize: PART_SIZE_BYTES,
+    partCount: partCount(upload.sizeBytes),
+    uploadedParts,
+  };
+}
+
+/**
+ * Every part of an upload R2 has already joined into its original. The ETags are gone with the
+ * multipart upload, so they are empty: the phone, finding nothing left to send, completes, and
+ * that answers at once.
+ */
+function everyPart(sizeBytes: number): UploadedPart[] {
+  return Array.from({ length: partCount(sizeBytes) }, (_, index) => ({
+    partNumber: index + 1,
+    etag: "",
+    size: Math.min(PART_SIZE_BYTES, sizeBytes - index * PART_SIZE_BYTES),
+  }));
+}
+
+function errorName(error: unknown): string | undefined {
+  return error instanceof Error ? error.name : undefined;
+}
+
+/** The queue that processes an uploaded item: a wish's recording, a video's poster or a photo. */
+export function processingQueue(upload: Pick<UploadRow, "purpose" | "kind">): MediaQueueName {
+  if (upload.purpose === "wish") return MEDIA_QUEUES.wish;
+  return upload.kind === "video" ? MEDIA_QUEUES.poster : MEDIA_QUEUES.photo;
+}
+
+/** Records an event the server saw itself. Never throws: the status page can miss one. */
+async function recordEvent(upload: UploadRow, kind: UploadEventKind): Promise<void> {
+  try {
+    await recordUploadEvents([{ guestId: upload.guestId, mediaId: upload.id, kind }]);
+  } catch (error) {
+    console.error(`[uploads] could not record a ${kind} event for ${upload.id}:`, describeError(error));
+  }
+}
+
+/**
+ * Queues the item's processing and records that it completed, after the response. Never throws:
+ * an item whose job doesn't get queued (the queue still starting, or down) stays `uploaded`, and
+ * the worker's sweeper queues it.
+ */
+async function announceUploaded(upload: UploadRow): Promise<void> {
+  try {
+    const boss = await getBoss();
+    await boss.send(processingQueue(upload), { mediaId: upload.id });
+  } catch (error) {
+    console.error(`[uploads] could not queue ${upload.id} for processing; the sweeper will:`, describeError(error));
+  }
+  await recordEvent(upload, "completed");
+}
+
+/** Marks a verified upload `uploaded`; the call that changes it queues the job, after the response. */
+async function finishUpload(upload: UploadRow, options: UploadOptions): Promise<void> {
+  if (await markUploaded(upload.id)) options.defer(() => announceUploaded(upload));
+}
+
+/**
+ * After NoSuchUpload: whether the upload had in fact completed (an earlier complete reached R2 and
+ * its answer was lost), in which case it is finished now. False when the original isn't there:
+ * the upload was aborted (cancelled, or expired under R2's 7-day rule).
+ */
+async function finishIfOriginalExists(upload: UploadRow, options: UploadOptions): Promise<boolean> {
+  const original = await headOriginal(upload.originalKey, { signal: options.signal });
+  if (!original || original.size !== upload.sizeBytes) return false;
+  await finishUpload(upload, options);
+  return true;
+}
+
+/**
+ * The parts R2 holds for an unfinished upload. An upload R2 had already completed is finished
+ * here and lists every part; null when the upload is gone and no original was made.
+ */
+async function partsSoFar(upload: UploadRow, uploadId: string, options: UploadOptions): Promise<UploadedPart[] | null> {
+  try {
+    return await listUploadedParts(upload.originalKey, uploadId, { signal: options.signal });
+  } catch (error) {
+    if (errorName(error) !== "NoSuchUpload") throw error;
+  }
+  return (await finishIfOriginalExists(upload, options)) ? everyPart(upload.sizeBytes) : null;
+}
+
+/**
+ * Starts the original's multipart upload, with its write-once metadata, and writes its manifest;
+ * then records the upload id on the row. If another request recorded one first (two re-picks at
+ * once), ours is dropped and theirs used.
+ */
+async function beginMultipart(upload: UploadRow, signal: AbortSignal | undefined): Promise<string> {
+  const [uploadId] = await Promise.all([
+    startMultipart(
+      upload.originalKey,
+      upload.contentType,
+      {
+        guestId: upload.guestId,
+        uploaderName: upload.uploaderName ?? "",
+        originalFilename: upload.originalFilename,
+        startedAt: upload.startedAt,
+      },
+      { signal },
+    ),
+    writeManifest(
+      upload.id,
+      {
+        celebration: upload.celebration,
+        celebrationSetByAdmin: false,
+        hiddenAt: null,
+        hiddenBy: null,
+        removedByUploader: false,
+        deletedAt: null,
+      },
+      { signal },
+    ),
+  ]);
+  const kept = await attachMultipartUpload(upload.id, uploadId);
+  if (kept === uploadId) return uploadId;
+  await abortMultipart(upload.originalKey, uploadId, { signal }).catch((error) =>
+    console.error("[uploads] could not abort a duplicate multipart upload:", describeError(error)),
+  );
+  if (kept === null) throw new Error("The upload was cancelled or completed while it started");
+  return kept;
+}
+
+export type NewUploadRequest = {
+  purpose: MediaPurpose;
+  kind: MediaFileKind;
+  /** The uploading guest; null for a site photo. */
+  guestId: string | null;
+  /** The name shown with the item; null takes the guest's own. */
+  uploaderName: string | null;
+  originalFilename: string;
+  sizeBytes: number;
+  contentType: string;
+  /** The extension of the original's key (checkUpload). */
+  extension: string;
+  fingerprint: string | null;
+  /** When the phone says the file was taken; the worker refines it from the file itself. */
+  capturedAt: Date | null;
+};
+
+/**
+ * Starts a new upload: its row (grouped by when it was taken, else when it started), then its
+ * multipart upload and manifest. If R2 fails, the row is removed so nothing is left half-made; if
+ * that fails too, the row (with no upload id) is carried on by the next re-pick of the file.
+ */
+export async function createUpload(request: NewUploadRequest, options: UploadOptions): Promise<UploadSession> {
+  const mediaId = randomUUID();
+  const startedAt = new Date();
+  const { celebrations } = await getSiteContent();
+  const upload = await insertUpload({
+    id: mediaId,
+    purpose: request.purpose,
+    kind: request.kind,
+    guestId: request.guestId,
+    uploaderName: request.uploaderName,
+    celebration: assignCelebration(request.capturedAt, startedAt, celebrations),
+    originalKey: originalKey(mediaId, request.extension),
+    originalFilename: request.originalFilename,
+    sizeBytes: request.sizeBytes,
+    contentType: request.contentType,
+    fileFingerprint: request.fingerprint,
+    startedAt,
+    capturedAt: request.capturedAt,
+  });
+  try {
+    return toSession(upload, await beginMultipart(upload, options.signal), []);
+  } catch (error) {
+    await deleteUnfinishedUpload(upload.id).catch((cleanupError) =>
+      console.error("[uploads] could not remove the row of a start that failed:", describeError(cleanupError)),
+    );
+    throw error;
+  }
+}
+
+/**
+ * Carries on a guest's unfinished upload of the same file (found by fingerprint): its session,
+ * with the parts R2 already holds. A row whose multipart upload never began gets one now. Null
+ * when the upload has expired with nothing made of it: the stale row is removed, and the caller
+ * starts afresh.
+ */
+export async function resumeUpload(upload: UploadRow, options: UploadOptions): Promise<UploadSession | null> {
+  let session: UploadSession;
+  if (!upload.multipartUploadId) {
+    session = toSession(upload, await beginMultipart(upload, options.signal), []);
+  } else {
+    const parts = await partsSoFar(upload, upload.multipartUploadId, options);
+    if (!parts) {
+      await deleteUnfinishedUpload(upload.id);
+      return null;
+    }
+    session = toSession(upload, upload.multipartUploadId, parts);
+  }
+  options.defer(() => recordEvent(upload, "resumed"));
+  return session;
+}
+
+/**
+ * The parts R2 holds for the upload, for a phone carrying it on: every part once it is uploaded,
+ * none before its multipart upload began, and null when the upload has expired.
+ */
+export async function listUploadParts(upload: UploadRow, options: UploadOptions): Promise<UploadedPart[] | null> {
+  if (upload.status !== "uploading") return everyPart(upload.sizeBytes);
+  if (!upload.multipartUploadId) return [];
+  return partsSoFar(upload, upload.multipartUploadId, options);
+}
+
+/** Presigned PUT URLs for these parts (at most 20), each valid for an hour. Local: no network. */
+export async function presignUploadParts(upload: UploadRow, partNumbers: number[]): Promise<PartUrl[] | null> {
+  if (!upload.multipartUploadId) return null;
+  return presignParts(upload.originalKey, upload.multipartUploadId, partNumbers);
+}
+
+/**
+ * What completing an upload came to:
+ * - `uploaded`: verified and joined (or found already joined), the row marked and its job queued;
+ * - `incomplete`: the parts R2 holds don't add up to the declared size, so nothing changed;
+ * - `invalid-parts`: they add up, but R2 refused to join them (a part other than the last under 5 MiB);
+ * - `missing`: the upload is gone and no original was made (aborted or expired).
+ */
+export type CompleteOutcome = "uploaded" | "incomplete" | "invalid-parts" | "missing";
+
+// R2's refusals of a join whose parts are the wrong shape, rather than a passing fault.
+const BAD_PARTS = new Set(["EntityTooSmall", "InvalidPart", "InvalidPartOrder"]);
+
+/**
+ * Completes an unfinished upload. Its parts are listed first and must add up to the declared size
+ * (the phone shows "Added" only after this); R2 then joins them, from its own list. A NoSuchUpload
+ * at either step counts as done if the original is there (HeadObject only then), so a repeated or
+ * concurrent complete succeeds and queues one job.
+ */
+export async function completeUpload(upload: UploadRow, options: UploadOptions): Promise<CompleteOutcome> {
+  const uploadId = upload.multipartUploadId;
+  if (!uploadId) return "incomplete";
+  let parts: UploadedPart[];
+  try {
+    parts = await listUploadedParts(upload.originalKey, uploadId, { signal: options.signal });
+  } catch (error) {
+    if (errorName(error) !== "NoSuchUpload") throw error;
+    return (await finishIfOriginalExists(upload, options)) ? "uploaded" : "missing";
+  }
+  const receivedBytes = parts.reduce((total, part) => total + part.size, 0);
+  if (receivedBytes !== upload.sizeBytes) return "incomplete";
+  try {
+    await completeMultipart(upload.originalKey, uploadId, parts, { signal: options.signal });
+  } catch (error) {
+    const name = errorName(error);
+    if (name === "NoSuchUpload") return (await finishIfOriginalExists(upload, options)) ? "uploaded" : "missing";
+    if (name && BAD_PARTS.has(name)) return "invalid-parts";
+    throw error;
+  }
+  await finishUpload(upload, options);
+  return "uploaded";
+}
+
+/**
+ * Cancels an unfinished upload at the guest's request: aborts its multipart upload, then deletes
+ * its row (its events stay). False when it finished meanwhile, which leaves it as it is. Nothing
+ * else aborts uploads: R2's 7-day rule clears the abandoned ones.
+ */
+export async function cancelUpload(upload: UploadRow, options: { signal?: AbortSignal }): Promise<boolean> {
+  if (upload.multipartUploadId) {
+    await abortMultipart(upload.originalKey, upload.multipartUploadId, { signal: options.signal });
+  }
+  return deleteUnfinishedUpload(upload.id);
+}

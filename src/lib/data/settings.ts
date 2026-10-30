@@ -1,5 +1,5 @@
 import "server-only";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { settings } from "@/lib/db/schema";
 
@@ -35,6 +35,23 @@ export async function getSetting<TKey extends SettingKey>(
 ): Promise<SettingValues[TKey]> {
   const [row] = await getDb().select({ value: settings.value }).from(settings).where(eq(settings.key, key)).limit(1);
   return row ? (row.value as SettingValues[TKey]) : fallback;
+}
+
+/**
+ * Several settings in one query: each key of `fallbacks` with its saved value, or its fallback when
+ * none has been saved. A saved null stays null.
+ */
+export async function getSettings<TKey extends SettingKey>(
+  fallbacks: Pick<SettingValues, TKey>,
+): Promise<Pick<SettingValues, TKey>> {
+  const keys = Object.keys(fallbacks) as TKey[];
+  const rows = await getDb()
+    .select({ key: settings.key, value: settings.value })
+    .from(settings)
+    .where(inArray(settings.key, keys));
+  const values = { ...fallbacks };
+  for (const row of rows) values[row.key as TKey] = row.value as SettingValues[TKey];
+  return values;
 }
 
 /** Saves the setting's value, replacing the one before, stamped with the database's time. */

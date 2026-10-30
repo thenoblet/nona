@@ -49,12 +49,15 @@ export const CALL_DEADLINE_MILLISECONDS = 15_000;
 export type CallOptions = { signal?: AbortSignal };
 
 /**
- * The send options for a call that isn't a stream: the caller's signal, or else a 15 s deadline
- * for the whole call, covering the answer's headers and body and the retry. A route that makes
- * several calls can pass one signal to share a single budget between them.
+ * The send options for a call that isn't a stream: a 15 s deadline for the whole call, covering
+ * the answer's headers and body and the retry, combined with the caller's signal when there is
+ * one (Ruling K). The call ends at whichever comes first, so passing request.signal (which may
+ * never fire) keeps the bound, and a route can pass one shorter signal to share a single budget
+ * between several calls.
  */
 export function withDeadline(options: CallOptions = {}): { abortSignal: AbortSignal } {
-  return { abortSignal: options.signal ?? AbortSignal.timeout(CALL_DEADLINE_MILLISECONDS) };
+  const deadline = AbortSignal.timeout(CALL_DEADLINE_MILLISECONDS);
+  return { abortSignal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline };
 }
 
 /**

@@ -2,14 +2,16 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { build } from "esbuild";
-import { beforeEach, describe, expect, it } from "vitest";
+import postgres from "postgres";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createGuest } from "@/lib/data/guests";
 import { isVisible as isVisibleForApp } from "@/lib/data/media";
 import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
+import { dbConfig } from "@/lib/env";
 import { originalKey } from "@/lib/storage/keys";
 import { resetDb } from "../../../test/db";
-import { isVisible } from "./rows";
+import { isVisible, resumableUploadQuery, uploadQuery } from "./rows";
 
 /** A finished album photo from a new guest, with any of its columns changed. */
 async function addPhoto(changes: Partial<typeof media.$inferInsert> = {}): Promise<string> {
@@ -98,5 +100,40 @@ describe("rows.ts's imports", () => {
     expect(modules.filter((path) => path === "next" || path.startsWith("next/"))).toEqual([]);
     expect(files.filter((path) => /\.(jpe?g|png|webp|svg)$/i.test(path))).toEqual([]);
     expect(files.some((path) => path.endsWith("src/lib/db/schema.ts"))).toBe(true);
+  });
+});
+
+describe("the upload API's lookups", () => {
+  const client = postgres({ ...dbConfig(), max: 1, onnotice: () => {} });
+  afterAll(() => client.end());
+
+  /**
+   * The plan Postgres would use for the query once it is prepared and run with any values (a
+   * generic plan, as a pooled prepared statement gets after a few runs). The test table is nearly
+   * empty, so sequential scans are put out of reach, as they would be with a full one.
+   */
+  async function genericPlan(query: { toSQL(): { sql: string } }): Promise<string> {
+    const { sql: text } = query.toSQL();
+    const rows = await client.begin(async (transaction) => {
+      await transaction`set local enable_seqscan = off`;
+      return transaction.unsafe(`explain (generic_plan) ${text}`).simple();
+    });
+    return rows.map((row) => String(row["QUERY PLAN"])).join("\n");
+  }
+
+  it("finds a guest's unfinished upload of a file through the partial resume index, under a generic plan", async () => {
+    const plan = await genericPlan(
+      resumableUploadQuery({ guestId: randomUUID(), purpose: "album", sizeBytes: 1000, fingerprint: "f".repeat(64) }),
+    );
+    // The index's condition (status = 'uploading') holds only because the query states it literally.
+    expect(plan).toContain("media_resume_idx");
+    expect(plan).not.toContain("Seq Scan");
+    expect(plan).not.toContain("Sort");
+  });
+
+  it("finds an upload by its id through the primary key", async () => {
+    const plan = await genericPlan(uploadQuery(randomUUID()));
+    expect(plan).toContain("media_pkey");
+    expect(plan).not.toContain("Seq Scan");
   });
 });
