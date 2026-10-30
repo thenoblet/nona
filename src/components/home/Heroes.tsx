@@ -59,7 +59,8 @@ export function HeroBefore() {
 }
 
 /** Wedding weekend: photo sharing comes first. */
-export function HeroDay({ todayLabel, nowTitle, nowPlace }: { todayLabel: string; nowTitle: string; nowPlace: string }) {
+/** `now` is what is on right now; nothing is shown for it when the schedule is empty. */
+export function HeroDay({ todayLabel, now }: { todayLabel: string; now: { title: string; place: string } | null }) {
   return (
     <section id="top" className={`${wrap} pt-14 pb-20 sm:pt-20 sm:pb-24`}>
       <div className={`${inner} gap-6`}>
@@ -71,16 +72,18 @@ export function HeroDay({ todayLabel, nowTitle, nowPlace }: { todayLabel: string
         <p className="m-0 max-w-[640px] animate-rise font-serif text-2xl leading-snug text-linen italic sm:text-3xl" style={delay(700)}>
           Today&apos;s the day. Thank you for being here with us.
         </p>
-        <div
-          className="flex animate-rise flex-wrap items-center justify-center gap-x-3.5 gap-y-1 rounded-[28px] border border-ember/50 px-5 py-3 sm:rounded-full"
-          style={delay(900)}
-        >
-          <span className="live-dot" aria-hidden />
-          <span className="text-[11px] uppercase tracking-[0.26em] text-ember">Happening now</span>
-          <span className="font-serif text-xl">
-            {nowTitle} · {nowPlace}
-          </span>
-        </div>
+        {now ? (
+          <div
+            className="flex animate-rise flex-wrap items-center justify-center gap-x-3.5 gap-y-1 rounded-[28px] border border-ember/50 px-5 py-3 sm:rounded-full"
+            style={delay(900)}
+          >
+            <span className="live-dot" aria-hidden />
+            <span className="text-[11px] uppercase tracking-[0.26em] text-ember">Happening now</span>
+            <span className="font-serif text-xl">
+              {now.title} · {now.place}
+            </span>
+          </div>
+        ) : null}
         <div className="mt-2 flex w-full animate-rise flex-col items-center gap-2 sm:w-auto sm:flex-row sm:gap-6" style={delay(1100)}>
           <PillLink href="/album" variant="ember" size="lg" icon="camera" className="w-full sm:w-auto">
             Share your photos &amp; videos

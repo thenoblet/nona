@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
+import { getSiteContent } from "@/lib/content/get";
 import { listMedia, SAMPLE_DEVICE } from "@/lib/data/media";
 import { resolveMode } from "@/lib/mode";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
@@ -94,9 +95,9 @@ async function ShareChoices({ searchParams }: Pick<PageProps<"/album">, "searchP
 /** Read at request time so new uploads show up. */
 async function AlbumMedia() {
   await connection();
-  const items = await listMedia();
+  const [{ celebrations }, items] = await Promise.all([getSiteContent(), listMedia()]);
   // TODO: identify this phone with a device cookie instead of the sample device.
-  return <AlbumBrowser items={items} myDevice={SAMPLE_DEVICE} />;
+  return <AlbumBrowser celebrations={celebrations} items={items} myDevice={SAMPLE_DEVICE} />;
 }
 
 function GridSkeleton() {

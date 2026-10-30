@@ -1,5 +1,6 @@
 import Image from "next/image";
-import { couple, story } from "@/content/wedding";
+import { couple } from "@/content/wedding";
+import type { Story as StoryContent } from "@/lib/content/schema";
 import { photos, type Photo } from "@/content/images";
 import { Reveal } from "@/components/ui/Reveal";
 import { Eyebrow, Motto, Ornament } from "@/components/ui/Typography";
@@ -90,7 +91,7 @@ function Chapter({
   );
 }
 
-export function Story() {
+export function Story({ story }: { story: StoryContent }) {
   return (
     <section id="story" className="bg-white px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[1200px] flex-col gap-14 sm:gap-16">

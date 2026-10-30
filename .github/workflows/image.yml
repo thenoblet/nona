@@ -60,6 +60,9 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm test
+      # Builds the site and runs it against the test database; the config blanks the email key.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
 
   build:
     needs: test

@@ -1,6 +1,6 @@
 import "server-only";
 import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
-import { celebrations, type EventId } from "@/content/wedding";
+import type { EventId } from "@/content/wedding";
 import { getDb } from "@/lib/db/client";
 import { rsvps } from "@/lib/db/schema";
 import { emailKey, nameKey, phoneKey } from "@/lib/rsvp/normalize";
@@ -24,6 +24,9 @@ function toRecord(row: Row, possibleDuplicate = false): RsvpRecord {
     possibleDuplicate,
   };
 }
+
+/** The celebrations are fixed: their wording is editable, but exactly these three exist. */
+const EVENT_IDS: EventId[] = ["ceremony", "reception", "thanks"];
 
 const PEOPLE: Record<string, number> = {
   "Just me": 1,
@@ -136,18 +139,18 @@ export async function rsvpTotals(): Promise<
   Record<EventId, { accepted: number; declined: number; people: number }>
 > {
   const totals = Object.fromEntries(
-    celebrations.map((c) => [c.id, { accepted: 0, declined: 0, people: 0 }]),
+    EVENT_IDS.map((id) => [id, { accepted: 0, declined: 0, people: 0 }]),
   ) as Record<EventId, { accepted: number; declined: number; people: number }>;
 
   const rows = await getDb().select().from(rsvps).where(isNull(rsvps.supersededAt));
   for (const r of rows) {
-    for (const c of celebrations) {
-      const answer = r.answers[c.id];
+    for (const id of EVENT_IDS) {
+      const answer = r.answers[id];
       if (answer === "yes") {
-        totals[c.id].accepted += 1;
-        totals[c.id].people += PEOPLE[r.partySize] ?? 1;
+        totals[id].accepted += 1;
+        totals[id].people += PEOPLE[r.partySize] ?? 1;
       } else if (answer === "no") {
-        totals[c.id].declined += 1;
+        totals[id].declined += 1;
       }
     }
   }

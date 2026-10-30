@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { couple, schedule } from "@/content/wedding";
+import { couple } from "@/content/wedding";
+import { getSiteContent } from "@/lib/content/get";
 import { isSecondDay, resolveMode, type Mode } from "@/lib/mode";
 import { Autoplay } from "@/components/music/Autoplay";
 import { DockItem } from "@/components/music/Dock";
@@ -37,11 +38,14 @@ export default function HomePage({ searchParams }: PageProps<"/home">) {
 
 async function Home({ searchParams }: { searchParams: PageProps<"/home">["searchParams"] }) {
   await connection();
+  const content = await getSiteContent();
+  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts, faq } = content;
   const params = await searchParams;
   const now = new Date();
   const mode: Mode = resolveMode(now, params.mode);
   const secondDay = mode === "day" && isSecondDay(now);
-  const current = schedule[nowIndex(secondDay)];
+  const current = schedule[nowIndex(schedule, secondDay)];
+  const todayLabel = dayLabel(secondDay, celebrations);
 
   return (
     <>
@@ -51,32 +55,35 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
           <>
             <HeroBefore />
             <InvitationLetter />
-            <Story />
-            <Celebrations />
-            <MapSection />
+            <Story story={story} />
+            <Celebrations celebrations={celebrations} />
+            <MapSection venues={venues} landmarks={landmarks} />
             <Colours />
-            <Party />
+            <Party party={party} />
             <Gallery />
-            <Travel />
+            <Travel travel={travel} />
             <RsvpBand />
-            <Gifts />
+            <Gifts gifts={gifts} />
             <AlbumTeaser />
-            <Faq />
+            <Faq faq={faq} />
           </>
         ) : null}
 
         {mode === "day" ? (
           <>
-            <HeroDay todayLabel={dayLabel(secondDay)} nowTitle={current.title} nowPlace={current.place.replace(", Tepa", "")} />
+            <HeroDay
+              todayLabel={todayLabel}
+              now={current ? { title: current.title, place: current.place.replace(", Tepa", "") } : null}
+            />
             <LiveAlbum />
-            <TodaySection todayLabel={dayLabel(secondDay)} secondDay={secondDay} />
-            <Celebrations />
-            <MapSection />
-            <Story />
-            <Party />
+            <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule} reception={venues.reception} />
+            <Celebrations celebrations={celebrations} />
+            <MapSection venues={venues} landmarks={landmarks} />
+            <Story story={story} />
+            <Party party={party} />
             <Gallery />
-            <Gifts />
-            <Faq />
+            <Gifts gifts={gifts} />
+            <Faq faq={faq} />
             <DockItem>
               <SharePill />
             </DockItem>
@@ -86,11 +93,11 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
         {mode === "after" ? (
           <>
             <HeroAfter />
-            <AfterAlbum />
+            <AfterAlbum celebrations={celebrations} />
             <WishesWall />
-            <Story />
-            <Party />
-            <Gifts />
+            <Story story={story} />
+            <Party party={party} />
+            <Gifts gifts={gifts} />
           </>
         ) : null}
       </main>

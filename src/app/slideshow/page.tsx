@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { celebrations, couple, wedding } from "@/content/wedding";
+import { couple, wedding } from "@/content/wedding";
+import { getSiteContent } from "@/lib/content/get";
 import { listMedia } from "@/lib/data/media";
 import type { MediaItem } from "@/lib/data/types";
 import { albumUrl, qrSvg } from "@/lib/qr";
@@ -79,11 +80,13 @@ function ago(minutes: number) {
 async function LiveStage() {
   // TODO: live updates. Subscribe to new uploads with Server-Sent Events and put each
   // new moment at the front of the queue, instead of reading the list once per load.
+  // Media first: it waits for the request, so the content is not read while prerendering.
   const items = await recentMedia();
+  const { celebrations } = await getSiteContent();
   const newest = items[0] ? Date.parse(items[0].uploadedAt) : 0;
 
   const slides: Slide[] = items.map((m) => {
-    const event = celebrations.find((c) => c.id === m.event)?.name ?? "";
+    const event = celebrations.find((celebration) => celebration.id === m.event)?.name ?? "";
     // TODO: measure against the real clock once uploads are live (sample times are in December).
     const minutes = Math.round((newest - Date.parse(m.uploadedAt)) / 60000);
     return {

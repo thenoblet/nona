@@ -1,4 +1,5 @@
-import { couple, venues } from "@/content/wedding";
+import { couple } from "@/content/wedding";
+import type { Celebration, ScheduleItem, Venue } from "@/lib/content/schema";
 import { listMedia, mediaStats, SAMPLE_DEVICE } from "@/lib/data/media";
 import { listWishes } from "@/lib/data/wishes";
 import { PillLink, TextLink } from "@/components/ui/Button";
@@ -87,7 +88,17 @@ export async function LiveAlbum() {
 }
 
 /** Wedding weekend: the order of the day and the seat finder. */
-export function TodaySection({ todayLabel, secondDay }: { todayLabel: string; secondDay: boolean }) {
+export function TodaySection({
+  todayLabel,
+  secondDay,
+  schedule,
+  reception,
+}: {
+  todayLabel: string;
+  secondDay: boolean;
+  schedule: ScheduleItem[];
+  reception: Venue;
+}) {
   return (
     <section id="today" className="bg-white px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[1160px] flex-col gap-12 sm:gap-14">
@@ -99,7 +110,7 @@ export function TodaySection({ todayLabel, secondDay }: { todayLabel: string; se
         <div className="flex flex-col gap-12 lg:flex-row lg:items-start lg:gap-16">
           <div className="min-w-0 flex-1">
             <h3 className="mt-0 mb-3.5 font-serif text-[30px] font-normal italic sm:text-[34px]">Order of the day</h3>
-            <OrderOfDay secondDay={secondDay} />
+            <OrderOfDay schedule={schedule} secondDay={secondDay} />
           </div>
           <Reveal className="flex min-w-0 flex-col gap-5.5 rounded-[var(--radius-paper)] bg-tray p-4 sm:p-7 lg:w-[420px] lg:flex-none">
             <div className="rounded-[var(--radius-paper)] bg-white p-5 shadow-[var(--shadow-paper)] sm:p-7" style={{ transform: "rotate(-0.6deg)" }}>
@@ -107,7 +118,7 @@ export function TodaySection({ todayLabel, secondDay }: { todayLabel: string; se
             </div>
             <div className="flex flex-wrap justify-center gap-x-7 gap-y-1">
               <a
-                href={venues.reception.mapsUrl}
+                href={reception.mapsUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="ember-link inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] no-underline"
@@ -124,7 +135,7 @@ export function TodaySection({ todayLabel, secondDay }: { todayLabel: string; se
 }
 
 /** After the wedding: the whole album, filterable, with downloads. */
-export async function AfterAlbum() {
+export async function AfterAlbum({ celebrations }: { celebrations: Celebration[] }) {
   const [items, stats] = await Promise.all([listMedia(), mediaStats()]);
   return (
     <section id="album" className="bg-tray px-4 py-20 sm:px-6 sm:py-26">
@@ -145,7 +156,7 @@ export async function AfterAlbum() {
             <TextLink href="/album">Download mine</TextLink>
           </div>
         </div>
-        <AlbumBrowser items={items} myDevice={SAMPLE_DEVICE} />
+        <AlbumBrowser celebrations={celebrations} items={items} myDevice={SAMPLE_DEVICE} />
         <p className="m-0 flex items-center gap-3 px-1 font-serif text-[19px] text-mocha">
           <Halo icon="phone" size="sm" />
           Your own uploads are remembered on your phone, so &ldquo;Download mine&rdquo; gives you exactly yours.
