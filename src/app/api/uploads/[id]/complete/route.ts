@@ -24,6 +24,16 @@ const MAX_BODY_BYTES = 64 * 1024;
  */
 const COMPLETE_BUDGET_MILLISECONDS = 40_000;
 
+/**
+ * Ruling V: once a complete starts, it finishes on the server, bounded by its budget alone and not
+ * by the request's signal. A phone that goes to the background or closes the page after sending it
+ * would otherwise abort it part-way, leaving every byte in R2 and the row `uploading`, which only
+ * that phone could carry on. The other upload routes stop when their request does.
+ */
+function completeBudget(): AbortSignal {
+  return AbortSignal.timeout(COMPLETE_BUDGET_MILLISECONDS);
+}
+
 const completeRequest = zod.object({
   parts: zod
     .array(zod.object({ partNumber: zod.number().int().min(1).max(10_000), etag: zod.string().max(256) }))
@@ -39,6 +49,9 @@ const completeRequest = zod.object({
  * - Parts holding more than declared (the part URLs bind each size, so only if R2 let one through):
  *   the upload is aborted and its row deleted, 409 `size-mismatch`.
  * - Already completed (a repeat, or two at once): the same answer, with one job queued.
+ * - Cancelled while R2 joined the parts (the row is gone): 404 `missing`, and nothing is queued.
+ * - The upload gone with no original made (aborted or expired): 409 `upload-missing`.
+ * It runs to the end even if the phone drops meanwhile (Ruling V), within a 40 s budget.
  * - 403 for an upload that isn't this browser's, or an album upload past the 24 hours after a close.
  */
 export async function POST(request: Request, { params }: UploadContext) {
@@ -55,11 +68,13 @@ export async function POST(request: Request, { params }: UploadContext) {
     if (upload.status !== "uploading") return jsonResponse({ mediaId: upload.id, status: upload.status });
     if (!mayContinueUpload(upload, uploads)) return uploadsClosed();
 
-    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(COMPLETE_BUDGET_MILLISECONDS)]);
-    const outcome = await completeUpload(upload, { signal, defer: after });
+    const outcome = await completeUpload(upload, { signal: completeBudget(), defer: after });
     switch (outcome) {
       case "uploaded":
         return jsonResponse({ mediaId: upload.id, status: "uploaded" });
+      case "missing":
+        // Cancelled while it completed: the row is gone, and nothing is queued.
+        return errorResponse(404, "missing");
       case "incomplete":
         return errorResponse(
           409,
@@ -74,7 +89,7 @@ export async function POST(request: Request, { params }: UploadContext) {
           "size-mismatch",
           "This file didn't match the size it started with. Please choose it again.",
         );
-      case "missing":
+      case "expired":
         return uploadMissing();
     }
   } catch (error) {

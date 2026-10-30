@@ -44,16 +44,15 @@ const startRequest = zod.object({
  *   upload started before the close, within 24 hours of it. Wishes are never closed.
  * - The same file again (same guest, purpose, size and fingerprint, still uploading), even renamed:
  *   its existing upload, with the parts already sent.
- * - A browser without a guest gets one (and the cookie), named from uploaderName.
- * Limited per browser by its own guest (a burst of 100, then 2 a second); never by IP. A browser
- * without a guest has nothing to key on, as with POST /api/guest, and each such start makes a guest.
+ * - A browser without a guest (no cookie, or one the server didn't sign): 403 `no-guest`. The phone
+ *   awaits POST /api/guest before its first start, so starts never race to make guests.
+ * Limited per browser by its own guest (a burst of 100, then 2 a second); never by IP.
  */
 export async function POST(request: Request) {
   const ownId = await ownGuestId();
-  if (ownId) {
-    const { allowed, retryAfterSeconds } = takeToken(ownId, "start");
-    if (!allowed) return rateLimitedResponse(retryAfterSeconds);
-  }
+  if (!ownId) return errorResponse(403, "no-guest");
+  const { allowed, retryAfterSeconds } = takeToken(ownId, "start");
+  if (!allowed) return rateLimitedResponse(retryAfterSeconds);
 
   const body = await readJsonBody(request, MAX_BODY_BYTES);
   if (!body.ok) return body.response;
@@ -68,7 +67,7 @@ export async function POST(request: Request) {
     // Both reads at once: a burst of starts shares the database pool.
     const [uploads, unfinished] = await Promise.all([
       purpose === "album" ? readUploadsSwitch() : UPLOADS_ALWAYS_OPEN,
-      ownId ? findResumableUpload({ guestId: ownId, purpose, sizeBytes: size, fingerprint }) : null,
+      findResumableUpload({ guestId: ownId, purpose, sizeBytes: size, fingerprint }),
     ]);
     if (unfinished) {
       if (!mayContinueUpload(unfinished, uploads)) return uploadsClosed();
@@ -96,10 +95,9 @@ export async function POST(request: Request) {
         },
         options,
       );
-    // A browser without a guest gets one, named from the upload. One with a guest is taken at its
-    // word, without a lookup: the row's foreign key refuses a guest the database no longer has (a
-    // cookie older than a restore), and the browser then gets a new own guest.
-    if (!ownId) return jsonResponse(await create((await ensureOwnGuest(uploaderName)).id));
+    // The cookie's guest is taken at its word, without a lookup: the row's foreign key refuses a
+    // guest the database no longer has (a cookie older than a restore), and the browser then gets
+    // a new own guest, named from the upload.
     try {
       return jsonResponse(await create(ownId));
     } catch (error) {

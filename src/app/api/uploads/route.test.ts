@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createGuest, findGuestById } from "@/lib/data/guests";
 import { setSetting } from "@/lib/data/settings";
 import { getDb } from "@/lib/db/client";
-import { media, uploadEvents } from "@/lib/db/schema";
+import { guests, media, uploadEvents } from "@/lib/db/schema";
 import { storageConfig } from "@/lib/env";
 import { MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
 import { PART_SIZE_BYTES, SIZE_LIMITS } from "@/lib/media/limits";
@@ -337,12 +337,26 @@ describe("an upload, start to finish", () => {
     expect((await readManifest(thanks.mediaId))?.celebration).toBe("thanks");
   });
 
-  it("makes the browser's guest when it has none, naming the guest and the upload from uploaderName", async () => {
-    const session = await startSession(smallFile({ uploaderName: " Ama Owusu " }));
-    const [guestId] = await readGuestIds();
-    expect(guestId).toEqual(expect.any(String));
-    expect((await findGuestById(guestId))?.displayName).toBe("Ama Owusu");
-    expect(await mediaRow(session.mediaId)).toMatchObject({ guestId, uploaderName: "Ama Owusu" });
+  it("refuses a browser without a guest with 403 no-guest, making no guest and no upload", async () => {
+    // The phone awaits POST /api/guest before its first start, so a start never makes a guest.
+    const forged = newCookieJar();
+    forged.values.set(guestCookieName(), "not-a-signed-value");
+    for (const jar of [browserCookies, forged]) {
+      const response = await asBrowser(jar, () => start(smallFile({ uploaderName: "Ama Owusu" })));
+      expect(response.status).toBe(403);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(await response.json()).toEqual({ error: "no-guest" });
+    }
+    expect(browserCookies.sets).toEqual([]);
+    expect(await getDb().select().from(guests)).toEqual([]);
+    expect(await mediaCount()).toBe(0);
+  });
+
+  it("names an upload from uploaderName without renaming the browser's guest", async () => {
+    const guest = await signIn(browserCookies, "Ama Owusu");
+    const session = await startSession(smallFile({ uploaderName: " Ama O. " }));
+    expect(await mediaRow(session.mediaId)).toMatchObject({ guestId: guest.id, uploaderName: "Ama O." });
+    expect((await findGuestById(guest.id))?.displayName).toBe("Ama Owusu");
   });
 
   it("gives the browser a new own guest when its cookie names one the database no longer has", async () => {
@@ -554,6 +568,81 @@ describe("completing", () => {
     expect((await mediaRow(session.mediaId)).status).toBe("uploading");
   });
 
+  it("Ruling V: finishes on the server when the phone drops mid-complete, the row uploaded and its job queued", async () => {
+    await signIn();
+    const body = smallFile();
+    const session = await startSession(body);
+    const parts = await sendParts(session, randomBytes(body.size), [1]);
+    // The phone goes to the background as R2 is asked for the parts: the request's signal fires.
+    const phone = new AbortController();
+    const middleware = "dropThePhoneDuringListParts";
+    storageClient().middlewareStack.add(
+      (next, context) => async (args) => {
+        if (context.commandName === "ListPartsCommand") phone.abort(new Error("the phone went to the background"));
+        return next(args);
+      },
+      { step: "initialize", name: middleware },
+    );
+    let response: Response;
+    try {
+      response = await completeRoute(
+        new Request(`https://example.com/api/uploads/${session.mediaId}/complete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parts }),
+          signal: phone.signal,
+        }),
+        routeContext(session.mediaId),
+      );
+    } finally {
+      storageClient().middlewareStack.remove(middleware);
+    }
+    expect(phone.signal.aborted).toBe(true);
+    expect(response.status).toBe(200);
+    await afterResponse();
+    expect((await mediaRow(session.mediaId)).status).toBe("uploaded");
+    expect(await jobsFor(MEDIA_QUEUES.photo, session.mediaId)).toHaveLength(1);
+  });
+
+  it("answers 404 missing when the guest cancels while R2 completes it, queueing nothing", async () => {
+    await signIn();
+    const body = smallFile();
+    const session = await startSession(body);
+    const parts = await sendParts(session, randomBytes(body.size), [1]);
+    // The cancel lands between R2 joining the parts and the row being marked.
+    let cancelled: Response | undefined;
+    const middleware = "cancelAsTheUploadCompletes";
+    storageClient().middlewareStack.add(
+      (next, context) => async (args) => {
+        const result = await next(args);
+        if (context.commandName === "CompleteMultipartUploadCommand") cancelled = await cancel(session.mediaId);
+        return result;
+      },
+      { step: "initialize", name: middleware },
+    );
+    let response: Response;
+    try {
+      response = await complete(session.mediaId, parts);
+    } finally {
+      storageClient().middlewareStack.remove(middleware);
+      // The original R2 made has no row left to clean it up by.
+      await storageClient().send(
+        new DeleteObjectsCommand({
+          Bucket: storageConfig().privateBucket,
+          Delete: { Objects: [{ Key: session.key }], Quiet: true },
+        }),
+      );
+    }
+    expect(cancelled?.status).toBe(200);
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ error: "missing" });
+    await afterResponse();
+    expect(await mediaRow(session.mediaId)).toBeUndefined();
+    expect(await jobsFor(MEDIA_QUEUES.photo, session.mediaId)).toHaveLength(0);
+    expect(await eventsFor(session.mediaId)).toEqual([]);
+  });
+
   it("still succeeds when the job can't be queued, leaving the item for the sweeper", async () => {
     await signIn();
     const body = smallFile();
@@ -620,6 +709,7 @@ describe("whose upload it is", () => {
 
 describe("Review Focus 5: a file that isn't what the album takes", () => {
   it("is refused before any bytes are sent, with plain words, leaving nothing behind", async () => {
+    await signIn();
     const cases: [Partial<StartBody>, string][] = [
       [{ size: SIZE_LIMITS.photo + 1 }, "too-large"],
       [{ contentType: "video/mp4", filename: "clip.mp4", size: SIZE_LIMITS.video + 1 }, "too-large"],
@@ -639,8 +729,6 @@ describe("Review Focus 5: a file that isn't what the album takes", () => {
       expect(answer.message).toMatch(/^[A-Z].+\.$/);
     }
     expect(await mediaCount()).toBe(0);
-    // A browser without a guest got none from a refused file.
-    expect(await readGuestIds()).toEqual([]);
   });
 
   it("takes a HEIC a phone sent as application/octet-stream as image/heic, and audio for a voice wish", async () => {

@@ -192,7 +192,7 @@ describe("the upload API under a burst", () => {
         `without R2 ${summary(outcomes.map((outcome) => outcome.ownMs))}`,
     );
     expect(outcomes.map((outcome) => outcome.result.status)).toEqual(Array(GUESTS).fill(200));
-    expect(percentile(outcomes.map((outcome) => outcome.ownMs), 0.95)).toBeLessThan(1_000);
+    expect(percentile(outcomes.map((outcome) => outcome.ownMs), 0.95)).toBeLessThan(400);
     expect(waits).toBe(0);
     expect(await deadlocks()).toBe(deadlocksBefore);
     expect(elapsedMs).toBeLessThan(10_000);

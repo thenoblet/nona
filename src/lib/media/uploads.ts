@@ -23,6 +23,7 @@ import { PART_SIZE_BYTES, partCount, partSizeOf } from "./limits";
 import {
   attachMultipartUpload,
   deleteUnfinishedUpload,
+  findUpload,
   insertUpload,
   markUploaded,
   recordUploadEvents,
@@ -183,21 +184,31 @@ async function announceUploaded(upload: UploadRow): Promise<void> {
   await recordEvent(upload, "completed");
 }
 
-/** Marks a verified upload `uploaded`; the call that changes it queues the job, after the response. */
-async function finishUpload(upload: UploadRow, options: UploadOptions): Promise<void> {
-  if (await markUploaded(upload.id)) options.defer(() => announceUploaded(upload));
+/**
+ * Marks a verified upload `uploaded`; the call that changes it queues the job, after the response.
+ * A row left as it was is `uploaded` already (another complete marked it first), or `missing`: the
+ * guest cancelled it while R2 joined its parts, and it is gone.
+ */
+async function finishUpload(upload: UploadRow, options: UploadOptions): Promise<"uploaded" | "missing"> {
+  if (await markUploaded(upload.id)) {
+    options.defer(() => announceUploaded(upload));
+    return "uploaded";
+  }
+  return (await findUpload(upload.id)) ? "uploaded" : "missing";
 }
 
 /**
  * After NoSuchUpload: whether the upload had in fact completed (an earlier complete reached R2 and
- * its answer was lost), in which case it is finished now. False when the original isn't there:
- * the upload was aborted (cancelled, or expired under R2's 7-day rule).
+ * its answer was lost), in which case it is finished now. `no-original` when the original isn't
+ * there: the upload was aborted (cancelled, or expired under R2's 7-day rule).
  */
-async function finishIfOriginalExists(upload: UploadRow, options: UploadOptions): Promise<boolean> {
+async function finishIfOriginalExists(
+  upload: UploadRow,
+  options: UploadOptions,
+): Promise<"uploaded" | "missing" | "no-original"> {
   const original = await headOriginal(upload.originalKey, { signal: options.signal });
-  if (!original || original.size !== upload.sizeBytes) return false;
-  await finishUpload(upload, options);
-  return true;
+  if (!original || original.size !== upload.sizeBytes) return "no-original";
+  return finishUpload(upload, options);
 }
 
 /**
@@ -211,7 +222,7 @@ async function partsSoFar(upload: UploadRow, uploadId: string, options: UploadOp
     parts = await listUploadedParts(upload.originalKey, uploadId, { signal: options.signal });
   } catch (error) {
     if (errorName(error) !== "NoSuchUpload") throw error;
-    return (await finishIfOriginalExists(upload, options)) ? everyPart(upload.sizeBytes) : null;
+    return (await finishIfOriginalExists(upload, options)) === "uploaded" ? everyPart(upload.sizeBytes) : null;
   }
   if (bytesHeld(parts) <= upload.sizeBytes) return parts;
   await discardOverfilled(upload, uploadId, options);
@@ -360,9 +371,16 @@ export async function presignUploadParts(upload: UploadRow, partNumbers: number[
  * - `incomplete`: the parts R2 holds don't add up to the declared size, so nothing changed;
  * - `invalid-parts`: they add up, but R2 refused to join them (a part other than the last under 5 MiB);
  * - `overfilled`: they hold more than the declared size, so the upload was discarded;
- * - `missing`: the upload is gone and no original was made (aborted or expired).
+ * - `missing`: the guest cancelled it while R2 joined its parts, so its row is gone and nothing is queued;
+ * - `expired`: the upload is gone and no original was made (aborted or expired).
  */
-export type CompleteOutcome = "uploaded" | "incomplete" | "invalid-parts" | "overfilled" | "missing";
+export type CompleteOutcome = "uploaded" | "incomplete" | "invalid-parts" | "overfilled" | "missing" | "expired";
+
+/** What completing comes to once R2 says NoSuchUpload: done if the original is there. */
+async function completedAlready(upload: UploadRow, options: UploadOptions): Promise<CompleteOutcome> {
+  const finished = await finishIfOriginalExists(upload, options);
+  return finished === "no-original" ? "expired" : finished;
+}
 
 // R2's refusals of a join whose parts are the wrong shape, rather than a passing fault.
 const BAD_PARTS = new Set(["EntityTooSmall", "InvalidPart", "InvalidPartOrder"]);
@@ -381,7 +399,7 @@ export async function completeUpload(upload: UploadRow, options: UploadOptions):
     parts = await listUploadedParts(upload.originalKey, uploadId, { signal: options.signal });
   } catch (error) {
     if (errorName(error) !== "NoSuchUpload") throw error;
-    return (await finishIfOriginalExists(upload, options)) ? "uploaded" : "missing";
+    return completedAlready(upload, options);
   }
   const receivedBytes = bytesHeld(parts);
   if (receivedBytes > upload.sizeBytes) {
@@ -393,12 +411,11 @@ export async function completeUpload(upload: UploadRow, options: UploadOptions):
     await completeMultipart(upload.originalKey, uploadId, parts, { signal: options.signal });
   } catch (error) {
     const name = errorName(error);
-    if (name === "NoSuchUpload") return (await finishIfOriginalExists(upload, options)) ? "uploaded" : "missing";
+    if (name === "NoSuchUpload") return completedAlready(upload, options);
     if (name && BAD_PARTS.has(name)) return "invalid-parts";
     throw error;
   }
-  await finishUpload(upload, options);
-  return "uploaded";
+  return finishUpload(upload, options);
 }
 
 /**
