@@ -167,7 +167,10 @@ describe("validation", () => {
 });
 
 describe("contentOrDefaults", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    // Let any fallback window run out, then read once, so no later test is handed the defaults.
+    if (vi.isFakeTimers()) vi.advanceTimersByTime(30_000);
+    await contentOrDefaults(() => Promise.resolve(contentDefaults));
     vi.useRealTimers();
   });
 
@@ -193,5 +196,17 @@ describe("contentOrDefaults", () => {
     expect(await contentOrDefaults(working)).toEqual(saved);
     expect(await contentOrDefaults(working)).toEqual(saved);
     expect(working).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves no fallback behind once a read works again, whatever the clock does", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await contentOrDefaults(() => Promise.reject(new Error("db down")));
+    vi.advanceTimersByTime(30_000);
+    await contentOrDefaults(() => Promise.resolve(contentDefaults));
+    // Back on the real clock, which is behind the fake one, the next read still runs.
+    vi.useRealTimers();
+    const working = vi.fn(() => Promise.resolve(contentDefaults));
+    await contentOrDefaults(working);
+    expect(working).toHaveBeenCalledOnce();
   });
 });

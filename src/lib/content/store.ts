@@ -44,7 +44,9 @@ let fallbackUntil = 0;
 export async function contentOrDefaults(read: () => Promise<SiteContent>): Promise<SiteContent> {
   if (Date.now() < fallbackUntil) return contentDefaults;
   try {
-    return await read();
+    const content = await read();
+    fallbackUntil = 0;
+    return content;
   } catch (error) {
     fallbackUntil = Date.now() + FALLBACK_MS;
     console.error("Could not read site content; using the built-in text for 30 s:", describeError(error));

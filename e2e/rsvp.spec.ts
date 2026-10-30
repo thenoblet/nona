@@ -127,14 +127,20 @@ async function previewTags(request: APIRequestContext, path: string, userAgent =
 }
 
 /**
- * At the end of the page, how far the last line of the closed message's section sits above the
- * floating music pill (negative when the pill covers it), or null when no pill is beneath it.
+ * At the end of the page, how far the signature under the closed message sits above the floating
+ * music pill (negative when the pill covers it), or null when no pill is beneath it. Only the
+ * section on screen counts, not a hidden copy left from streaming.
  */
 async function signatureClearance(page: Page): Promise<number | null> {
   await page.getByText("Play our song").waitFor();
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  // The page scrolls smoothly; measure at the end, not on the way there.
+  await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }));
   return page.evaluate(() => {
-    const signature = [...document.querySelectorAll("section[aria-label='Replies have closed'] p")].at(-1)!.getBoundingClientRect();
+    const section = [...document.querySelectorAll("section[aria-label='Replies have closed']")].find((element) =>
+      element.checkVisibility(),
+    );
+    const signature = [...(section?.querySelectorAll("p") ?? [])].at(-1)?.getBoundingClientRect();
+    if (!signature || signature.height === 0) throw new Error("No signature on screen");
     const dock = document.querySelector("div.pointer-events-none.fixed")!;
     const beneath = [...dock.querySelectorAll(":scope > div")]
       .map((element) => element.getBoundingClientRect())
@@ -193,6 +199,7 @@ test.describe("the couple's RSVP switch", () => {
     // The page opened before the close still has its form: the reply is refused with the message.
     await page.getByRole("button", { name: "Send my reply" }).click();
     await expect(page.getByText(builtInRsvp.closedMessage)).toBeVisible();
+    await expect(page.getByText(builtInRsvp.closedMessage)).toHaveCSS("white-space", "pre-line");
     expect(await repliesFrom("e2e-too-late@example.com")).toBe(0);
 
     await page.goto("/rsvp");
@@ -202,8 +209,10 @@ test.describe("the couple's RSVP switch", () => {
     await expect(page.getByRole("button", { name: "Send my reply" })).toHaveCount(0);
     await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", "Replies have closed.");
     // On a phone, scrolled to the end, the signature clears the floating music pill.
-    await page.setViewportSize({ width: 390, height: 844 });
-    expect(await signatureClearance(page)).toBeGreaterThan(0);
+    for (const width of [320, 360, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(await signatureClearance(page), `at ${width}px`).toBeGreaterThan(0);
+    }
     await page.setViewportSize({ width: 1280, height: 720 });
 
     await page.goto("/home?mode=before");

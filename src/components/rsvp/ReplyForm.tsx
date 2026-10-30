@@ -162,7 +162,8 @@ export function ReplyForm({
         <div className="mt-2 flex flex-col">
           <div aria-live="polite">
             {state.status === "error" ? (
-              <p className="mb-3 text-center text-[13px] leading-snug text-ember-ink">
+              // pre-line keeps the line breaks the couple type into their closed message.
+              <p className="mb-3 text-center text-[13px] leading-snug whitespace-pre-line text-ember-ink">
                 {errors.form ?? "Almost there. Please check the highlighted details above."}
               </p>
             ) : null}
