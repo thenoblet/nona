@@ -85,18 +85,18 @@ async function LiveStage() {
   const { celebrations } = await getSiteContent();
   const newest = items[0] ? Date.parse(items[0].uploadedAt) : 0;
 
-  const slides: Slide[] = items.map((m) => {
-    const event = celebrations.find((celebration) => celebration.id === m.event)?.name ?? "";
+  const slides: Slide[] = items.map((item) => {
+    const event = celebrations.find((celebration) => celebration.id === item.event)?.name ?? "";
     // TODO: measure against the real clock once uploads are live (sample times are in December).
-    const minutes = Math.round((newest - Date.parse(m.uploadedAt)) / 60000);
+    const minutes = Math.round((newest - Date.parse(item.uploadedAt)) / 60000);
     return {
-      id: m.id,
-      src: m.src,
-      alt: m.alt,
-      position: m.position,
-      kind: m.kind,
+      id: item.id,
+      src: item.src,
+      alt: item.alt,
+      position: item.position,
+      kind: item.kind,
       // "You" only makes sense on the uploader's own phone.
-      by: m.uploaderName === "You" ? "[Guest]" : m.uploaderName,
+      by: item.uploaderName === "You" ? "[Guest]" : item.uploaderName,
       detail: `${event} · ${ago(minutes)}`,
     };
   });

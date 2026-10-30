@@ -14,7 +14,7 @@ import { Celebrations } from "@/components/home/Celebrations";
 import { MapSection } from "@/components/home/MapSection";
 import { AlbumTeaser, Colours, Faq, Footer, Gifts, Party, RsvpBand, Travel } from "@/components/home/Sections";
 import { AfterAlbum, LiveAlbum, TodaySection, WishesWall } from "@/components/home/ModeSections";
-import { dayLabel, nowIndex } from "@/components/today/ByDay";
+import { dayLabel, nowIndex } from "@/components/today/day";
 
 export const metadata: Metadata = {
   title: "Our invitation",

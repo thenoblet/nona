@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { contentDefaults } from "@/lib/content/defaults";
 import type { ScheduleItem } from "@/lib/content/schema";
-import { nowIndex } from "./ByDay";
+import { nowIndex } from "./day";
 
 const defaultSchedule = contentDefaults.schedule;
 const saturdayItem: ScheduleItem = { time: "10:00", title: "Wedding", place: "Church", day: "sat" };

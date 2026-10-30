@@ -58,8 +58,10 @@ export function HeroBefore() {
   );
 }
 
-/** Wedding weekend: photo sharing comes first. */
-/** `now` is what is on right now; nothing is shown for it when the schedule is empty. */
+/**
+ * Wedding weekend: photo sharing comes first. `now` is what is on right now; nothing is shown
+ * for it when the schedule is empty.
+ */
 export function HeroDay({ todayLabel, now }: { todayLabel: string; now: { title: string; place: string } | null }) {
   return (
     <section id="top" className={`${wrap} pt-14 pb-20 sm:pt-20 sm:pb-24`}>

@@ -143,12 +143,12 @@ export async function rsvpTotals(): Promise<
   ) as Record<EventId, { accepted: number; declined: number; people: number }>;
 
   const rows = await getDb().select().from(rsvps).where(isNull(rsvps.supersededAt));
-  for (const r of rows) {
+  for (const row of rows) {
     for (const id of EVENT_IDS) {
-      const answer = r.answers[id];
+      const answer = row.answers[id];
       if (answer === "yes") {
         totals[id].accepted += 1;
-        totals[id].people += PEOPLE[r.partySize] ?? 1;
+        totals[id].people += PEOPLE[row.partySize] ?? 1;
       } else if (answer === "no") {
         totals[id].declined += 1;
       }

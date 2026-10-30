@@ -1,5 +1,5 @@
 import type { ScheduleItem } from "@/lib/content/schema";
-import { nowIndex } from "./ByDay";
+import { nowIndex } from "./day";
 
 /** The rounded strip in the header: what's on right now, and where. */
 export function HappeningNow({ schedule, secondDay }: { schedule: ScheduleItem[]; secondDay: boolean }) {

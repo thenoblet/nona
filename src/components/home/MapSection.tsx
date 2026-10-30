@@ -1,4 +1,4 @@
-import type { Venue } from "@/lib/content/schema";
+import type { SiteContent } from "@/lib/content/schema";
 import { Reveal } from "@/components/ui/Reveal";
 import { SectionHeading } from "@/components/ui/Typography";
 import { CopyButton } from "./CopyButton";
@@ -16,7 +16,7 @@ type Place = {
   coords?: { lat: number; lng: number };
 };
 
-function placesFor(venues: { church: Venue; reception: Venue }): Place[] {
+function placesFor(venues: SiteContent["venues"]): Place[] {
   return [
     { n: 1, eyebrow: "White wedding · Thanksgiving", tag: "Church", ...venues.church },
     { n: 2, eyebrow: "Reception", tag: "Reception", ...venues.reception },
@@ -69,7 +69,7 @@ export function MapSection({
   venues,
   landmarks,
 }: {
-  venues: { church: Venue; reception: Venue };
+  venues: SiteContent["venues"];
   landmarks: string[];
 }) {
   const places = placesFor(venues);

@@ -1,5 +1,5 @@
 import type { ScheduleItem } from "@/lib/content/schema";
-import { nowIndex } from "./ByDay";
+import { nowIndex } from "./day";
 
 /** The day's timeline: finished items fade, the current one is marked in orange. */
 export function OrderOfDay({ schedule, secondDay }: { schedule: ScheduleItem[]; secondDay: boolean }) {

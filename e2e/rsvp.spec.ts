@@ -21,6 +21,7 @@ test("a guest can send a reply and it is saved", async ({ page }) => {
     user: TEST_DB_ENV.POSTGRES_USER,
     password: TEST_DB_ENV.POSTGRES_PASSWORD,
     max: 1,
+    connect_timeout: 5,
   });
   try {
     const rows = await sql`SELECT full_name FROM rsvps WHERE email = 'e2e-guest@example.com'`;

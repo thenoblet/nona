@@ -40,7 +40,7 @@ export function AlbumBrowser({
   const [whose, setWhose] = useState<Whose>("everyone");
 
   const shown = items.filter(
-    (m) => (event === "all" || m.event === event) && (whose === "everyone" || m.uploaderDevice === myDevice),
+    (item) => (event === "all" || item.event === event) && (whose === "everyone" || item.uploaderDevice === myDevice),
   );
   const mine = whose === "mine";
 
@@ -97,8 +97,8 @@ export function AlbumBrowser({
 
       {shown.length ? (
         <ul className="m-0 grid list-none grid-cols-3 gap-1.5 p-0 md:grid-cols-4 lg:grid-cols-5">
-          {shown.map((m) => (
-            <MediaTile key={m.id} item={m} mine={m.uploaderDevice === myDevice} />
+          {shown.map((item) => (
+            <MediaTile key={item.id} item={item} mine={item.uploaderDevice === myDevice} />
           ))}
         </ul>
       ) : (
