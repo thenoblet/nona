@@ -17,6 +17,7 @@ import { EDITOR_FIELDS, MAX_SECTION_BYTES, parseIssues, TOO_LONG, type SaveState
 import type { SectionKey } from "@/lib/content/schema";
 import { getAt, insertAt, moveItem, pathKey, removeAt, setAt, type Path } from "./editing";
 import { fieldsInOrder, sectionSpecs, type FieldSpec, type ListSpec, type SectionSpec } from "./fields";
+import { setUnsavedChanges } from "./unsaved";
 import { VersionHistory, type RestoreNotice, type VersionEntry } from "./VersionHistory";
 
 const NOT_SAVED = "That didn't save. Check the connection, reload the page and try again.";
@@ -95,6 +96,21 @@ export function ContentEditor({
   const loadedSerialized = useMemo(() => JSON.stringify(loaded.value), [loaded.value]);
   const dirty = serialized !== loadedSerialized;
   const fieldNames = useMemo(() => fieldsInOrder(spec, draft), [spec, draft]);
+
+  // Unsaved edits: the section links and menu ask before leaving, and the browser warns on close or reload.
+  useEffect(() => {
+    setUnsavedChanges(dirty);
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => {
+      window.removeEventListener("beforeunload", warn);
+      setUnsavedChanges(false);
+    };
+  }, [dirty]);
 
   useEffect(() => {
     const target = focusTarget.current;
@@ -183,7 +199,8 @@ export function ContentEditor({
     startRestoring(async () => {
       let result: SaveState;
       try {
-        result = await restoreVersionAction(sectionKey, target);
+        // The version shown as live goes too, so a restore can't undo a save this page hasn't seen.
+        result = await restoreVersionAction(sectionKey, target, version);
       } catch {
         result = { status: "error", errors: [NOT_SAVED] };
       }
@@ -304,17 +321,22 @@ export function ContentEditor({
                         >
                           Move down
                         </button>
-                        <button
-                          type="button"
-                          className="admin-btn admin-btn-small admin-btn-remove"
-                          aria-label={`Remove ${legend}`}
-                          onClick={() => {
-                            const neighbour = itemKeys[index + 1] ?? itemKeys[index - 1];
-                            changeList((list) => removeAt(list, index), neighbour ? { item: neighbour, control: "group" } : { add: true });
-                          }}
-                        >
-                          Remove
-                        </button>
+                        {(spec.editable.removable?.(item) ?? true) && (
+                          <button
+                            type="button"
+                            className="admin-btn admin-btn-small admin-btn-remove"
+                            aria-label={`Remove ${legend}`}
+                            onClick={() => {
+                              const neighbour = itemKeys[index + 1] ?? itemKeys[index - 1];
+                              changeList(
+                                (list) => removeAt(list, index),
+                                neighbour ? { item: neighbour, control: "group" } : { add: true },
+                              );
+                            }}
+                          >
+                            Remove
+                          </button>
+                        )}
                       </div>
                     )}
                   </fieldset>
@@ -356,13 +378,17 @@ export function ContentEditor({
   );
 }
 
-// Times and coordinates bring up a number pad with a decimal point (phones have no colon key there;
-// the save reads "14.30" as 14:30).
+// Times bring up a number pad with a decimal point (it has no colon key; the save reads "14.30" as
+// 14:30). Coordinates keep the full keyboard: Ghana's longitudes are negative, and the iPhone's
+// decimal pad has no minus key.
 const inputKinds: Record<"time" | "date" | "decimal", InputHTMLAttributes<HTMLInputElement>> = {
   time: { type: "text", inputMode: "decimal", autoComplete: "off" },
   date: { type: "date" },
-  decimal: { type: "text", inputMode: "decimal", autoComplete: "off" },
+  decimal: { type: "text", inputMode: "text", autoComplete: "off" },
 };
+
+/** Line breaks (and the space around them) in a one-line box become a single space. */
+const lineBreaks = /\s*[\r\n]+\s*/g;
 
 // Names, titles and links are one line of text, but drawn as a box that wraps and grows, so a long
 // place name or map link is never cut off on a phone. Enter doesn't add a line, and a pasted line
@@ -372,16 +398,28 @@ const oneLineKinds: Record<"text" | "link", TextareaHTMLAttributes<HTMLTextAreaE
   link: { inputMode: "url", autoComplete: "off", autoCapitalize: "none", spellCheck: false },
 };
 
-/** Where CSS can't size a text box to its text, it is sized here after each change. */
-function useGrowingBox(text: string) {
+/**
+ * A text box's ref. Where CSS can't size the box to its text, it is sized here after each change;
+ * and when a change was rewritten (a pasted line break became a space), the caret goes back to
+ * where it was rather than jumping to the end.
+ */
+function useTextBox(text: string) {
   const box = useRef<HTMLTextAreaElement>(null);
+  const caretAfterChange = useRef<number | null>(null);
   useLayoutEffect(() => {
     const element = box.current;
-    if (!element || CSS.supports("field-sizing", "content")) return;
+    if (!element) return;
+    const caret = caretAfterChange.current;
+    caretAfterChange.current = null;
+    if (caret !== null && document.activeElement === element) element.setSelectionRange(caret, caret);
+    if (CSS.supports("field-sizing", "content")) return;
     element.style.height = "auto";
     element.style.height = `${element.scrollHeight + element.offsetHeight - element.clientHeight}px`;
   }, [text]);
-  return box;
+  const keepCaretAt = (position: number) => {
+    caretAfterChange.current = position;
+  };
+  return { box, keepCaretAt };
 }
 
 function Field({
@@ -401,7 +439,7 @@ function Field({
 }) {
   const value = getAt(item, field.path);
   const text = typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
-  const box = useGrowingBox(text);
+  const { box, keepCaretAt } = useTextBox(text);
   const hint = typeof field.hint === "function" ? field.hint(item) : field.hint;
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
@@ -462,14 +500,23 @@ function Field({
         ref={box}
         {...control}
         {...oneLineKinds[field.kind]}
-        className="admin-oneline"
-        rows={1}
+        className={field.rows === 2 ? "admin-oneline admin-oneline-tall" : "admin-oneline"}
+        rows={field.rows ?? 1}
         value={text}
         placeholder={field.placeholder}
         onKeyDown={(event) => {
-          if (event.key === "Enter") event.preventDefault();
+          // Enter that confirms an input method's word (Chinese, Japanese, some phone keyboards) is let through.
+          if (event.key === "Enter" && !event.nativeEvent.isComposing) event.preventDefault();
         }}
-        onChange={(event) => update(event.target.value.replace(/\s*[\r\n]+\s*/g, " "))}
+        onChange={(event) => {
+          const typed = event.target.value;
+          const cleaned = typed.replace(lineBreaks, " ");
+          if (cleaned !== typed) {
+            const caret = event.target.selectionStart ?? typed.length;
+            keepCaretAt(typed.slice(0, caret).replace(lineBreaks, " ").length);
+          }
+          update(cleaned);
+        }}
       />
     );
   } else if (field.kind === "select") {

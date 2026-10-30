@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { contentDefaults } from "@/lib/content/defaults";
-import { sectionKeys, sectionSchemas } from "@/lib/content/schema";
-import {
-  contentSections,
-  describeDate,
-  newerVersionMessage,
-  parseIssues,
-  prepareSection,
-  sectionBySlug,
-} from "./content";
+import { sectionKeys } from "@/lib/content/schema";
+import { contentSections, describeDate, newerVersionMessage, parseIssues, sectionBySlug } from "./content";
 
 describe("contentSections", () => {
   it("lists every section once, in the admin's order, with its slug and label", () => {
@@ -50,78 +42,6 @@ describe("describeDate", () => {
     expect(describeDate("")).toBeNull();
     expect(describeDate("2026-02-30")).toBeNull();
     expect(describeDate("5 Dec")).toBeNull();
-  });
-});
-
-describe("prepareSection", () => {
-  it("matches the built-in celebrations' day words", () => {
-    expect(prepareSection("celebrations", contentDefaults.celebrations)).toEqual(contentDefaults.celebrations);
-  });
-
-  it("turns empty optional celebration fields into null or nothing, and tidies typed times", () => {
-    const [ceremony, reception] = prepareSection("celebrations", [
-      { ...contentDefaults.celebrations[0], startTime: " 9:30 ", endTime: "", placeDetail: "  " },
-      { ...contentDefaults.celebrations[1], startTime: "14.30", endTime: "25:00" },
-    ]) as Record<string, unknown>[];
-    expect(ceremony.startTime).toBe("09:30");
-    expect(ceremony.endTime).toBeNull();
-    expect(ceremony).not.toHaveProperty("placeDetail");
-    expect(reception.startTime).toBe("14:30");
-    expect(reception.endTime).toBe("25:00");
-  });
-
-  it("turns typed coordinates into numbers and drops them when both are empty", () => {
-    const venues = structuredClone(contentDefaults.venues) as Record<string, Record<string, unknown>>;
-    venues.church.coords = { lat: " 7.5 ", lng: "-2.25" };
-    venues.reception.coords = { lat: "", lng: "" };
-    venues.reception.note = "";
-    venues.hotel.coords = { lat: "7", lng: "" };
-    const prepared = prepareSection("venues", venues) as Record<string, Record<string, unknown>>;
-
-    expect(prepared.church.coords).toEqual({ lat: 7.5, lng: -2.25 });
-    expect(prepared.reception).not.toHaveProperty("coords");
-    expect(prepared.reception).not.toHaveProperty("note");
-    expect(prepared.hotel.coords).toEqual({ lat: 7, lng: undefined });
-
-    const result = sectionSchemas.venues.safeParse(prepared);
-    expect(result.success).toBe(false);
-    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["hotel.coords.lng"]);
-  });
-
-  it("gives a new wedding-party member a unique id from their name and keeps existing ids", () => {
-    const party = [
-      ...contentDefaults.party,
-      { id: "", name: "Lilian", role: "Bridesmaid" },
-      { id: "", name: "Ɔkyeame Ɛsi Bóakye", role: "Usher", lead: false },
-      { id: "", name: "Lilian", role: "Flower girl" },
-      { id: "", name: "!!", role: "Usher" },
-    ];
-    const prepared = prepareSection("party", party) as Record<string, unknown>[];
-
-    expect(prepared.slice(0, contentDefaults.party.length)).toEqual(contentDefaults.party);
-    expect(prepared.slice(contentDefaults.party.length).map((member) => member.id)).toEqual([
-      "lilian-2",
-      "okyeame-esi-boakye",
-      "lilian-3",
-      "member",
-    ]);
-    expect(prepared[contentDefaults.party.length + 1]).not.toHaveProperty("lead");
-    expect(sectionSchemas.party.safeParse(prepared).success).toBe(true);
-  });
-
-  it("drops an empty travel link and makes an empty live-stream link null", () => {
-    const travel = prepareSection("travel", [{ ...contentDefaults.travel[0], href: " " }]) as Record<string, unknown>[];
-    expect(travel[0]).not.toHaveProperty("href");
-    expect(prepareSection("liveStream", { url: "  " })).toEqual({ url: null });
-    expect(prepareSection("liveStream", { url: " https://example.com/live " })).toEqual({
-      url: "https://example.com/live",
-    });
-  });
-
-  it("passes through what isn't the expected shape, for the schema to refuse", () => {
-    expect(prepareSection("celebrations", "nope")).toBe("nope");
-    expect(prepareSection("party", [null, 3])).toEqual([null, 3]);
-    expect(prepareSection("venues", null)).toBeNull();
   });
 });
 

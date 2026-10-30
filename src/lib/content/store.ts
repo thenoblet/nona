@@ -101,12 +101,20 @@ export async function listVersions(key: SectionKey): Promise<{ version: number; 
     .orderBy(desc(siteContent.version));
 }
 
-/** Saves a copy of an earlier version as a new version. */
-export async function restoreVersion(key: SectionKey, version: number, savedBy: string): Promise<SaveResult> {
+/**
+ * Saves a copy of an earlier version as a new version. With `baseVersion`, it is refused like any
+ * other save if someone saved after the page that asked for it was loaded.
+ */
+export async function restoreVersion(
+  key: SectionKey,
+  version: number,
+  savedBy: string,
+  options: { baseVersion?: number } = {},
+): Promise<SaveResult> {
   const [row] = await getDb()
     .select({ value: siteContent.value })
     .from(siteContent)
     .where(and(eq(siteContent.key, key), eq(siteContent.version, version)));
   if (!row) return { ok: false, errors: [`Version ${version} of ${key} does not exist`] };
-  return saveSection(key, row.value, savedBy);
+  return saveSection(key, row.value, savedBy, options);
 }

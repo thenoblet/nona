@@ -215,6 +215,8 @@
 .admin .admin-sectionnav a[aria-current="page"] { background: var(--admin-accent-soft); color: var(--admin-accent-text); font-weight: 600; }
 .admin-sectionpick { display: none; }
 .admin-sectionpick label { display: block; margin-bottom: 4px; color: var(--admin-muted); font-size: 13px; }
+.admin-sectionpick-row { display: flex; gap: 8px; }
+.admin-sectionpick-row select { flex: 1 1 auto; }
 .admin-sectionpick select, .admin-field select {
   width: 100%; min-width: 0; min-height: 44px; padding: 0 10px; border: 1px solid var(--admin-border); border-radius: 8px;
   background: var(--admin-surface); color: inherit; font: inherit; font-size: 16px;
@@ -245,6 +247,7 @@
    rows and scroll down. Either way long text wraps instead of running out of sight sideways. */
 .admin-field textarea { min-height: calc(2lh + 20px); padding: 9px 10px; line-height: 1.4; resize: vertical; field-sizing: content; }
 .admin-field textarea.admin-oneline { min-height: 42px; resize: none; }
+.admin-field textarea.admin-oneline-tall { min-height: calc(2lh + 20px); }
 .admin-field input:focus, .admin-field textarea:focus, .admin-field select:focus { border-color: var(--admin-accent); }
 .admin-field-hint { color: var(--admin-muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .admin-field-error { color: var(--admin-bad); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
@@ -312,7 +315,7 @@
   .admin-span-6, .admin-span-4, .admin-span-3, .admin-span-2 { grid-column: 1 / -1; }
   .admin-span-1 { grid-column: span 1; }
   .admin-field input:not([type="checkbox"]), .admin-field textarea { font-size: 16px; }
-  .admin-field input:not([type="checkbox"]), .admin-field textarea.admin-oneline { min-height: 44px; }
+  .admin-field input:not([type="checkbox"]), .admin-field textarea.admin-oneline:not(.admin-oneline-tall) { min-height: 44px; }
   .admin-savebar-actions { width: 100%; }
   /* Side by side where both fit, one above the other where they do not. */
   .admin .admin-savebar-actions .admin-btn { flex: 1 1 auto; padding: 0 12px; }

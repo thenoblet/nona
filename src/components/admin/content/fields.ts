@@ -17,6 +17,8 @@ export type FieldSpec = {
   hint?: string | ((item: Item) => string | undefined);
   placeholder?: string;
   options?: readonly { value: string; label: string }[];
+  /** A one-line text that often runs long starts two lines tall, as in the approved design. */
+  rows?: 2;
 };
 
 /** A list of items, each in its own fieldset. `editable` lists can add, remove and reorder. */
@@ -25,7 +27,13 @@ export type ListSpec = {
   fields: readonly FieldSpec[];
   legend: (item: Item, index: number) => string;
   note?: (item: Item) => string | undefined;
-  editable?: { noun: string; addLabel: string; newItem: (list: readonly Item[]) => Item };
+  editable?: {
+    noun: string;
+    addLabel: string;
+    newItem: (list: readonly Item[]) => Item;
+    /** Items the site depends on can be edited and moved but not removed. */
+    removable?: (item: Item) => boolean;
+  };
   hint?: string;
 };
 
@@ -44,6 +52,11 @@ const LINK_HINT = "An https:// link, or #map for the map on the page.";
 function text(item: Item, ...path: string[]): string {
   const value = getAt(item, path);
   return typeof value === "string" ? value.trim() : "";
+}
+
+/** The question shown with the live stream link (see visibleFaq in src/lib/content/live.ts). */
+function isLiveStreamQuestion(item: Item): boolean {
+  return getAt(item, ["topic"]) === "live-stream";
 }
 
 /** "Guests arrive" for a named item, "Item 3" until it has a name. */
@@ -87,12 +100,13 @@ export const sectionSpecs: Record<SectionKey, SectionSpec> = {
       {
         path: ["time"],
         label: "Guests see",
-        kind: "textarea",
+        kind: "text",
+        rows: 2,
         span: 4,
         hint: "Shown on the site. Calendars use the start and end times.",
       },
-      { path: ["place"], label: "Place", kind: "textarea", span: 3 },
-      { path: ["placeDetail"], label: "Place detail", kind: "textarea", span: 3, placeholder: OPTIONAL },
+      { path: ["place"], label: "Place", kind: "text", rows: 2, span: 3 },
+      { path: ["placeDetail"], label: "Place detail", kind: "text", rows: 2, span: 3, placeholder: OPTIONAL },
       { path: ["dress"], label: "Dress code", kind: "text", span: 3 },
       { path: ["directionsUrl"], label: "Directions link", kind: "link", span: 3, hint: LINK_HINT },
     ],
@@ -140,12 +154,19 @@ export const sectionSpecs: Record<SectionKey, SectionSpec> = {
     layout: "list",
     legend: named("q", "Question"),
     note: (item) =>
-      getAt(item, ["topic"]) === "live-stream" ? "Shown only when a live stream link is set." : undefined,
+      isLiveStreamQuestion(item)
+        ? "Shown only when a live stream link is set. It can't be removed: the live stream switch uses it."
+        : undefined,
     fields: [
       { path: ["q"], label: "Question", kind: "text", span: 6 },
       { path: ["a"], label: "Answer", kind: "textarea", span: 6 },
     ],
-    editable: { noun: "question", addLabel: "Add a question", newItem: () => ({ q: "", a: "" }) },
+    editable: {
+      noun: "question",
+      addLabel: "Add a question",
+      newItem: () => ({ q: "", a: "" }),
+      removable: (item) => !isLiveStreamQuestion(item),
+    },
   },
   travel: {
     layout: "list",

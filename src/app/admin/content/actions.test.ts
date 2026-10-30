@@ -50,7 +50,7 @@ describe("without the couple", () => {
     await expect(saveSectionAction("celebrations", idle, editorForm(celebrations))).rejects.toThrow(
       "Admin access refused",
     );
-    await expect(restoreVersionAction("celebrations", 0)).rejects.toThrow("Admin access refused");
+    await expect(restoreVersionAction("celebrations", 0, 0)).rejects.toThrow("Admin access refused");
 
     expect(await listVersions("celebrations")).toEqual([]);
     expect(cache.updateTag).not.toHaveBeenCalled();
@@ -192,15 +192,17 @@ describe("restoreVersionAction", () => {
     admin.allowed = true;
   });
 
+  const first = setAt(contentDefaults.faq, [0, "a"], "First answer.");
+  const second = setAt(contentDefaults.faq, [0, "a"], "Second answer.");
+  const third = setAt(contentDefaults.faq, [0, "a"], "Third answer.");
+
   it("saves an earlier version again as a new version", async () => {
-    const first = setAt(contentDefaults.faq, [0, "a"], "First answer.");
-    const second = setAt(contentDefaults.faq, [0, "a"], "Second answer.");
     await saveSectionAction("faq", idle, editorForm(first, 0));
     await saveSectionAction("faq", idle, editorForm(second, 1));
     cache.updateTag.mockClear();
     cache.refresh.mockClear();
 
-    expect(await restoreVersionAction("faq", 1)).toEqual({ status: "saved", errors: [], version: 3 });
+    expect(await restoreVersionAction("faq", 1, 2)).toEqual({ status: "saved", errors: [], version: 3 });
     expect((await readSiteContent()).faq).toEqual(first);
     expect((await listVersions("faq")).map((entry) => entry.version)).toEqual([3, 2, 1]);
     expect(cache.updateTag).toHaveBeenCalledOnce();
@@ -211,16 +213,45 @@ describe("restoreVersionAction", () => {
   it("restores the built-in text as a new version for version 0", async () => {
     await saveSectionAction("party", idle, editorForm(setAt(contentDefaults.party, [0, "name"], "Lily"), 0));
 
-    expect(await restoreVersionAction("party", 0)).toEqual({ status: "saved", errors: [], version: 2 });
+    expect(await restoreVersionAction("party", 0, 1)).toEqual({ status: "saved", errors: [], version: 2 });
     expect((await readSiteContent()).party).toEqual(contentDefaults.party);
     expect((await listVersions("party")).map((entry) => entry.version)).toEqual([2, 1]);
   });
 
-  it("refuses a version that does not exist, an unknown section and a version that isn't a whole number", async () => {
-    expect((await restoreVersionAction("faq", 7)).status).toBe("error");
-    expect((await restoreVersionAction("nope" as never, 0)).status).toBe("error");
-    expect((await restoreVersionAction("faq", 1.5)).status).toBe("error");
-    expect((await restoreVersionAction("faq", -1)).status).toBe("error");
+  it("refuses a restore from a page that hasn't seen the newest version, and changes nothing", async () => {
+    // The page shows version 3 as live; Nancy then saves version 4 from her phone.
+    await saveSectionAction("faq", idle, editorForm(first, 0));
+    await saveSectionAction("faq", idle, editorForm(second, 1));
+    await saveSectionAction("faq", idle, editorForm(third, 2));
+    await saveSection("faq", setAt(contentDefaults.faq, [0, "a"], "Nancy's fix."), "nancy@example.com");
+    cache.updateTag.mockClear();
+    cache.refresh.mockClear();
+
+    for (const target of [1, 0]) {
+      const result = await restoreVersionAction("faq", target, 3);
+      expect(result.status).toBe("error");
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toMatch(
+        /^nancy@example\.com saved a newer version at \d{2}:\d{2} on \d{1,2} [A-Z][a-z]{2}\. Reload to see it\.$/,
+      );
+    }
+    expect((await listVersions("faq")).map((entry) => entry.version)).toEqual([4, 3, 2, 1]);
+    expect((await readSiteContent()).faq[0].a).toBe("Nancy's fix.");
+    expect(cache.updateTag).not.toHaveBeenCalled();
+    expect(cache.refresh).not.toHaveBeenCalled();
+
+    // From the version the page shows after a reload, the same restore goes through.
+    expect(await restoreVersionAction("faq", 1, 4)).toEqual({ status: "saved", errors: [], version: 5 });
+    expect((await readSiteContent()).faq).toEqual(first);
+  });
+
+  it("refuses a version that does not exist, an unknown section and numbers that aren't whole", async () => {
+    expect((await restoreVersionAction("faq", 7, 0)).status).toBe("error");
+    expect((await restoreVersionAction("nope" as never, 0, 0)).status).toBe("error");
+    expect((await restoreVersionAction("faq", 1.5, 0)).status).toBe("error");
+    expect((await restoreVersionAction("faq", -1, 0)).status).toBe("error");
+    expect((await restoreVersionAction("faq", 0, -1)).status).toBe("error");
+    expect((await restoreVersionAction("faq", 0, "1" as never)).status).toBe("error");
     expect(await listVersions("faq")).toEqual([]);
     expect(cache.updateTag).not.toHaveBeenCalled();
   });

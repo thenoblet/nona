@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { confirmLeave } from "./content/unsaved";
 
 const tabs = [
   { href: "/admin/rsvps", label: "Replies" },
@@ -12,19 +13,23 @@ const tabs = [
 export function AdminTabLinks({ currentPath }: { currentPath: string | null }) {
   return (
     <nav className="admin-tabs" aria-label="Admin sections">
-      {tabs.map((tab) => (
-        <Link
-          key={tab.href}
-          href={tab.href}
-          aria-current={
-            currentPath !== null && (currentPath === tab.href || currentPath.startsWith(`${tab.href}/`))
-              ? "page"
-              : undefined
-          }
-        >
-          {tab.label}
-        </Link>
-      ))}
+      {tabs.map((tab) => {
+        const isCurrent =
+          currentPath !== null && (currentPath === tab.href || currentPath.startsWith(`${tab.href}/`));
+        return (
+          <Link
+            key={tab.href}
+            href={tab.href}
+            aria-current={isCurrent ? "page" : undefined}
+            // Leaving a section with unsaved edits asks first (see content/unsaved.ts).
+            onClick={(event) => {
+              if (!confirmLeave()) event.preventDefault();
+            }}
+          >
+            {tab.label}
+          </Link>
+        );
+      })}
       <span className="admin-tab-disabled" aria-disabled="true">
         Photos <small>soon</small>
       </span>
