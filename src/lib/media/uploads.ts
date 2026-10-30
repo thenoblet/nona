@@ -19,7 +19,7 @@ import {
   type UploadedPart,
 } from "@/lib/storage/objects";
 import { assignCelebration } from "./celebration";
-import { PART_SIZE_BYTES, partCount } from "./limits";
+import { PART_SIZE_BYTES, partCount, partSizeOf } from "./limits";
 import {
   attachMultipartUpload,
   deleteUnfinishedUpload,
@@ -130,8 +130,23 @@ function everyPart(sizeBytes: number): UploadedPart[] {
   return Array.from({ length: partCount(sizeBytes) }, (_, index) => ({
     partNumber: index + 1,
     etag: "",
-    size: Math.min(PART_SIZE_BYTES, sizeBytes - index * PART_SIZE_BYTES),
+    size: partSizeOf(sizeBytes, index + 1),
   }));
+}
+
+function bytesHeld(parts: UploadedPart[]): number {
+  return parts.reduce((total, part) => total + part.size, 0);
+}
+
+/**
+ * Drops an upload whose parts hold more than it declared: its multipart upload (and the bytes
+ * with it) and its row. The part URLs bind each part's size, so this takes R2 letting a PUT of
+ * another length through; it stops a client storing past the limits until the 7-day rule.
+ */
+async function discardOverfilled(upload: UploadRow, uploadId: string, options: UploadOptions): Promise<void> {
+  console.error(`[uploads] ${upload.id} holds more than it declared; aborting it`);
+  await abortMultipart(upload.originalKey, uploadId, { signal: options.signal });
+  await deleteUnfinishedUpload(upload.id);
 }
 
 function errorName(error: unknown): string | undefined {
@@ -187,15 +202,20 @@ async function finishIfOriginalExists(upload: UploadRow, options: UploadOptions)
 
 /**
  * The parts R2 holds for an unfinished upload. An upload R2 had already completed is finished
- * here and lists every part; null when the upload is gone and no original was made.
+ * here and lists every part. Null when the upload is gone and no original was made, or when its
+ * parts hold more than it declared (then it is discarded).
  */
 async function partsSoFar(upload: UploadRow, uploadId: string, options: UploadOptions): Promise<UploadedPart[] | null> {
+  let parts: UploadedPart[];
   try {
-    return await listUploadedParts(upload.originalKey, uploadId, { signal: options.signal });
+    parts = await listUploadedParts(upload.originalKey, uploadId, { signal: options.signal });
   } catch (error) {
     if (errorName(error) !== "NoSuchUpload") throw error;
+    return (await finishIfOriginalExists(upload, options)) ? everyPart(upload.sizeBytes) : null;
   }
-  return (await finishIfOriginalExists(upload, options)) ? everyPart(upload.sizeBytes) : null;
+  if (bytesHeld(parts) <= upload.sizeBytes) return parts;
+  await discardOverfilled(upload, uploadId, options);
+  return null;
 }
 
 /**
@@ -321,10 +341,17 @@ export async function listUploadParts(upload: UploadRow, options: UploadOptions)
   return partsSoFar(upload, upload.multipartUploadId, options);
 }
 
-/** Presigned PUT URLs for these parts (at most 20), each valid for an hour. Local: no network. */
+/**
+ * Presigned PUT URLs for these parts (at most 20), each valid for an hour and bound to the part's
+ * size: 8 MiB, or the remainder for the last. Local: no network.
+ */
 export async function presignUploadParts(upload: UploadRow, partNumbers: number[]): Promise<PartUrl[] | null> {
   if (!upload.multipartUploadId) return null;
-  return presignParts(upload.originalKey, upload.multipartUploadId, partNumbers);
+  return presignParts(
+    upload.originalKey,
+    upload.multipartUploadId,
+    partNumbers.map((partNumber) => ({ partNumber, size: partSizeOf(upload.sizeBytes, partNumber) })),
+  );
 }
 
 /**
@@ -332,9 +359,10 @@ export async function presignUploadParts(upload: UploadRow, partNumbers: number[
  * - `uploaded`: verified and joined (or found already joined), the row marked and its job queued;
  * - `incomplete`: the parts R2 holds don't add up to the declared size, so nothing changed;
  * - `invalid-parts`: they add up, but R2 refused to join them (a part other than the last under 5 MiB);
+ * - `overfilled`: they hold more than the declared size, so the upload was discarded;
  * - `missing`: the upload is gone and no original was made (aborted or expired).
  */
-export type CompleteOutcome = "uploaded" | "incomplete" | "invalid-parts" | "missing";
+export type CompleteOutcome = "uploaded" | "incomplete" | "invalid-parts" | "overfilled" | "missing";
 
 // R2's refusals of a join whose parts are the wrong shape, rather than a passing fault.
 const BAD_PARTS = new Set(["EntityTooSmall", "InvalidPart", "InvalidPartOrder"]);
@@ -355,8 +383,12 @@ export async function completeUpload(upload: UploadRow, options: UploadOptions):
     if (errorName(error) !== "NoSuchUpload") throw error;
     return (await finishIfOriginalExists(upload, options)) ? "uploaded" : "missing";
   }
-  const receivedBytes = parts.reduce((total, part) => total + part.size, 0);
-  if (receivedBytes !== upload.sizeBytes) return "incomplete";
+  const receivedBytes = bytesHeld(parts);
+  if (receivedBytes > upload.sizeBytes) {
+    await discardOverfilled(upload, uploadId, options);
+    return "overfilled";
+  }
+  if (receivedBytes < upload.sizeBytes) return "incomplete";
   try {
     await completeMultipart(upload.originalKey, uploadId, parts, { signal: options.signal });
   } catch (error) {

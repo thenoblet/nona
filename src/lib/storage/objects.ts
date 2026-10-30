@@ -34,8 +34,10 @@ export const PLAYBACK_URL_SECONDS = 2 * 3600;
 export const DOWNLOAD_URL_SECONDS = 6 * 3600;
 /** The most part URLs one presign hands out. */
 export const MAX_PARTS_PER_PRESIGN = 20;
-// S3's limits: part numbers run from 1 to 10,000, and a presigned link lasts at most 7 days.
+// S3's limits: part numbers run from 1 to 10,000, a part holds at most 5 GiB, and a presigned
+// link lasts at most 7 days.
 const MAX_PART_NUMBER = 10_000;
+const MAX_PART_BYTES = 5 * 1024 ** 3;
 const MAX_LINK_SECONDS = 7 * 24 * 3600;
 // Derived files sit under a content hash, so a key's bytes never change.
 const PUBLIC_CACHE_CONTROL = "public, max-age=31536000, immutable";
@@ -43,6 +45,8 @@ const PUBLIC_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const DOWNLOAD_IDLE_MILLISECONDS = 10_000;
 
 export type PartUrl = { partNumber: number; url: string };
+/** A part to presign: its number and its exact size in bytes, which its URL binds. */
+export type PartToSign = { partNumber: number; size: number };
 export type UploadedPart = { partNumber: number; etag: string; size: number };
 export type CompletedPart = { partNumber: number; etag: string };
 export type OriginalHead = {
@@ -90,28 +94,43 @@ export async function startMultipart(
   return started.UploadId;
 }
 
-/** Presigned PUT URLs for up to 20 parts, each valid for an hour. */
-export async function presignParts(key: string, uploadId: string, partNumbers: number[]): Promise<PartUrl[]> {
+// Signed into every part URL, so R2 refuses a PUT of any other length (SignatureDoesNotMatch).
+// The presigner signs it already once ContentLength is set; naming it keeps that if it changes.
+const SIGNED_PART_HEADERS = new Set(["content-length"]);
+
+/**
+ * Presigned PUT URLs for up to 20 parts, each valid for an hour and bound to its part's exact size:
+ * Content-Length is signed, so a PUT of more (or fewer) bytes is refused and a client can't store
+ * more than the upload declared. The browser sets Content-Length itself from the slice it sends.
+ */
+export async function presignParts(key: string, uploadId: string, parts: PartToSign[]): Promise<PartUrl[]> {
   assertOriginalKey(key);
-  if (partNumbers.length === 0 || partNumbers.length > MAX_PARTS_PER_PRESIGN) {
-    throw new RangeError(
-      `Presign between 1 and ${MAX_PARTS_PER_PRESIGN} parts at a time, not ${partNumbers.length}`,
-    );
+  if (parts.length === 0 || parts.length > MAX_PARTS_PER_PRESIGN) {
+    throw new RangeError(`Presign between 1 and ${MAX_PARTS_PER_PRESIGN} parts at a time, not ${parts.length}`);
   }
-  for (const partNumber of partNumbers) {
+  for (const { partNumber, size } of parts) {
     if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > MAX_PART_NUMBER) {
       throw new RangeError(`Refusing ${partNumber} as a part number: parts run from 1 to ${MAX_PART_NUMBER}`);
+    }
+    if (!Number.isInteger(size) || size < 1 || size > MAX_PART_BYTES) {
+      throw new RangeError(`Refusing ${size} as a part's size: a part holds 1 byte to 5 GiB`);
     }
   }
   const client = storageClient();
   const bucket = privateBucket();
   return Promise.all(
-    partNumbers.map(async (partNumber) => ({
+    parts.map(async ({ partNumber, size }) => ({
       partNumber,
       url: await getSignedUrl(
         client,
-        new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber }),
-        { expiresIn: PART_URL_SECONDS },
+        new UploadPartCommand({
+          Bucket: bucket,
+          Key: key,
+          UploadId: uploadId,
+          PartNumber: partNumber,
+          ContentLength: size,
+        }),
+        { expiresIn: PART_URL_SECONDS, signableHeaders: SIGNED_PART_HEADERS },
       ),
     })),
   );

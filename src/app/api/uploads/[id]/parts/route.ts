@@ -33,7 +33,8 @@ const presignRequest = zod.object({
 /**
  * The parts R2 already holds for this browser's upload, `{ parts: [{ partNumber, etag, size }] }`,
  * so a phone carrying it on sends only the rest. An upload already finished lists every part.
- * 403 for an upload that isn't this browser's; 409 `upload-missing` for one that has expired.
+ * 403 for an upload that isn't this browser's; 409 `upload-missing` for one that has expired, or
+ * whose parts held more than it declared (then aborted and deleted).
  */
 export async function GET(request: Request, { params }: UploadContext) {
   // Request time only: the build never touches the database.
@@ -57,8 +58,10 @@ export async function GET(request: Request, { params }: UploadContext) {
 
 /**
  * Presigned PUT URLs for 1 to 20 of this browser's upload's parts, `{ urls: [{ partNumber, url }] }`,
- * each valid for an hour (the phone asks again on a 403). Body: `{ partNumbers }`. Reads only: the
- * upload's row and the uploads switch, then signs locally, with no write and no network call.
+ * each valid for an hour (the phone asks again on a 403) and bound to its part's size (8 MiB, the
+ * last part the remainder): R2 refuses a PUT of any other length, so no one can store more than
+ * the upload declared. Body: `{ partNumbers }`. Reads only: the upload's row and the uploads
+ * switch, then signs locally, with no write and no network call.
  */
 export async function POST(request: Request, { params }: UploadContext) {
   const { id } = await params;

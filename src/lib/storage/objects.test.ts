@@ -105,7 +105,7 @@ async function putPartFromBrowser(url: string, bytes: Buffer): Promise<string> {
 /** Uploads a whole small file as a one-part multipart upload, as every upload is. */
 async function uploadWhole(key: string, contentType: string, metadata: OriginalMetadata, bytes: Buffer) {
   const uploadId = await startMultipart(key, contentType, metadata);
-  const [part] = await presignParts(key, uploadId, [1]);
+  const [part] = await presignParts(key, uploadId, [{ partNumber: 1, size: bytes.length }]);
   const etag = await putPartFromBrowser(part.url, bytes);
   await completeMultipart(key, uploadId, [{ partNumber: 1, etag }]);
 }
@@ -117,7 +117,10 @@ describe("a multipart upload", () => {
     const lastPart = randomBytes(1000);
 
     const uploadId = await startMultipart(key, "video/mp4", guestUpload());
-    const urls = await presignParts(key, uploadId, [1, 2]);
+    const urls = await presignParts(key, uploadId, [
+      { partNumber: 1, size: FIVE_MEBIBYTES },
+      { partNumber: 2, size: 1000 },
+    ]);
     expect(urls.map((entry) => entry.partNumber)).toEqual([1, 2]);
     const firstEtag = await putPartFromBrowser(urls[0].url, firstPart);
     const lastEtag = await putPartFromBrowser(urls[1].url, lastPart);
@@ -139,30 +142,61 @@ describe("a multipart upload", () => {
     expect(await headOriginal(key)).toMatchObject({ size: FIVE_MEBIBYTES + 1000, contentType: "video/mp4" });
   }, 30_000);
 
-  it("presigns at most 20 parts at a time, each for an hour, signed for the host alone", async () => {
+  it("presigns at most 20 parts at a time, each for an hour, signed for the host and the part's length alone", async () => {
     const key = newOriginalKey();
     const uploadId = await startMultipart(key, "image/jpeg", guestUpload());
-    const partNumbers = Array.from({ length: 20 }, (_value, index) => index + 1);
+    const parts = Array.from({ length: 20 }, (_value, index) => ({ partNumber: index + 1, size: FIVE_MEBIBYTES }));
 
-    const urls = await presignParts(key, uploadId, partNumbers);
-    expect(urls.map((entry) => entry.partNumber)).toEqual(partNumbers);
+    const urls = await presignParts(key, uploadId, parts);
+    expect(urls.map((entry) => entry.partNumber)).toEqual(parts.map((part) => part.partNumber));
     for (const { partNumber, url } of urls) {
       const query = new URL(url).searchParams;
       expect(query.get("partNumber")).toBe(String(partNumber));
       expect(query.get("uploadId")).toBe(uploadId);
       expect(query.get("X-Amz-Expires")).toBe("3600");
-      // The browser sends no headers of its own, and no checksum.
-      expect(query.get("X-Amz-SignedHeaders")).toBe("host");
+      // The browser sends no headers of its own, and no checksum; it sets Content-Length itself.
+      expect(query.get("X-Amz-SignedHeaders")).toBe("content-length;host");
       expect([...query.keys()].filter((name) => name.toLowerCase().includes("checksum"))).toEqual([]);
     }
 
-    await expect(presignParts(key, uploadId, [...partNumbers, 21])).rejects.toThrow("20");
+    await expect(presignParts(key, uploadId, [...parts, { partNumber: 21, size: 1 }])).rejects.toThrow("20");
     await expect(presignParts(key, uploadId, [])).rejects.toThrow("part");
     for (const partNumber of [0, 10_001, 1.5, Number.NaN]) {
-      await expect(presignParts(key, uploadId, [partNumber])).rejects.toThrow("part");
+      await expect(presignParts(key, uploadId, [{ partNumber, size: 1 }])).rejects.toThrow("part");
+    }
+    // S3 takes parts of 1 byte to 5 GiB.
+    for (const size of [0, -1, 1.5, Number.NaN, 5 * 1024 ** 3 + 1]) {
+      await expect(presignParts(key, uploadId, [{ partNumber: 1, size }])).rejects.toThrow("size");
     }
     await abortMultipart(key, uploadId);
   });
+
+  it("binds each part's URL to its size: the exact size is taken, a larger or smaller body refused", async () => {
+    const key = newOriginalKey("mp4");
+    const uploadId = await startMultipart(key, "video/mp4", guestUpload());
+    const [first, last] = await presignParts(key, uploadId, [
+      { partNumber: 1, size: FIVE_MEBIBYTES },
+      { partNumber: 2, size: 1000 },
+    ]);
+
+    // A client that declared a small file can't fill R2 past it through the same URL.
+    for (const size of [FIVE_MEBIBYTES + 1, 50 * 1024 * 1024]) {
+      const response = await fetch(first.url, { method: "PUT", body: new Uint8Array(size) });
+      expect(response.status, String(size)).toBe(403);
+    }
+    for (const size of [1001, 999]) {
+      expect((await fetch(last.url, { method: "PUT", body: new Uint8Array(size) })).status, String(size)).toBe(403);
+    }
+    expect(await listUploadedParts(key, uploadId)).toEqual([]);
+
+    const firstEtag = await putPartFromBrowser(first.url, randomBytes(FIVE_MEBIBYTES));
+    const lastEtag = await putPartFromBrowser(last.url, randomBytes(1000));
+    await completeMultipart(key, uploadId, [
+      { partNumber: 1, etag: firstEtag },
+      { partNumber: 2, etag: lastEtag },
+    ]);
+    expect((await headOriginal(key))?.size).toBe(FIVE_MEBIBYTES + 1000);
+  }, 30_000);
 
   it("aborts, and aborting again is fine", async () => {
     const key = newOriginalKey();
@@ -341,7 +375,7 @@ describe("every operation", () => {
 
     for (const key of notOriginals) {
       await expect(startMultipart(key, "image/jpeg", guestUpload()), key).rejects.toThrow("originals/");
-      await expect(presignParts(key, "upload-id", [1]), key).rejects.toThrow("originals/");
+      await expect(presignParts(key, "upload-id", [{ partNumber: 1, size: 1 }]), key).rejects.toThrow("originals/");
       await expect(listUploadedParts(key, "upload-id"), key).rejects.toThrow("originals/");
       await expect(completeMultipart(key, "upload-id", []), key).rejects.toThrow("originals/");
       await expect(abortMultipart(key, "upload-id"), key).rejects.toThrow("originals/");

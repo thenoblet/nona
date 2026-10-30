@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { DeleteObjectsCommand, type S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, UploadPartCommand, type S3Client } from "@aws-sdk/client-s3";
 import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -799,6 +799,73 @@ describe("requests that aren't right", () => {
     const response = await presign(session.mediaId, [1]);
     expect(response.status).toBe(409);
     expect((await response.json()).error).toBe("already-uploaded");
+  });
+});
+
+describe("part URLs", () => {
+  it("bind each part's size: a larger body is refused, and the last part takes exactly the remainder", async () => {
+    await signIn();
+    const body = photo();
+    const session = await startSession(body);
+    const { urls } = (await (await presign(session.mediaId, [1, 2])).json()) as { urls: { url: string }[] };
+    for (const { url } of urls) {
+      expect(new URL(url).searchParams.get("X-Amz-SignedHeaders")).toBe("content-length;host");
+    }
+
+    // More than a part's share of the declared size, as a client filling R2 past the limits would send.
+    const refused = [
+      await fetch(urls[0].url, { method: "PUT", body: new Uint8Array(PART_SIZE_BYTES + 1) }),
+      await fetch(urls[1].url, { method: "PUT", body: new Uint8Array(PART_SIZE_BYTES) }),
+      await fetch(urls[1].url, { method: "PUT", body: new Uint8Array(999) }),
+    ];
+    expect(refused.map((response) => response.status)).toEqual([403, 403, 403]);
+    expect(await listUploadedParts(session.key, session.uploadId)).toEqual([]);
+
+    const bytes = randomBytes(body.size);
+    expect(partBytes(bytes, 2)).toHaveLength(1000);
+    const parts = [
+      { partNumber: 1, etag: await putPart(urls[0].url, partBytes(bytes, 1)) },
+      { partNumber: 2, etag: await putPart(urls[1].url, partBytes(bytes, 2)) },
+    ];
+    expect((await complete(session.mediaId, parts)).status).toBe(200);
+  });
+
+  it("aborts an upload whose parts hold more than it declared, should R2 ever let one through", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await signIn();
+    // An upload declared at 4,000 bytes, given a 5,000-byte part behind its presigned URL's back.
+    async function overfilled(): Promise<Session> {
+      const session = await startSession(smallFile());
+      await storageClient().send(
+        new UploadPartCommand({
+          Bucket: storageConfig().privateBucket,
+          Key: session.key,
+          UploadId: session.uploadId,
+          PartNumber: 1,
+          Body: randomBytes(5000),
+        }),
+      );
+      return session;
+    }
+
+    const completing = await overfilled();
+    const response = await complete(completing.mediaId, []);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "size-mismatch",
+      message: "This file didn't match the size it started with. Please choose it again.",
+    });
+    await expect(listUploadedParts(completing.key, completing.uploadId)).rejects.toMatchObject({ name: "NoSuchUpload" });
+    expect(await mediaRow(completing.mediaId)).toBeUndefined();
+
+    const listing = await overfilled();
+    expect((await listParts(listing.mediaId)).status).toBe(409);
+    await expect(listUploadedParts(listing.key, listing.uploadId)).rejects.toMatchObject({ name: "NoSuchUpload" });
+    expect(await mediaRow(listing.mediaId)).toBeUndefined();
+    expect(logged.mock.calls.map(([message]) => message)).toEqual([
+      `[uploads] ${completing.mediaId} holds more than it declared; aborting it`,
+      `[uploads] ${listing.mediaId} holds more than it declared; aborting it`,
+    ]);
   });
 });
 

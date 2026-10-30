@@ -33,6 +33,11 @@ export function partCount(sizeBytes: number): number {
   return Math.ceil(sizeBytes / PART_SIZE_BYTES);
 }
 
+/** The size of one part of a file this size: 8 MiB, or what is left for the last one. */
+export function partSizeOf(sizeBytes: number, partNumber: number): number {
+  return Math.min(PART_SIZE_BYTES, sizeBytes - (partNumber - 1) * PART_SIZE_BYTES);
+}
+
 /** The most parts any upload has: a 2 GB video's. */
 export const MAX_PART_COUNT = partCount(SIZE_LIMITS.video);
 

@@ -7,6 +7,7 @@ import {
   normalizeContentType,
   PART_SIZE_BYTES,
   partCount,
+  partSizeOf,
   SIZE_LIMITS,
   type UploadCheck,
 } from "./limits";
@@ -45,6 +46,14 @@ describe("the limits", () => {
     expect(partCount(PART_SIZE_BYTES + 1)).toBe(2);
     expect(partCount(SIZE_LIMITS.video)).toBe(256);
     expect(MAX_PART_COUNT).toBe(256);
+  });
+
+  it("give every part 8 MiB but the last, which takes the remainder", () => {
+    expect(partSizeOf(PART_SIZE_BYTES + 1000, 1)).toBe(PART_SIZE_BYTES);
+    expect(partSizeOf(PART_SIZE_BYTES + 1000, 2)).toBe(1000);
+    expect(partSizeOf(2 * PART_SIZE_BYTES, 2)).toBe(PART_SIZE_BYTES);
+    expect(partSizeOf(4000, 1)).toBe(4000);
+    expect(partSizeOf(SIZE_LIMITS.video, 256)).toBe(PART_SIZE_BYTES);
   });
 });
 

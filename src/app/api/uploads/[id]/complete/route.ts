@@ -36,6 +36,8 @@ const completeRequest = zod.object({
  * The item's processing is queued after the answer; if that fails, the worker's sweeper queues it.
  * Body: `{ parts }`, as the phone sent them; R2's list is what is joined.
  * - Parts missing: 409 `incomplete`, and nothing changes.
+ * - Parts holding more than declared (the part URLs bind each size, so only if R2 let one through):
+ *   the upload is aborted and its row deleted, 409 `size-mismatch`.
  * - Already completed (a repeat, or two at once): the same answer, with one job queued.
  * - 403 for an upload that isn't this browser's, or an album upload past the 24 hours after a close.
  */
@@ -66,6 +68,12 @@ export async function POST(request: Request, { params }: UploadContext) {
         );
       case "invalid-parts":
         return errorResponse(409, "invalid-parts", "This file's pieces didn't fit together. Please send it again.");
+      case "overfilled":
+        return errorResponse(
+          409,
+          "size-mismatch",
+          "This file didn't match the size it started with. Please choose it again.",
+        );
       case "missing":
         return uploadMissing();
     }
