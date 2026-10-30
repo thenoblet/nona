@@ -1,16 +1,10 @@
-import { readSiteContent } from "@/lib/content/store";
-import {
-  getRsvp,
-  queueWithinDailyLimit,
-  setEmailStatus,
-  unsentConfirmationIds,
-} from "@/lib/data/rsvp";
+import { getRsvp, queueWithinDailyLimit, unsentConfirmationIds } from "@/lib/data/rsvp";
 import { describeError } from "@/lib/log-error";
-import { renderRsvpConfirmation } from "@/lib/email/rsvp-confirmation";
-import { sendEmail } from "@/lib/email/send";
 import { emailKey } from "@/lib/rsvp/normalize";
-import { siteUrl } from "@/lib/site-url";
 import { getBoss, QUEUES } from "./boss";
+
+// Queueing only: the RSVP form's action imports this, so nothing here may load the email renderer
+// (React Email). The job's handler, which renders and sends, is handle-rsvp-confirmation.ts.
 
 const DAILY_LIMIT = 3;
 
@@ -56,30 +50,5 @@ export async function requeueUnsentConfirmations(): Promise<void> {
     if (ids.length > 0) console.info(`Queued ${queued} of ${ids.length} RSVP confirmations not sent before`);
   } catch (error) {
     console.error("Could not queue the unsent RSVP confirmations:", describeError(error));
-  }
-}
-
-export async function handleRsvpConfirmation(
-  rsvpId: string,
-  attempt: { retryCount: number; retryLimit: number },
-): Promise<void> {
-  const rsvp = await getRsvp(rsvpId);
-  if (!rsvp || rsvp.supersededAt || !rsvp.email) return;
-  try {
-    const mail = await renderRsvpConfirmation(
-      rsvp,
-      await readSiteContent(),
-      siteUrl(),
-    );
-    await sendEmail({
-      to: rsvp.email,
-      idempotencyKey: `rsvp-confirmation/${rsvp.id}`,
-      ...mail,
-    });
-    await setEmailStatus(rsvp.id, "sent");
-  } catch (error) {
-    if (attempt.retryCount >= attempt.retryLimit)
-      await setEmailStatus(rsvp.id, "failed");
-    throw error;
   }
 }

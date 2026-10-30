@@ -17,7 +17,7 @@ export async function register() {
       return;
     }
     const { runMigrations } = await import("@/lib/db/migrate");
-    const { startJobs } = await import("@/lib/jobs/boss");
+    const { startJobs } = await import("@/lib/jobs/start-jobs");
 
     // The job queue starts in the background, so a slow database never delays serving pages.
     const startQueue = async () => {

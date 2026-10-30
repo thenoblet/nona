@@ -1,7 +1,6 @@
 import { PgBoss, type QueueOptions } from "pg-boss";
 import { dbConfig } from "@/lib/env";
 import { errorMessage } from "@/lib/log-error";
-import { handleRsvpConfirmation, requeueUnsentConfirmations } from "./rsvp-confirmation";
 
 export const QUEUES = { rsvpConfirmation: "email-rsvp-confirmation" } as const;
 
@@ -49,25 +48,3 @@ export const CONFIRMATION_QUEUE = {
   retryBackoff: true,
   retryDelayMax: 4 * 60 * 60,
 } as const satisfies QueueOptions;
-
-export async function startJobs(): Promise<void> {
-  const boss = await getBoss();
-  await boss.createQueue(QUEUES.rsvpConfirmation, CONFIRMATION_QUEUE);
-  // createQueue leaves a queue that already exists as it was, so bring its settings up to date.
-  await boss.updateQueue(QUEUES.rsvpConfirmation, CONFIRMATION_QUEUE);
-  await boss.work<{ rsvpId: string }, void, { includeMetadata: true }>(
-    QUEUES.rsvpConfirmation,
-    { includeMetadata: true },
-    async (jobs) => {
-      for (const job of jobs) {
-        await handleRsvpConfirmation(job.data.rsvpId, {
-          retryCount: job.retryCount,
-          retryLimit: job.retryLimit,
-        });
-      }
-    },
-  );
-  // Replies whose confirmation never reached the queue (the cap, a failed enqueue, or a restart
-  // before after() ran) get another chance.
-  await requeueUnsentConfirmations();
-}

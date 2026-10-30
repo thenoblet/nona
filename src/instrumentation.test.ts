@@ -13,7 +13,7 @@ const startUp = vi.hoisted(() => {
 
 vi.mock("@/lib/env", () => ({ isDbConfigured: () => startUp.configured }));
 vi.mock("@/lib/db/migrate", () => ({ runMigrations: startUp.migrations }));
-vi.mock("@/lib/jobs/boss", () => startUp.standInJobs());
+vi.mock("@/lib/jobs/start-jobs", () => startUp.standInJobs());
 
 /** A fresh copy of the file, so each test's mocks apply to its imports. */
 async function loadRegister() {
@@ -31,7 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   // A test may swap the job queue module for one that fails to load: the next one gets the stand-in back.
-  vi.doMock("@/lib/jobs/boss", () => startUp.standInJobs());
+  vi.doMock("@/lib/jobs/start-jobs", () => startUp.standInJobs());
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -55,7 +55,7 @@ describe("register", () => {
   });
 
   it("never throws, even when a start-up module fails to load", async () => {
-    vi.doMock("@/lib/jobs/boss", () => {
+    vi.doMock("@/lib/jobs/start-jobs", () => {
       throw new Error("Cannot find module 'pg-boss'");
     });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});

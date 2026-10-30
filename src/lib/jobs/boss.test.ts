@@ -1,33 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// A stand-in for pg-boss: it records what the app asks of it and can be told to fail to start.
+// A stand-in for pg-boss: it records how it was made and can be told to fail to start.
 const fake = vi.hoisted(() => ({
   instances: [] as {
     options: Record<string, unknown>;
     listeners: Record<string, (error: Error) => void>;
-    createQueue: ReturnType<typeof vi.fn>;
-    updateQueue: ReturnType<typeof vi.fn>;
-    work: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
   }[],
   startError: null as Error | null,
-  order: [] as string[],
 }));
 
 vi.mock("pg-boss", () => ({
   PgBoss: class {
     options: Record<string, unknown>;
     listeners: Record<string, (error: Error) => void> = {};
-    createQueue = vi.fn(async () => {
-      fake.order.push("createQueue");
-    });
-    updateQueue = vi.fn(async () => {
-      fake.order.push("updateQueue");
-    });
-    work = vi.fn(async () => {
-      fake.order.push("work");
-      return "worker";
-    });
     stop = vi.fn(async () => {});
     constructor(options: Record<string, unknown>) {
       this.options = options;
@@ -44,27 +30,14 @@ vi.mock("pg-boss", () => ({
   },
 }));
 
-const confirmations = vi.hoisted(() => ({
-  handle: vi.fn(),
-  requeue: vi.fn(async () => {
-    fake.order.push("requeue");
-  }),
-}));
-vi.mock("./rsvp-confirmation", () => ({
-  handleRsvpConfirmation: confirmations.handle,
-  requeueUnsentConfirmations: confirmations.requeue,
-}));
-
-import { CONFIRMATION_QUEUE, getBoss, QUEUES, startJobs } from "./boss";
+import { CONFIRMATION_QUEUE, getBoss } from "./boss";
 
 const globalWithQueue = globalThis as { __nonaJobQueue?: unknown };
 
 beforeEach(() => {
   globalWithQueue.__nonaJobQueue = null;
   fake.instances.length = 0;
-  fake.order.length = 0;
   fake.startError = null;
-  confirmations.requeue.mockClear();
 });
 
 afterEach(() => {
@@ -104,17 +77,6 @@ describe("getBoss", () => {
     await getBoss();
     fake.instances[0].listeners.error(new Error("Connection terminated unexpectedly"));
     expect(log).toHaveBeenCalledWith("Job queue error:", "Error: Connection terminated unexpectedly");
-  });
-});
-
-describe("startJobs", () => {
-  it("brings the confirmation queue up to date, starts its worker, then re-queues unsent confirmations", async () => {
-    await startJobs();
-    const [boss] = fake.instances;
-    expect(boss.createQueue).toHaveBeenCalledWith(QUEUES.rsvpConfirmation, CONFIRMATION_QUEUE);
-    // createQueue leaves an existing queue's settings alone; updateQueue applies the new ones.
-    expect(boss.updateQueue).toHaveBeenCalledWith(QUEUES.rsvpConfirmation, CONFIRMATION_QUEUE);
-    expect(fake.order).toEqual(["createQueue", "updateQueue", "work", "requeue"]);
   });
 });
 
