@@ -4,6 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { setSetting } from "@/lib/data/settings";
 import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
 import { dbConfig, storageConfig } from "@/lib/env";
@@ -221,8 +222,19 @@ describe("the sweeper's third step (Ruling W): uploads whose phone dropped at th
     );
   });
 
+  beforeEach(async () => {
+    // A fresh database's uploads are closed (Ruling M); these tests run with them open, as on the day.
+    await setSetting("uploads_open", true);
+  });
+
   /** An `uploading` row whose multipart upload holds `sentBytes` of its declared `sizeBytes`, in one part. */
-  async function uploadingItem(options: { sizeBytes: number; sentBytes: number; startedAt: Date; completed?: boolean }) {
+  async function uploadingItem(options: {
+    sizeBytes: number;
+    sentBytes: number;
+    startedAt: Date;
+    completed?: boolean;
+    purpose?: "album" | "wish";
+  }) {
     const id = randomUUID();
     const key = originalKey(id, "jpg");
     keys.push(key);
@@ -243,8 +255,12 @@ describe("the sweeper's third step (Ruling W): uploads whose phone dropped at th
       }),
     );
     if (options.completed) await completeMultipart(key, uploadId, [{ partNumber: 1, etag: part.ETag ?? "" }]);
+    const wish = options.purpose === "wish";
     await insertItem({
       id,
+      purpose: wish ? "wish" : "album",
+      kind: wish ? "audio" : "photo",
+      contentType: wish ? "audio/mp4" : "image/jpeg",
       originalKey: key,
       sizeBytes: options.sizeBytes,
       status: "uploading",
@@ -285,6 +301,56 @@ describe("the sweeper's third step (Ruling W): uploads whose phone dropped at th
     expect(result.rescuedUploads).toBe(0);
     expect(await statusOf(young)).toBe("uploading");
     expect(await statusOf(neverStarted)).toBe("uploading");
+  });
+
+  describe("once the couple close uploads (Ruling Z): closing is a hard stop", () => {
+    const HOUR = 60;
+
+    async function closeUploads(closedMinutesAgo: number): Promise<void> {
+      await setSetting("uploads_open", false);
+      await setSetting("uploads_closed_at", minutesAgo(closedMinutesAgo).toISOString());
+    }
+
+    it("leaves a fully sent album upload as it is once the 24 hours after the close have passed", async () => {
+      await closeUploads(25 * HOUR);
+      const everyPartSent = await uploadingItem({ sizeBytes: 4000, sentBytes: 4000, startedAt: minutesAgo(26 * HOUR) });
+
+      const result = await sweeper().sweep();
+
+      expect(result).toMatchObject({ checkedUploads: 0, rescuedUploads: 0 });
+      expect(await statusOf(everyPartSent)).toBe("uploading");
+      expect(await liveJobs(MEDIA_QUEUES.photo, everyPartSent)).toHaveLength(0);
+    });
+
+    it("finishes, within the 24 hours, an album upload started before the close, but not one started after it", async () => {
+      await closeUploads(1 * HOUR);
+      const startedBefore = await uploadingItem({ sizeBytes: 4000, sentBytes: 4000, startedAt: minutesAgo(2 * HOUR) });
+      const startedAfter = await uploadingItem({ sizeBytes: 4000, sentBytes: 4000, startedAt: minutesAgo(40) });
+
+      const result = await sweeper().sweep();
+
+      expect(result).toMatchObject({ checkedUploads: 1, rescuedUploads: 1 });
+      expect(await statusOf(startedBefore)).toBe("uploaded");
+      expect(await liveJobs(MEDIA_QUEUES.photo, startedBefore)).toHaveLength(1);
+      expect(await statusOf(startedAfter)).toBe("uploading");
+      expect(await liveJobs(MEDIA_QUEUES.photo, startedAfter)).toHaveLength(0);
+    });
+
+    it("still finishes a wish, which the switch doesn't govern", async () => {
+      await closeUploads(25 * HOUR);
+      const wish = await uploadingItem({
+        sizeBytes: 4000,
+        sentBytes: 4000,
+        startedAt: minutesAgo(26 * HOUR),
+        purpose: "wish",
+      });
+
+      const result = await sweeper().sweep();
+
+      expect(result.rescuedUploads).toBe(1);
+      expect(await statusOf(wish)).toBe("uploaded");
+      expect(await liveJobs(MEDIA_QUEUES.wish, wish)).toHaveLength(1);
+    });
   });
 
   it("checks a bounded batch each sweep, and the next sweep carries on where it stopped", async () => {

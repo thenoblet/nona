@@ -1,7 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { getSiteContent } from "@/lib/content/get";
-import { getSettings } from "@/lib/data/settings";
 import type { MEDIA_FILE_KINDS, MEDIA_PURPOSES } from "@/lib/db/schema";
 import { describeError } from "@/lib/log-error";
 import { originalKey } from "@/lib/storage/keys";
@@ -28,9 +27,18 @@ import {
 import { PART_SIZE_BYTES, partCount, partSizeOf } from "./limits";
 import { attachMultipartUpload, deleteUnfinishedUpload, insertUpload, type UploadRow } from "./rows";
 
-// Completing an upload lives in completion.ts, which the media worker's sweeper bundles too.
+// Completing an upload and the uploads switch live in completion.ts and uploads-switch.ts, which the
+// media worker's sweeper bundles too.
 export { completeUpload, processingQueue } from "./completion";
 export type { CompleteOutcome, Defer, UploadOptions } from "./completion";
+export {
+  mayContinueUpload,
+  mayStartUpload,
+  readUploadsSwitch,
+  UPLOADS_ALWAYS_OPEN,
+  UPLOADS_GRACE_MILLISECONDS,
+} from "./uploads-switch";
+export type { UploadsSwitch } from "./uploads-switch";
 
 /*
  * The upload API's work, apart from HTTP: starting or resuming an upload, presigning its parts,
@@ -45,47 +53,8 @@ export type { CompleteOutcome, Defer, UploadOptions } from "./completion";
 type MediaPurpose = (typeof MEDIA_PURPOSES)[number];
 type MediaFileKind = (typeof MEDIA_FILE_KINDS)[number];
 
-/** How long after the couple close uploads an upload started before the close may still finish. */
-export const UPLOADS_GRACE_MILLISECONDS = 24 * 60 * 60 * 1000;
-
 export const UPLOADS_CLOSED_MESSAGE =
   "Uploads to the album have closed. Thank you for every photo and video you shared!";
-
-/** The couple's uploads switch: open, or closed since `closedAt`. */
-export type UploadsSwitch = { open: boolean; closedAt: Date | null };
-
-/** For uploads the switch doesn't govern (wishes). */
-export const UPLOADS_ALWAYS_OPEN: UploadsSwitch = { open: true, closedAt: null };
-
-/** The uploads switch, in one query. Fails closed: nothing saved, or anything but true, is closed. */
-export async function readUploadsSwitch(): Promise<UploadsSwitch> {
-  const saved = await getSettings({ uploads_open: false, uploads_closed_at: null });
-  const closedAt = typeof saved.uploads_closed_at === "string" ? new Date(saved.uploads_closed_at) : null;
-  return {
-    open: saved.uploads_open === true,
-    closedAt: closedAt && !Number.isNaN(closedAt.getTime()) ? closedAt : null,
-  };
-}
-
-/** Whether a new upload for this purpose may start: wishes always, album uploads while open. */
-export function mayStartUpload(purpose: MediaPurpose, uploads: UploadsSwitch): boolean {
-  return purpose !== "album" || uploads.open;
-}
-
-/**
- * Whether an unfinished upload may go on (resume, presign, complete): wishes always; album uploads
- * while open, or, once closed, one started before the close and only for 24 hours after it.
- */
-export function mayContinueUpload(
-  upload: Pick<UploadRow, "purpose" | "startedAt">,
-  uploads: UploadsSwitch,
-  now: Date = new Date(),
-): boolean {
-  if (upload.purpose !== "album" || uploads.open) return true;
-  if (!uploads.closedAt) return false;
-  const closedAt = uploads.closedAt.getTime();
-  return upload.startedAt.getTime() < closedAt && now.getTime() < closedAt + UPLOADS_GRACE_MILLISECONDS;
-}
 
 /** Whether anyone may still see the item: not hidden, removed or deleted (isVisible, from a row in hand). */
 export function isVisibleUpload(upload: Pick<UploadRow, "hiddenAt" | "deletedAt" | "removedByUploader">): boolean {

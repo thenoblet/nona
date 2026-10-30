@@ -6,6 +6,7 @@ import { CONVERT_PRIORITY, MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/
 import { describeError } from "@/lib/log-error";
 import { completeUpload, processingQueue } from "@/lib/media/completion";
 import { unfinishedUploads, type UploadCursor } from "@/lib/media/rows";
+import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch";
 
 /*
  * The sweeper makes sure no item stays "processing" for good. At start-up and every 10 minutes it:
@@ -15,7 +16,9 @@ import { unfinishedUploads, type UploadCursor } from "@/lib/media/rows";
  * 3. (Ruling W) finishes uploads whose phone dropped during or just before its final complete:
  *    `uploading` for over 30 minutes, with every part in R2 adding up to the declared size, or the
  *    original already joined. Partial uploads are left for their guest to carry on; R2's 7-day
- *    rule clears the abandoned ones.
+ *    rule clears the abandoned ones. Only uploads the couple's switch still allows (Ruling Z), as
+ *    the complete route checks: once uploads close, an album upload is finished only if it began
+ *    before the close and the 24 hours after it haven't passed. Wishes always are.
  * Each step handles a bounded batch, so a sweep is never unbounded; a backlog clears over a few.
  */
 
@@ -154,17 +157,24 @@ export function createSweeper(options: SweeperOptions) {
     return stuck.length;
   }
 
-  /** Step 3 (Ruling W): one batch of unfinished uploads, each completed if R2 holds all of it. */
+  /**
+   * Step 3 (Ruling W): one batch of unfinished uploads, each completed if R2 holds all of it. An
+   * upload the uploads switch no longer allows (Ruling Z) is left exactly as it is: not aborted and
+   * its row not deleted, since its original may exist already; R2's 7-day rule clears its parts.
+   */
   async function rescueUploads(): Promise<{ checked: number; rescued: number }> {
-    const uploads = await unfinishedUploads({
+    // Read once a sweep, as each route reads it once a request. Unreadable, the step fails: closed.
+    const uploadsSwitch = await readUploadsSwitch();
+    const page = await unfinishedUploads({
       startedBefore: timeAgo(ABANDONED_AFTER_MILLISECONDS),
       startedAfter: timeAgo(RESCUE_WITHIN_MILLISECONDS),
       cursor: rescueCursor,
       limit: rescueBatchSize,
     });
     // A short page is the last: the next sweep starts from the oldest again.
-    const last = uploads.at(-1);
-    rescueCursor = uploads.length < rescueBatchSize || !last ? null : { startedAt: last.startedAt, id: last.id };
+    const last = page.at(-1);
+    rescueCursor = page.length < rescueBatchSize || !last ? null : { startedAt: last.startedAt, id: last.id };
+    const uploads = page.filter((upload) => mayContinueUpload(upload, uploadsSwitch));
     let rescued = 0;
     for (const upload of uploads) {
       signal?.throwIfAborted();
