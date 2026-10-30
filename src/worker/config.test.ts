@@ -55,6 +55,21 @@ describe("workerConfig", () => {
     expect(config.queuePoolSize).toBe(20);
   });
 
+  it("caps heif-dec's memory at 2 GiB unless WORKER_HEIF_MEMORY_BYTES says otherwise", () => {
+    expect(workerConfig({ NODE_ENV: "development" }).heifMemoryBytes).toBe(2 * 1024 ** 3);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_HEIF_MEMORY_BYTES: "" }).heifMemoryBytes).toBe(2 * 1024 ** 3);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_HEIF_MEMORY_BYTES: "3221225472" }).heifMemoryBytes).toBe(3 * 1024 ** 3);
+  });
+
+  it.each(["1048576", "2GB", "-1", "1.5", String(128 * 1024 ** 3)])(
+    "refuses %j as heif-dec's memory cap: bytes, from 256 MiB (below that no photo decodes) to 64 GiB",
+    (value) => {
+      expect(() => workerConfig({ NODE_ENV: "development", WORKER_HEIF_MEMORY_BYTES: value })).toThrow(
+        /WORKER_HEIF_MEMORY_BYTES/,
+      );
+    },
+  );
+
   it("treats a blank variable as unset, as Dokploy may leave one", () => {
     expect(workerConfig({ NODE_ENV: "development", WORKER_PHOTO_CONCURRENCY: "" }).concurrency.photo).toBe(2);
   });

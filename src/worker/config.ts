@@ -43,6 +43,11 @@ export type WorkerConfig = {
   scratchRoot: string;
   concurrency: WorkerConcurrency;
   threads: WorkerThreads;
+  /**
+   * The most memory (address space) heif-dec and heif-info may take for one HEIC: a backstop
+   * against a crafted file, far above a real photo's needs (a 48 MP HEIC decodes in about 300 MB).
+   */
+  heifMemoryBytes: number;
   /** Connections in the job queue's pool: room for every handler's polling and heartbeats at once. */
   queuePoolSize: number;
 };
@@ -52,6 +57,16 @@ function count(fallback: number, max = 64) {
   return zod.preprocess(
     (value) => (value === "" ? undefined : value),
     zod.coerce.number().int().min(1).max(max).default(fallback),
+  );
+}
+
+const MEBIBYTE = 1024 * 1024;
+
+/** A number of bytes from `min` to `max`, the default when unset or blank. */
+function bytes(fallback: number, min: number, max: number) {
+  return zod.preprocess(
+    (value) => (value === "" ? undefined : value),
+    zod.coerce.number().int().min(min).max(max).default(fallback),
   );
 }
 
@@ -68,6 +83,8 @@ const schema = zod.object({
   WORKER_SHARP_THREADS: count(1),
   WORKER_FFMPEG_FILTER_THREADS: count(1),
   WORKER_QUEUE_POOL_SIZE: count(10, 100),
+  // Below 256 MiB heif-dec can't decode even a small photo.
+  WORKER_HEIF_MEMORY_BYTES: bytes(2048 * MEBIBYTE, 256 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
 });
 
 /**
@@ -110,6 +127,7 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
       sharp: settings.WORKER_SHARP_THREADS,
       ffmpegFilters: settings.WORKER_FFMPEG_FILTER_THREADS,
     },
+    heifMemoryBytes: settings.WORKER_HEIF_MEMORY_BYTES,
     queuePoolSize: settings.WORKER_QUEUE_POOL_SIZE,
   };
 }

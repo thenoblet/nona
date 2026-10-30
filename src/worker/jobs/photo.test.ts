@@ -25,9 +25,10 @@ import { originalKey } from "@/lib/storage/keys";
 import { readManifest } from "@/lib/storage/manifest";
 import { resetDb } from "../../../test/db";
 import { dropBossSchema, startTestBoss } from "../../../test/uploads";
+import { workerConfig } from "../config";
 import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
-import { processPhoto } from "./photo";
+import { heifImagesIn, photoHandler, processPhoto, type PhotoOptions } from "./photo";
 
 /*
  * media.photo against the local MinIO and test database (docker compose up -d db minio && npm run
@@ -50,6 +51,27 @@ vi.mock("@/lib/storage/objects", async (importOriginal) => {
     },
   };
 });
+
+// Every program the job runs, so a test can tell whether heif-dec ran and under which memory cap.
+const programs = vi.hoisted(() => ({ runs: [] as string[][] }));
+vi.mock("../processes", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../processes")>();
+  return {
+    ...real,
+    runProcess: (...args: Parameters<typeof real.runProcess>) => {
+      programs.runs.push([args[0], ...args[1]]);
+      return real.runProcess(...args);
+    },
+  };
+});
+
+/** The production defaults: heif-dec capped at WORKER_HEIF_MEMORY_BYTES's default. */
+const PHOTO_OPTIONS: PhotoOptions = { heifMemoryBytes: workerConfig({}).heifMemoryBytes };
+
+/** The programs run since the test began whose arguments include `program`. */
+function runsOf(program: string): string[][] {
+  return programs.runs.filter((run) => run.includes(program));
+}
 
 const runFile = promisify(execFile);
 
@@ -92,6 +114,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetDb();
   publishing.afterPut = null;
+  programs.runs = [];
 });
 
 afterEach(async () => {
@@ -217,6 +240,22 @@ async function heicFrom(...jpegs: Buffer[]): Promise<Buffer> {
 }
 
 /**
+ * The HEIC with one image's size, as its header (its `ispe` property) gives it, changed from `from`
+ * to `to`: a file that claims what it doesn't hold, as a crafted one would.
+ */
+function claimingSize(heic: Buffer, from: [number, number], to: [number, number]): Buffer {
+  const crafted = Buffer.from(heic);
+  for (let at = crafted.indexOf("ispe", 0, "latin1"); at !== -1; at = crafted.indexOf("ispe", at + 1, "latin1")) {
+    if (crafted.readUInt32BE(at + 8) === from[0] && crafted.readUInt32BE(at + 12) === from[1]) {
+      crafted.writeUInt32BE(to[0], at + 8);
+      crafted.writeUInt32BE(to[1], at + 12);
+      return crafted;
+    }
+  }
+  throw new Error(`No image of ${from.join(" × ")} in the HEIC`);
+}
+
+/**
  * A 12 MP JPEG with as much detail as a busy photo: noise made at a quarter of its size and
  * enlarged, so it survives at the thumbnail's scale instead of averaging out.
  */
@@ -234,7 +273,7 @@ describe("a photo's derived files", () => {
     const jpeg = await phonePhoto(2000, 1500, 1).jpeg().toBuffer();
     const mediaId = await uploadedPhoto(jpeg, "jpg");
 
-    const report = await processPhoto(photoJob(mediaId));
+    const report = await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item).toMatchObject({ status: "ready", failureReason: null, width: 2000, height: 1500 });
@@ -257,7 +296,7 @@ describe("a photo's derived files", () => {
   it("turn a JPEG with EXIF orientation 6 into an upright portrait thumbnail", async () => {
     const mediaId = await uploadedPhoto(await phonePhoto(1200, 900).jpeg().toBuffer(), "jpg");
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item).toMatchObject({ status: "ready", width: 900, height: 1200 });
@@ -275,7 +314,7 @@ describe("a photo's derived files", () => {
       .toBuffer();
     const mediaId = await uploadedPhoto(png, "png");
 
-    const report = await processPhoto(photoJob(mediaId));
+    const report = await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item).toMatchObject({ status: "ready", width: 800, height: 600 });
@@ -297,7 +336,7 @@ describe("a photo's derived files", () => {
     for (const [format, bytes] of Object.entries(files)) {
       const mediaId = await uploadedPhoto(bytes, format);
 
-      const report = await processPhoto(photoJob(mediaId));
+      const report = await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
       const item = await readItem(mediaId);
       expect(item, format).toMatchObject({ status: "ready", width: 600, height: 400 });
@@ -311,7 +350,7 @@ describe("a photo's derived files", () => {
     expect(await exifr.gps(jpeg)).toMatchObject({ latitude: expect.any(Number) });
     const mediaId = await uploadedPhoto(jpeg, "jpg");
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     for (const key of [item.derived.thumb ?? "", item.derived.view ?? ""]) {
@@ -329,7 +368,7 @@ describe("a photo's derived files", () => {
     const mediaId = await uploadedPhoto(jpeg, "jpg");
 
     const startedAt = performance.now();
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
     const milliseconds = performance.now() - startedAt;
 
     const item = await readItem(mediaId);
@@ -345,7 +384,7 @@ describe("a photo's capture time and celebration", () => {
     // 01:00 on Sunday at +02:00 is 23:00 on Saturday in Accra: the reception, not the thanksgiving.
     const mediaId = await uploadedPhoto(await phonePhoto(1200, 900).jpeg().toBuffer(), "jpg", { celebration: "more" });
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item.capturedAt?.toISOString()).toBe("2026-12-05T23:00:00.000Z");
@@ -360,7 +399,7 @@ describe("a photo's capture time and celebration", () => {
       .toBuffer();
     const mediaId = await uploadedPhoto(jpeg, "jpg");
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item.capturedAt?.toISOString()).toBe("2026-12-05T10:30:00.000Z");
@@ -373,7 +412,7 @@ describe("a photo's capture time and celebration", () => {
       celebrationSetByAdmin: true,
     });
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item).toMatchObject({ status: "ready", celebration: "thanks", celebrationSetByAdmin: true });
@@ -385,7 +424,7 @@ describe("a photo's capture time and celebration", () => {
     const png = await sharp({ create: { width: 640, height: 480, channels: 3, background: "#654" } }).png().toBuffer();
     const mediaId = await uploadedPhoto(png, "png", { capturedAt: new Date("2026-12-05T11:00:00Z") });
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item.capturedAt?.toISOString()).toBe("2026-12-05T11:00:00.000Z");
@@ -397,9 +436,38 @@ describe("a photo's capture time and celebration", () => {
     const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#123" } }).png().toBuffer();
     const mediaId = await uploadedPhoto(png, "png", { listedAt });
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     expect((await readItem(mediaId)).listedAt?.toISOString()).toBe(listedAt.toISOString());
+  });
+});
+
+describe("heifImagesIn: heif-info's list of a HEIC's images", () => {
+  it("reads each top-level image's size and which is the primary, past the thumbnails and the rest", () => {
+    const listing = [
+      "MIME type: image/heic",
+      "main brand: heic",
+      "compatible brands: mif1, heic, miaf",
+      "",
+      "image: 4032x3024 (id=49), primary",
+      "  colorspace: YCbCr, 4:2:0",
+      "  thumbnails:",
+      "    image: 320x240 (id=50)",
+      "  depth channel: yes",
+      "image: 800x600 (id=60)",
+    ].join("\n");
+    expect(heifImagesIn(listing)).toEqual([
+      { width: 4032, height: 3024, primary: true },
+      { width: 800, height: 600, primary: false },
+    ]);
+  });
+
+  it("finds nothing in a list it can't read: no image, an image line it doesn't know, or no primary", () => {
+    expect(heifImagesIn("")).toBeNull();
+    expect(heifImagesIn("MIME type: unknown\nmain brand: ")).toBeNull();
+    expect(heifImagesIn("image: 4032x3024 (id=49), primary\nimage: lots (id=50)")).toBeNull();
+    expect(heifImagesIn("image: 4032x3024 (id=49)\nimage: 800x600 (id=60)")).toBeNull();
+    expect(heifImagesIn("image: 4032x3024 (id=49), primary\nimage: 800x600 (id=60), primary")).toBeNull();
   });
 });
 
@@ -412,7 +480,7 @@ describe("HEIC (Review Focus 2)", () => {
       const upright = await sharp(heic).metadata();
       const mediaId = await uploadedPhoto(heic, "heic");
 
-      const report = await processPhoto(photoJob(mediaId));
+      const report = await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
       const item = await readItem(mediaId);
       expect(item).toMatchObject({ status: "ready", width: upright.width, height: upright.height });
@@ -428,7 +496,7 @@ describe("HEIC (Review Focus 2)", () => {
     const heic = await heicFrom(await phonePhoto(1200, 900).jpeg({ quality: 90 }).toBuffer());
     const mediaId = await uploadedPhoto(heic, "heic");
 
-    const report = await processPhoto(photoJob(mediaId));
+    const report = await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item).toMatchObject({ status: "ready", width: 900, height: 1200, celebration: "reception" });
@@ -441,6 +509,11 @@ describe("HEIC (Review Focus 2)", () => {
       expect(await exifr.gps((await readPublic(key)).bytes).catch(() => undefined), key).toBeUndefined();
     }
     expect(report).toEqual({ sizeBytes: heic.length, kind: "photo/heic" });
+    // heif-info listed its images first, and heif-dec ran under the memory cap.
+    expect(runsOf("heif-info")).toHaveLength(1);
+    expect(runsOf("heif-dec")).toEqual([
+      expect.arrayContaining(["prlimit", `--as=${PHOTO_OPTIONS.heifMemoryBytes}`, "--", "heif-dec"]),
+    ]);
   });
 
   it.skipIf(!heicTests)("takes the primary image of a HEIC that holds several", async () => {
@@ -450,11 +523,62 @@ describe("HEIC (Review Focus 2)", () => {
     );
     const mediaId = await uploadedPhoto(heic, "heic");
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
     expect(item).toMatchObject({ status: "ready", width: 900, height: 1200 });
     expect(await sizeOf((await readPublic(item.derived.thumb ?? "")).bytes)).toEqual({ width: 360, height: 480, format: "webp" });
+  });
+
+  it.skipIf(!heicTests)(
+    "refuses, without decoding anything, a HEIC whose small primary hides a second image over 100 megapixels",
+    async () => {
+      const primary = await sharp({ create: { width: 300, height: 200, channels: 3, background: "#f00" } }).jpeg().toBuffer();
+      const hidden = await sharp({ create: { width: 160, height: 120, channels: 3, background: "#0f0" } }).jpeg().toBuffer();
+      const heic = claimingSize(await heicFrom(primary, hidden), [160, 120], [12_000, 9_000]);
+      // sharp sees only the primary, so its pixel limit can't catch this.
+      expect(await sharp(heic).metadata()).toMatchObject({ width: 300, height: 200, pages: 2 });
+      const mediaId = await uploadedPhoto(heic, "heic");
+
+      expect(await permanentFailure(mediaId)).toBe("too-large");
+      expect(runsOf("heif-info")).toHaveLength(1);
+      expect(runsOf("heif-dec")).toEqual([]);
+    },
+  );
+
+  it.skipIf(!heicTests)("refuses, without decoding anything, a HEIC holding more than 8 images", async () => {
+    const images = await Promise.all(
+      Array.from({ length: 9 }, (_, index) =>
+        sharp({ create: { width: 64 + index * 8, height: 48, channels: 3, background: "#00f" } }).jpeg().toBuffer(),
+      ),
+    );
+    const mediaId = await uploadedPhoto(await heicFrom(...images), "heic");
+
+    expect(await permanentFailure(mediaId)).toBe("unsupported-type");
+    expect(runsOf("heif-dec")).toEqual([]);
+  });
+
+  it.skipIf(!heicTests)("fails for good, not again and again, when heif-dec runs into its memory cap", async () => {
+    const jpeg = await sharp(
+      await sharp({
+        create: { width: 600, height: 450, channels: 3, background: "#777", noise: { type: "gaussian", mean: 120, sigma: 40 } },
+      })
+        .png()
+        .toBuffer(),
+    )
+      .resize(2400, 1800)
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    const mediaId = await uploadedPhoto(await heicFrom(jpeg), "heic");
+    // 32 MiB: room for heif-dec to start and read the file, not to decode a 4 MP photo.
+    const tinyCap = 32 * 1024 * 1024;
+
+    const error = await permanentError(mediaId, { heifMemoryBytes: tinyCap });
+
+    expect(error?.reason).toBe("corrupt");
+    expect(error?.message).toMatch(/heif-dec/);
+    expect(runsOf("heif-dec")).toEqual([expect.arrayContaining(["prlimit", `--as=${tinyCap}`, "--", "heif-dec"])]);
+    expect(await publicKeysOf(mediaId)).toEqual([]);
   });
 
   it.skipIf(!heicTests)("makes a 12 MP HEIC ready well inside the 20 s budget on one sharp thread", async () => {
@@ -462,7 +586,7 @@ describe("HEIC (Review Focus 2)", () => {
     const mediaId = await uploadedPhoto(heic, "heic");
 
     const startedAt = performance.now();
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
     const milliseconds = performance.now() - startedAt;
 
     const item = await readItem(mediaId);
@@ -472,14 +596,20 @@ describe("HEIC (Review Focus 2)", () => {
   });
 });
 
-/** The reason processPhoto failed for good with, or a message saying it didn't. */
-async function permanentFailure(mediaId: string): Promise<string> {
+/** The PermanentJobError processPhoto failed with, or null when it didn't fail for good. */
+async function permanentError(mediaId: string, options = PHOTO_OPTIONS): Promise<PermanentJobError | null> {
   try {
-    await processPhoto(photoJob(mediaId));
-    return "no failure";
+    await processPhoto(photoJob(mediaId), options);
+    return null;
   } catch (error) {
-    return error instanceof PermanentJobError ? error.reason : `not permanent: ${String(error)}`;
+    if (error instanceof PermanentJobError) return error;
+    throw error;
   }
+}
+
+/** The reason processPhoto failed for good with, or a message saying it didn't. */
+async function permanentFailure(mediaId: string, options = PHOTO_OPTIONS): Promise<string> {
+  return (await permanentError(mediaId, options))?.reason ?? "no failure";
 }
 
 describe("a file that isn't a photo the album takes (Review Focus 5)", () => {
@@ -502,7 +632,7 @@ describe("a file that isn't a photo the album takes (Review Focus 5)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     workers = await startQueueWorkers(
       boss,
-      { [MEDIA_QUEUES.photo]: processPhoto },
+      { [MEDIA_QUEUES.photo]: photoHandler(PHOTO_OPTIONS) },
       { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
       { pollingIntervalSeconds: 0.5 },
     );
@@ -578,7 +708,7 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
 
     for (const mediaId of [ready, failed, uploading, deleted, randomUUID()]) {
       const before = await readItem(mediaId);
-      await expect(processPhoto(photoJob(mediaId))).resolves.toBeUndefined();
+      await expect(processPhoto(photoJob(mediaId), PHOTO_OPTIONS)).resolves.toBeUndefined();
       expect(await readItem(mediaId), mediaId).toEqual(before);
       expect(await publicKeysOf(mediaId), mediaId).toEqual([]);
     }
@@ -589,7 +719,7 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
     const removed = await uploadedPhoto(await png(), "png", { hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true });
 
     for (const mediaId of [hidden, removed]) {
-      await processPhoto(photoJob(mediaId));
+      await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
       expect(await readItem(mediaId), mediaId).toMatchObject({ status: "uploaded", listedAt: null, thumbhash: null });
       expect(await publicKeysOf(mediaId), mediaId).toEqual([]);
     }
@@ -604,7 +734,7 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
         .where(eq(media.id, mediaId));
     };
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     expect(await readItem(mediaId)).toMatchObject({ status: "ready", thumbhash: "the other delivery's" });
     expect(await publicKeysOf(mediaId)).toHaveLength(2);
@@ -616,7 +746,7 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
       await getDb().update(media).set({ hiddenAt: new Date(), hiddenBy: "admin" }).where(eq(media.id, mediaId));
     };
 
-    await processPhoto(photoJob(mediaId));
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     expect(await readItem(mediaId)).toMatchObject({ status: "uploaded", listedAt: null, thumbhash: null });
     expect(await publicKeysOf(mediaId)).toEqual([]);

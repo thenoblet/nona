@@ -4,7 +4,7 @@ import { getBoss, JOB_QUEUE_SCHEMA } from "@/lib/jobs/boss";
 import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { errorMessage } from "@/lib/log-error";
 import { workerConfig, type WorkerConfig } from "./config";
-import { processPhoto } from "./jobs/photo";
+import { photoHandler } from "./jobs/photo";
 import type { MediaHandlers } from "./queues";
 import { runWorker } from "./runtime";
 
@@ -13,6 +13,14 @@ import { runWorker } from "./runtime";
  * on its own box, taking the media jobs the web app queues. scripts/build-worker.mjs bundles this
  * file; the bundle may reach nothing from next/.
  */
+
+let config: WorkerConfig;
+try {
+  config = workerConfig();
+} catch (error) {
+  console.error("[worker] could not start:", errorMessage(error));
+  process.exit(1);
+}
 
 /**
  * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash. A queue with
@@ -25,16 +33,8 @@ import { runWorker } from "./runtime";
  * - media.card: Task 19, a site photo's link-preview card.
  */
 const handlers: MediaHandlers = {
-  [MEDIA_QUEUES.photo]: processPhoto,
+  [MEDIA_QUEUES.photo]: photoHandler({ heifMemoryBytes: config.heifMemoryBytes }),
 };
-
-let config: WorkerConfig;
-try {
-  config = workerConfig();
-} catch (error) {
-  console.error("[worker] could not start:", errorMessage(error));
-  process.exit(1);
-}
 
 // libvips' threads for each image, from WORKER_SHARP_THREADS, never the host's core count (Ruling
 // R). No operation cache: every job's files are new, and a cached one would hold its scratch file open.

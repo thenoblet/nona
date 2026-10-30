@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import sharp, { type Metadata } from "sharp";
+import sharp from "sharp";
 import { readSection } from "@/lib/content/store";
 import { describeError, errorMessage } from "@/lib/log-error";
 import { assignCelebration } from "@/lib/media/celebration";
@@ -12,7 +12,7 @@ import { derivedKey } from "@/lib/storage/keys";
 import { writeManifest } from "@/lib/storage/manifest";
 import { deletePublicObjects, headOriginal, putPublicObject } from "@/lib/storage/objects";
 import { ProcessError, runProcess } from "../processes";
-import { PermanentJobError, type JobReport, type MediaJob } from "../queues";
+import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
 import { saveOriginal, withScratch } from "../scratch";
 import { PHOTO_TYPE_HEAD_BYTES, photoTypeOf, type PhotoFormat } from "./photo-type";
 
@@ -20,7 +20,9 @@ import { PHOTO_TYPE_HEAD_BYTES, photoTypeOf, type PhotoFormat } from "./photo-ty
  * media.photo: an uploaded photo becomes what the album shows. In its job's scratch folder:
  * 1. The original is streamed down, and its first bytes must be a photo format the album takes.
  * 2. It is decoded once, upright: a HEIC by heif-dec (to a JPEG at quality 95, its pixels already
- *    turned, so never turned again), anything else by sharp, turned by its EXIF orientation.
+ *    turned, so never turned again), anything else by sharp, turned by its EXIF orientation. A
+ *    HEIC's images are listed by heif-info and checked first, and both tools run under a memory
+ *    cap (WORKER_HEIF_MEMORY_BYTES), since heif-dec decodes every image in the file.
  * 3. From one copy at most 1600 px on its long edge come the viewing size, the thumbnail (480 px)
  *    and the 100 px copy the ThumbHash and average colour are made from. Each is WebP, which sharp
  *    writes with no EXIF and so no location.
@@ -30,8 +32,10 @@ import { PHOTO_TYPE_HEAD_BYTES, photoTypeOf, type PhotoFormat } from "./photo-ty
  * manifest is written again. A HEIC's full-size JPEG is made later, on its first download (media.jpeg).
  *
  * A file that isn't a photo, or doesn't decode, fails for good: `unsupported-type` or `corrupt`,
- * or `too-large` past 100 megapixels. A job for an item that is no longer `uploaded`, or that
- * someone hid or deleted, does nothing (Ruling AG).
+ * or `too-large` past 100 megapixels (a HEIC's images all together). A HEIC with more than 8
+ * images is `unsupported-type`, and one heif-dec can't decode within its cap or time is `corrupt`.
+ * A job for an item that is no longer `uploaded`, or that someone hid or deleted, does nothing
+ * (Ruling AG).
  */
 
 /**
@@ -46,10 +50,26 @@ const MAX_INPUT_PIXELS = 100_000_000;
 const VIEW = { longEdge: 1600, quality: 80 };
 const THUMB = { longEdge: 480, quality: 70 };
 const HEIC_JPEG_QUALITY = 95;
-/** heif-dec takes about a second for a 12 MP photo. */
+/** heif-dec takes about a second for a 12 MP photo, and about 4 s for a 48 MP one. */
 const HEIC_DECODE_MILLISECONDS = 60_000;
+/** heif-info reads only the file's boxes. */
+const HEIF_INFO_MILLISECONDS = 10_000;
+/** The most top-level images a HEIF may hold. Phones write one; thumbnails and depth maps aren't top-level. */
+const MAX_HEIF_IMAGES = 8;
 /** Scratch room beyond the original: a HEIC's decoded JPEG, which at 100 MP and quality 95 stays under this. */
 const DECODED_JPEG_BYTES = 400 * 1024 * 1024;
+
+/** What the job takes from the worker's settings. */
+export type PhotoOptions = {
+  /** The memory (address space) heif-info and heif-dec may take: WORKER_HEIF_MEMORY_BYTES. */
+  heifMemoryBytes: number;
+};
+
+/** Where and how a job runs libheif's tools. */
+type HeifContext = PhotoOptions & { folder: string; signal: AbortSignal };
+
+/** One of a HEIF's top-level images, as heif-info lists it. */
+export type HeifImage = { width: number; height: number; primary: boolean };
 
 /** A file sharp can decode, and how. */
 type Decodable = {
@@ -103,43 +123,114 @@ async function decoding<TResult>(kind: string, work: () => Promise<TResult>): Pr
   }
 }
 
+// How a libheif tool ended when the file was to blame: it refused the file (or died on it), ran
+// past its time, or printed far too much. Near its memory cap heif-dec may stop and wait forever
+// rather than exit, so a timeout is the file's fault too: a real photo decodes in seconds.
+const FILE_AT_FAULT = new Set(["exit", "timeout", "too-much-output"]);
+// prlimit's own exit codes when it can't run the tool at all: the worker's install, not the file.
+const TOOL_NOT_RUN = new Set([126, 127]);
+
 /**
- * Decodes a HEIC with heif-dec into a JPEG beside it, upright. heif-dec writes one JPEG per image
- * in the file, numbered when there are several; the one wanted is the primary image's, which sharp
- * reported (`pagePrimary`) in the same order heif-dec numbers them.
+ * Runs heif-info or heif-dec under the memory cap (prlimit --as), at the worker's own priority: a
+ * photo, which a guest is waiting for, never waits behind a conversion. prlimit replaces itself
+ * with the tool, so the job's signal and the time limit kill the tool itself. Returns its stdout.
+ * A failure that is the file's fails for good, as `corrupt`; anything else (the job ending, the
+ * worker stopping, a tool missing) is passed on, and the job retries.
  */
-async function decodeHeic(original: string, header: Metadata, folder: string, signal: AbortSignal): Promise<string> {
-  const output = join(folder, "decoded.jpg");
+async function runHeifTool(
+  tool: "heif-info" | "heif-dec",
+  args: string[],
+  context: HeifContext,
+  timeoutMilliseconds: number,
+): Promise<string> {
   try {
-    await runProcess("heif-dec", ["--quiet", "--quality", String(HEIC_JPEG_QUALITY), original, output], {
-      signal,
-      timeoutMilliseconds: HEIC_DECODE_MILLISECONDS,
-      // A photo's decode, which a guest is waiting for: never behind a conversion.
+    const { stdout } = await runProcess("prlimit", [`--as=${context.heifMemoryBytes}`, "--", tool, ...args], {
+      signal: context.signal,
+      timeoutMilliseconds,
       priority: "foreground",
-      cwd: folder,
+      cwd: context.folder,
     });
+    return stdout;
   } catch (error) {
-    // It ran and refused the file. Killed (a timeout, the job's end, a stop) or unable to start, the job retries.
-    if (error instanceof ProcessError && error.ending === "exit") {
-      throw new PermanentJobError("corrupt", `The HEIC doesn't decode: ${error.message}`);
-    }
-    throw error;
+    if (!(error instanceof ProcessError) || !FILE_AT_FAULT.has(error.ending)) throw error;
+    if (error.ending === "exit" && error.exitCode !== null && TOOL_NOT_RUN.has(error.exitCode)) throw error;
+    const lastLine = error.stderrTail.trim().split("\n").at(-1) ?? "";
+    const ending = error.ending === "exit" ? `it exited with ${error.exitCode ?? "a signal"}` : `it was killed (${error.ending})`;
+    throw new PermanentJobError(
+      "corrupt",
+      `${tool} couldn't read the HEIC, under a ${context.heifMemoryBytes}-byte cap: ${ending}: ${lastLine}`,
+    );
   }
-  const written = new Set(await readdir(folder));
-  if (written.has("decoded.jpg")) return output;
-  const primary = `decoded-${(header.pagePrimary ?? 0) + 1}.jpg`;
-  if (written.has(primary)) return join(folder, primary);
+}
+
+// "image: 4032x3024 (id=49), primary": a top-level image. Its thumbnails and auxiliary images are
+// indented under it.
+const HEIF_IMAGE_LINE = /^image: (\d+)x(\d+) \(id=\d+\)(, primary)?$/;
+
+/**
+ * The top-level images in heif-info's listing, in the order heif-dec numbers its outputs (both
+ * take libheif's own list). Null when the listing can't be read: no image, an image line of
+ * another shape, or not exactly one primary. Exported for its test.
+ */
+export function heifImagesIn(listing: string): HeifImage[] | null {
+  const images: HeifImage[] = [];
+  for (const line of listing.split("\n")) {
+    if (!line.startsWith("image:")) continue;
+    const parts = HEIF_IMAGE_LINE.exec(line.trimEnd());
+    if (!parts) return null;
+    images.push({ width: Number(parts[1]), height: Number(parts[2]), primary: parts[3] !== undefined });
+  }
+  const primaries = images.filter((image) => image.primary).length;
+  return images.length > 0 && primaries === 1 ? images : null;
+}
+
+/**
+ * The HEIC's top-level images, checked before anything decodes them. sharp's header and pixel
+ * limit see only the primary image, but heif-dec decodes every top-level image, so a crafted file
+ * could hide a huge one behind a small primary: all of them together must stay within the 100
+ * megapixels one photo may have, and there may be no more than 8. heif-info reads only the file's
+ * boxes, under the same cap.
+ */
+async function heifImages(original: string, context: HeifContext): Promise<HeifImage[]> {
+  const images = heifImagesIn(await runHeifTool("heif-info", [original], context, HEIF_INFO_MILLISECONDS));
+  if (!images) throw new PermanentJobError("corrupt", "heif-info couldn't list the HEIC's images");
+  if (images.length > MAX_HEIF_IMAGES) {
+    throw new PermanentJobError("unsupported-type", `The HEIC holds ${images.length} images; a photo holds one`);
+  }
+  const pixels = images.reduce((total, image) => total + image.width * image.height, 0);
+  if (pixels > MAX_INPUT_PIXELS) {
+    throw new PermanentJobError(
+      "too-large",
+      `The HEIC's ${images.length} image(s) hold ${pixels} pixels, more than ${MAX_INPUT_PIXELS}`,
+    );
+  }
+  return images;
+}
+
+/**
+ * Decodes a HEIC with heif-dec into a JPEG beside it, upright. heif-dec (libheif 1.23) has no way
+ * to decode the primary image alone: it writes one JPEG per top-level image, numbered in
+ * heif-info's order when there are several, and the one wanted is the primary's.
+ */
+async function decodeHeic(original: string, context: HeifContext): Promise<string> {
+  const images = await heifImages(original, context);
+  const output = join(context.folder, "decoded.jpg");
+  const decodeArgs = ["--quiet", "--quality", String(HEIC_JPEG_QUALITY), original, output];
+  await runHeifTool("heif-dec", decodeArgs, context, HEIC_DECODE_MILLISECONDS);
+  const primary = images.length === 1 ? "decoded.jpg" : `decoded-${images.findIndex((image) => image.primary) + 1}.jpg`;
+  if ((await readdir(context.folder)).includes(primary)) return join(context.folder, primary);
   throw new PermanentJobError("corrupt", "heif-dec decoded no primary image from the HEIC");
 }
 
 /** The file to make the derived files from: the original, or for a HEIC its decoded JPEG. */
-async function decodable(original: string, format: PhotoFormat, folder: string, signal: AbortSignal): Promise<Decodable> {
+async function decodable(original: string, format: PhotoFormat, context: HeifContext): Promise<Decodable> {
   if (format !== "heif") return { path: original, autoOrient: true, kind: format };
-  // The header only: its codec, its size (refused past 100 MP before anything decodes) and its primary image.
+  // The header only: its codec, and the primary image's size (refused past 100 MP before anything
+  // decodes). sharp decodes an AVIF's primary image alone, so its pixel limit covers all it decodes.
   const header = await decoding("HEIF", () => decoder(original).metadata());
   // libheif turns the pixels by the file's own rotation (irot) as it decodes, for heif-dec and sharp alike.
   if (header.compression === "av1") return { path: original, autoOrient: false, kind: "avif" };
-  return { path: await decodeHeic(original, header, folder, signal), autoOrient: false, kind: "heic" };
+  return { path: await decodeHeic(original, context), autoOrient: false, kind: "heic" };
 }
 
 /**
@@ -182,12 +273,12 @@ async function derive(source: Decodable): Promise<Omit<Derived, "capturedAt">> {
 }
 
 /** Everything the job makes from the original, in its scratch folder. */
-async function deriveFromOriginal(originalKey: string, folder: string, signal: AbortSignal): Promise<Derived> {
-  const original = join(folder, "original");
-  await saveOriginal(originalKey, original, signal);
+async function deriveFromOriginal(originalKey: string, context: HeifContext): Promise<Derived> {
+  const original = join(context.folder, "original");
+  await saveOriginal(originalKey, original, context.signal);
   const type = photoTypeOf(await readHead(original));
   if (!type.ok) throw new PermanentJobError(type.reason, `The original is ${type.found}, not a photo the album takes`);
-  const source = await decodable(original, type.format, folder, signal);
+  const source = await decodable(original, type.format, context);
   // A HEIC's EXIF is read from its decoded JPEG, which heif-dec writes it into in the standard way.
   const capturedAt = await readPhotoCaptureTime(source.path);
   return { ...(await derive(source)), capturedAt };
@@ -219,8 +310,8 @@ async function withdrawIfHidden(mediaId: string, keys: string[], signal: AbortSi
   }
 }
 
-/** media.photo's handler. Its job's data is `{ mediaId }`. */
-export async function processPhoto(job: MediaJob): Promise<JobReport | void> {
+/** media.photo's work for one job, whose data is `{ mediaId }`. */
+export async function processPhoto(job: MediaJob, options: PhotoOptions): Promise<JobReport | void> {
   const mediaId = typeof job.data.mediaId === "string" ? job.data.mediaId : "";
   const item = await findItemToProcess(mediaId);
   if (!item) {
@@ -231,7 +322,7 @@ export async function processPhoto(job: MediaJob): Promise<JobReport | void> {
   if (!original) throw new Error(`The original ${item.originalKey} isn't in the private bucket`);
 
   const derived = await withScratch(original.size + DECODED_JPEG_BYTES, (folder) =>
-    deriveFromOriginal(item.originalKey, folder, job.signal),
+    deriveFromOriginal(item.originalKey, { ...options, folder, signal: job.signal }),
   );
   const capturedAt = derived.capturedAt ?? item.capturedAt;
   const { value: celebrations } = await readSection("celebrations");
@@ -266,4 +357,9 @@ export async function processPhoto(job: MediaJob): Promise<JobReport | void> {
     console.error(`[worker] media.photo media=${mediaId} is ready, but its manifest wasn't written:`, describeError(error));
   }
   return { sizeBytes: original.size, kind: `photo/${derived.kind}` };
+}
+
+/** media.photo's handler, with the worker's settings. */
+export function photoHandler(options: PhotoOptions): MediaJobHandler {
+  return (job) => processPhoto(job, options);
 }
