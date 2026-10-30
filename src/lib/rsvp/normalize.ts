@@ -27,6 +27,20 @@ export function phoneKey(phone: string): string {
   return digits;
 }
 
+/**
+ * What a search for a typed number looks for in a stored number's phoneKey: the typed number's own
+ * phoneKey and, while it is typed only partly after the country code ("+233 24", "00233 (0)24"),
+ * its local form too ("024"), since phoneKey reads 233 as the country code only in a whole number.
+ * Nothing when no digit is typed beyond a leading 00.
+ */
+export function phoneSearchKeys(typed: string): string[] {
+  const key = phoneKey(typed);
+  if (!key) return [];
+  if (!key.startsWith("233") || key.length === 3) return [key];
+  // "+233 (0)24": the local 0 kept after the country code.
+  return [key, `0${key.slice(3).replace(/^0/, "")}`];
+}
+
 export function emailKey(email: string): string {
   return email.trim().toLowerCase();
 }

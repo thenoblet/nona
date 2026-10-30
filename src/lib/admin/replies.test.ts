@@ -191,6 +191,57 @@ describe("filters and search", () => {
   });
 });
 
+describe("searching by phone", () => {
+  const rows = toReplyRows(
+    [
+      reply({ id: "local", fullName: "Ama Owusu", phone: "024 000 0000" }),
+      reply({ id: "international", fullName: "Kofi Ansah", phone: "+233 55 111 2222" }),
+      reply({ id: "with-local-zero", fullName: "Esi Ansa", phone: "00233 (0)20 333 4444" }),
+      reply({ id: "abroad", fullName: "Yaw Boateng", phone: "+44 7700 900123" }),
+    ],
+    new Map(),
+    celebrations,
+    now,
+  );
+  const found = (query: string) => rows.filter((row) => matchesSearch(row, query)).map((row) => row.id);
+
+  it("finds a Ghana number however either side writes it", () => {
+    for (const query of ["024 000 0000", "0240000000", "+233 24 000 0000", "+233 (0)24 000 0000", "00233 24 000 0000", "00233 (0)24 000 0000", "+2330240000000"]) {
+      expect(found(query), query).toEqual(["local"]);
+    }
+    for (const query of ["055 111 2222", "+233 (0)55 111 2222", "00233 55 111 2222"]) {
+      expect(found(query), query).toEqual(["international"]);
+    }
+    for (const query of ["020 333 4444", "+233 20 333 4444", "00233 20 333 4444"]) {
+      expect(found(query), query).toEqual(["with-local-zero"]);
+    }
+  });
+
+  it("finds a number from abroad with + or 00", () => {
+    expect(found("+44 7700 900123")).toEqual(["abroad"]);
+    expect(found("0044 7700 900123")).toEqual(["abroad"]);
+  });
+
+  it("finds a number from its first digits, typed in any of those ways", () => {
+    expect(found("0240")).toEqual(["local"]);
+    expect(found("024 0")).toEqual(["local"]);
+    for (const query of ["+233 24", "+233 (0)24", "00233 24", "00233 (0)24", "233 24"]) {
+      expect(found(query), query).toEqual(["local"]);
+    }
+    expect(found("+233 (0)55 1")).toEqual(["international"]);
+    expect(found("+44 77")).toEqual(["abroad"]);
+  });
+
+  it("finds a number from digits in its middle", () => {
+    expect(found("111 22")).toEqual(["international"]);
+    expect(found("3334")).toEqual(["with-local-zero"]);
+  });
+
+  it("reads \"00\" alone as no number yet: it finds the replies that show 00, not every reply", () => {
+    expect(found("00")).toEqual(["local", "with-local-zero", "abroad"]);
+  });
+});
+
 describe("replyCsvRows", () => {
   it("has a header row and one row per reply, with Accra times and plain labels", () => {
     const replies = [

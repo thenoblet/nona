@@ -1,7 +1,7 @@
 import type { EventId } from "@/content/wedding";
 import { accraDate, accraDateTime, accraTime } from "@/lib/accra";
 import type { Answer, EmailStatus, RsvpFlag, RsvpRecord } from "@/lib/data/types";
-import { phoneKey } from "@/lib/rsvp/normalize";
+import { phoneKey, phoneSearchKeys } from "@/lib/rsvp/normalize";
 
 // Shared by the replies page, its list in the browser and the CSV export.
 
@@ -194,14 +194,17 @@ function fold(text: string): string {
 
 const PHONE_LIKE = /^[\d\s+().-]+$/;
 
-/** Searches the name, the other names, the email and the phone (in any format: "+233 24…" finds "024…"). */
+/**
+ * Searches the name, the other names, the email and the phone. Both numbers are read through
+ * phoneKey, so any way of writing either finds the other ("+233 (0)24…" and "00233 24…" find
+ * "024…"), and the first or middle digits are enough ("0240" finds "024 000 0000").
+ */
 export function matchesSearch(row: ReplyRow, query: string): boolean {
   const wanted = fold(query);
   if (!wanted) return true;
-  if (PHONE_LIKE.test(wanted) && /\d/.test(wanted)) {
-    const digits = wanted.replace(/\D/g, "");
-    const local = digits.length > 3 && digits.startsWith("233") ? `0${digits.slice(3)}` : digits;
-    if (row.phone.replace(/\D/g, "").includes(digits) || phoneKey(row.phone).includes(local)) return true;
+  if (PHONE_LIKE.test(wanted)) {
+    const stored = phoneKey(row.phone);
+    if (phoneSearchKeys(wanted).some((key) => stored.includes(key))) return true;
   }
   return [row.fullName, row.otherNames ?? "", row.email ?? "", row.phone].some((text) => fold(text).includes(wanted));
 }

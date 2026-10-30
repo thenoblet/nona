@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailKey, nameKey, phoneKey } from "./normalize";
+import { emailKey, nameKey, phoneKey, phoneSearchKeys } from "./normalize";
 
 describe("nameKey", () => {
   it("ignores case and extra spaces", () => {
@@ -35,5 +35,25 @@ describe("phoneKey", () => {
 describe("emailKey", () => {
   it("trims and lower-cases", () => {
     expect(emailKey("  Ama@Example.COM ")).toBe("ama@example.com");
+  });
+});
+
+describe("phoneSearchKeys", () => {
+  it("is the typed number's phoneKey once the number is whole", () => {
+    expect(phoneSearchKeys("+233 (0)24 000 0000")).toEqual(["0240000000"]);
+    expect(phoneSearchKeys("0044 7700 900123")).toEqual(["447700900123"]);
+  });
+  it("also reads a number typed only partly after the country code in its local form", () => {
+    for (const typed of ["+233 24", "+233 (0)24", "00233 24", "00233 (0)24"]) {
+      expect(phoneSearchKeys(typed), typed).toContain("024");
+    }
+  });
+  it("keeps the first digits of a local number as they are", () => {
+    expect(phoneSearchKeys("0240")).toEqual(["0240"]);
+    expect(phoneSearchKeys("233")).toEqual(["233"]);
+  });
+  it("is nothing for a number with no digits yet", () => {
+    expect(phoneSearchKeys("00")).toEqual([]);
+    expect(phoneSearchKeys("+")).toEqual([]);
   });
 });
