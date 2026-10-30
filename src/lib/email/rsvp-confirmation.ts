@@ -19,6 +19,13 @@ function greetingName(fullName: string): string | null {
 /** "05" reads as "5"; a day the couple wrote some other way is shown as written. */
 const dayOfMonth = (day: string) => (/^\d+$/.test(day) ? String(Number(day)) : day);
 
+/** The ticket stub's day: "Sat", "05", "Dec". A day written some other way is shown as written. */
+const stubFor = (weekday: string, day: string, month: string) => ({
+  weekday: weekday.slice(0, 3),
+  day: /^\d+$/.test(day) ? String(Number(day)).padStart(2, "0") : day,
+  month: month.slice(0, 3),
+});
+
 /**
  * The confirmation email for a reply, rendered from the template in `src/emails`. The same reply
  * always renders the same bytes (the calendar file is stamped with the reply's time), so a retry
@@ -41,6 +48,7 @@ export async function renderRsvpConfirmation(
       id: celebration.id,
       name: celebration.name,
       date: `${celebration.weekday} ${dayOfMonth(celebration.day)} ${celebration.month}`,
+      stub: stubFor(celebration.weekday, celebration.day, celebration.month),
       time: celebration.time,
       place: celebration.place,
       placeDetail: celebration.placeDetail,

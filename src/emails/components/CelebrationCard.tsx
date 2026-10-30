@@ -8,6 +8,8 @@ export type ConfirmationCelebration = {
   name: string;
   /** "Saturday 5 December". */
   date: string;
+  /** The day as the ticket's stub shows it: "Sat", "05", "Dec". */
+  stub: { weekday: string; day: string; month: string };
   /** The time as guests see it, e.g. "Right after the white wedding · dinner & dancing". */
   time: string;
   place: string;
@@ -17,123 +19,113 @@ export type ConfirmationCelebration = {
   googleCalendarUrl: string | null;
 };
 
-const detail: CSSProperties = {
-  margin: 0,
-  overflowWrap: "break-word",
-  fontFamily: fonts.sans,
-  fontSize: "15px",
-  lineHeight: "23px",
-  color: colours.mocha,
-};
-
-const pill: CSSProperties = {
-  display: "inline-block",
-  padding: "5px 11px",
-  borderRadius: "999px",
-  borderWidth: "1px",
-  borderStyle: "solid",
+const smallCaps: CSSProperties = {
   fontFamily: fonts.sans,
   fontSize: "10px",
-  lineHeight: "14px",
+  lineHeight: "16px",
   fontWeight: 500,
-  letterSpacing: "0.16em",
+  letterSpacing: "0.26em",
   textTransform: "uppercase",
-  whiteSpace: "nowrap",
-  verticalAlign: "middle",
 };
 
-/** A white card: the celebration's name and the guest's answer, then when and where. */
+/**
+ * One celebration as a keepsake ticket: a stub with the day, a dashed perforation, then the name,
+ * the guest's answer, when and where, and a Google Calendar link. A celebration they're coming to
+ * has an ember-tinted edge; the rest are quieter. The stub repeats the date, so the plain-text
+ * part leaves it out.
+ */
 export function CelebrationCard({ celebration }: { celebration: ConfirmationCelebration }) {
+  const coming = celebration.attending;
+  const edge = coming ? colours.ticket : colours.ticketAway;
+  // A day the couple wrote as words ("[Day]") is too wide for the stub's large figures.
+  const numericDay = /^\d{1,2}$/.test(celebration.stub.day);
   return (
-    <Section style={{ paddingTop: "14px" }}>
-      <Section
-        className="nn-card"
-        style={{
-          backgroundColor: colours.white,
-          border: `1px solid ${colours.hairline}`,
-          borderRadius: "3px",
-          borderCollapse: "separate",
-        }}
-      >
-        <Row>
-          {/* The name and the answer flow as one line, so on a narrow screen the answer drops under the name. */}
-          <Column style={{ padding: "20px 22px 0", fontSize: "24px", lineHeight: "30px" }}>
-            <Heading
-              as="h2"
-              className="nn-ink"
-              style={{
-                display: "inline",
-                margin: 0,
-                paddingRight: "6px",
-                fontFamily: fonts.serif,
-                fontStyle: "italic",
-                fontWeight: 500,
-                fontSize: "24px",
-                lineHeight: "30px",
-                color: colours.cocoa,
-                overflowWrap: "break-word",
-              }}
-            >
-              {celebration.name}
-            </Heading>{" "}
-            {celebration.attending ? (
-              <span
-                className="nn-yes"
-                style={{ ...pill, backgroundColor: colours.halo, borderColor: colours.ember, color: colours.cocoa }}
-              >
-                Attending
-              </span>
-            ) : (
-              <span
-                className="nn-no"
-                style={{ ...pill, backgroundColor: colours.white, borderColor: colours.stone, color: colours.mocha }}
-              >
-                Not attending
-              </span>
-            )}
-          </Column>
-        </Row>
-        <Row>
-          <Column style={{ padding: "10px 22px 22px" }}>
-            {/* One paragraph with line breaks, so the plain-text part keeps these lines together. */}
-            <Text className="nn-soft" style={detail}>
-              <span className="nn-ink" style={{ color: colours.cocoa, fontWeight: 500 }}>
-                {celebration.date}
-              </span>
-              <br />
-              {celebration.time}
-              <br />
-              {celebration.place}
-              {celebration.placeDetail ? (
-                <>
-                  <br />
-                  <span style={{ fontSize: "13px" }}>{celebration.placeDetail}</span>
-                </>
-              ) : null}
-            </Text>
-            {celebration.googleCalendarUrl ? (
-              <Text style={{ margin: "16px 0 0", lineHeight: "20px" }}>
-                <Link
-                  href={celebration.googleCalendarUrl}
-                  className="nn-link"
-                  style={{
-                    color: colours.cocoa,
-                    borderBottom: `1px solid ${colours.ember}`,
-                    paddingBottom: "2px",
-                    fontFamily: fonts.sans,
-                    fontSize: "12px",
-                    letterSpacing: "0.16em",
-                    textTransform: "uppercase",
-                    textDecoration: "none",
-                  }}
-                >
-                  Add to Google Calendar
-                </Link>
-              </Text>
+    <Section
+      style={{
+        marginBottom: "14px",
+        backgroundColor: colours.white,
+        border: `1px solid ${edge}`,
+        borderRadius: "14px",
+        borderCollapse: "separate",
+      }}
+    >
+      <Row>
+        <Column
+          className="nn-stub"
+          data-skip-in-text
+          aria-hidden="true"
+          style={{ width: "86px", padding: "22px 0", verticalAlign: "middle", textAlign: "center", borderRight: `2px dashed ${edge}` }}
+        >
+          <Text style={{ ...smallCaps, margin: 0, color: coming ? colours.emberInk : colours.mocha }}>{celebration.stub.weekday}</Text>
+          <Text
+            style={{
+              margin: "2px 0",
+              fontFamily: fonts.text,
+              fontSize: numericDay ? "38px" : "16px",
+              lineHeight: "42px",
+              color: coming ? colours.cocoa : colours.stone,
+            }}
+          >
+            {celebration.stub.day}
+          </Text>
+          <Text style={{ ...smallCaps, margin: 0, color: colours.mocha }}>{celebration.stub.month}</Text>
+        </Column>
+        <Column className="nn-ticket" style={{ padding: "20px 22px 22px", verticalAlign: "top" }}>
+          {/* The name comes first, the answer under it, so the plain text keeps each answer with its celebration. */}
+          <Heading
+            as="h2"
+            style={{
+              margin: 0,
+              overflowWrap: "break-word",
+              fontFamily: fonts.serif,
+              fontStyle: "italic",
+              fontWeight: 500,
+              fontSize: "25px",
+              lineHeight: "30px",
+              color: coming ? colours.cocoa : colours.mocha,
+            }}
+          >
+            {celebration.name}
+          </Heading>
+          <Text style={{ ...smallCaps, margin: "6px 0 0", color: coming ? colours.emberInk : colours.mocha }}>
+            {coming ? "Attending" : "Not attending"}
+          </Text>
+          {/* One paragraph with line breaks, so the plain-text part keeps these lines together. */}
+          <Text
+            style={{ margin: "8px 0 0", overflowWrap: "break-word", fontFamily: fonts.text, fontSize: "14px", lineHeight: "22px", color: colours.mocha }}
+          >
+            <span style={{ color: coming ? colours.cocoa : colours.mocha }}>{celebration.date}</span>
+            <br />
+            {celebration.time}
+            <br />
+            {celebration.place}
+            {celebration.placeDetail ? (
+              <>
+                <br />
+                <span style={{ whiteSpace: "nowrap" }}>{celebration.placeDetail}</span>
+              </>
             ) : null}
-          </Column>
-        </Row>
-      </Section>
+          </Text>
+          {celebration.googleCalendarUrl ? (
+            <Text style={{ margin: "12px 0 0", lineHeight: "20px" }}>
+              <Link
+                href={celebration.googleCalendarUrl}
+                style={{
+                  ...smallCaps,
+                  letterSpacing: "0.16em",
+                  whiteSpace: "nowrap",
+                  color: colours.cocoa,
+                  textDecoration: "none",
+                  borderBottom: `1px solid ${colours.ember}`,
+                  paddingBottom: "3px",
+                }}
+              >
+                Add to Google Calendar
+              </Link>
+            </Text>
+          ) : null}
+        </Column>
+      </Row>
     </Section>
   );
 }
