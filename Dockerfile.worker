@@ -42,11 +42,12 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # The tests (npm run test:worker), as the worker's own user. heif-enc's HEVC encoder makes the
-# HEIC fixtures.
+# HEIC fixtures. WORKER_TEST_IMAGE makes the HEIC tests run here whatever happens, never skip.
 FROM tools AS test
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libheif-plugin-x265 \
   && rm -rf /var/lib/apt/lists/*
+ENV WORKER_TEST_IMAGE=1
 WORKDIR /app
 COPY --from=deps --chown=10001:10001 /app/node_modules ./node_modules
 COPY --chown=10001:10001 . .

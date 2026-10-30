@@ -131,6 +131,19 @@ describe("the sweeper's first step: items stuck in uploaded", () => {
     expect(await liveJobs(MEDIA_QUEUES.photo, justUploaded)).toHaveLength(0);
   });
 
+  it("leaves an uploaded item that is hidden or deleted: its processing waits for an unhide to queue it", async () => {
+    const hidden = await insertItem({ hiddenAt: minutesAgo(8), hiddenBy: "admin" });
+    const removed = await insertItem({ hiddenAt: minutesAgo(8), hiddenBy: "guest", removedByUploader: true });
+    const deleted = await insertItem({ deletedAt: minutesAgo(8) });
+
+    const result = await sweeper().sweep();
+
+    expect(result.requeuedUploads).toBe(0);
+    for (const mediaId of [hidden, removed, deleted]) {
+      expect(await liveJobs(MEDIA_QUEUES.photo, mediaId), mediaId).toHaveLength(0);
+    }
+  });
+
   it("queues each item once: a second sweep finds its job", async () => {
     const photo = await insertItem();
     await sweeper().sweep();

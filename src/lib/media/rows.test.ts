@@ -14,9 +14,11 @@ import { resetDb } from "../../../test/db";
 import {
   isVisible,
   markConversionFailed,
+  markPhotoReady,
   markProcessingFailed,
   resumableUploadQuery,
   uploadQuery,
+  type ProcessedPhoto,
 } from "./rows";
 
 /** A finished album photo from a new guest, with any of its columns changed. */
@@ -118,6 +120,68 @@ describe("the media worker's marks", () => {
     expect(await markConversionFailed(done)).toBe(false);
     expect(await readRow(queued)).toMatchObject({ status: "ready", conversion: "failed" });
     expect(await readRow(done)).toMatchObject({ status: "ready", conversion: "done" });
+  });
+});
+
+describe("markPhotoReady", () => {
+  beforeEach(resetDb);
+
+  const processed: ProcessedPhoto = {
+    derived: { thumb: "derived/a/b/thumb.webp", view: "derived/a/b/view.webp" },
+    width: 4032,
+    height: 3024,
+    thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+    averageColor: "#8a7f74",
+    capturedAt: new Date("2026-12-05T23:00:00Z"),
+    celebration: "reception",
+  };
+
+  async function readRow(id: string) {
+    const [row] = await getDb().select().from(media).where(eq(media.id, id));
+    return row;
+  }
+
+  it("marks an uploaded photo ready with what its processing made, listed now, and returns its manifest's facts", async () => {
+    const id = await addPhoto({ status: "uploaded", listedAt: null, celebration: "more" });
+    const before = Date.now();
+
+    const facts = await markPhotoReady(id, processed);
+
+    expect(facts).toEqual({
+      celebration: "reception",
+      celebrationSetByAdmin: false,
+      hiddenAt: null,
+      hiddenBy: null,
+      removedByUploader: false,
+      deletedAt: null,
+    });
+    const row = await readRow(id);
+    expect(row).toMatchObject({ ...processed, status: "ready", failureReason: null });
+    expect(row.listedAt?.getTime()).toBeGreaterThanOrEqual(before - 5_000);
+  });
+
+  it("keeps an item's place in the album, and the celebration the couple moved it to", async () => {
+    const listedAt = new Date("2026-12-05T12:00:00Z");
+    const id = await addPhoto({ status: "uploaded", listedAt, celebration: "thanks", celebrationSetByAdmin: true });
+
+    expect(await markPhotoReady(id, processed)).toMatchObject({ celebration: "thanks", celebrationSetByAdmin: true });
+    expect(await readRow(id)).toMatchObject({ status: "ready", listedAt, celebration: "thanks" });
+  });
+
+  it("changes nothing, and returns null, for an item no longer uploaded, or hidden, removed or deleted (Ruling AG)", async () => {
+    const ids = [
+      await addPhoto({ status: "ready" }),
+      await addPhoto({ status: "failed", listedAt: null }),
+      await addPhoto({ status: "uploaded", listedAt: null, hiddenAt: new Date(), hiddenBy: "admin" }),
+      await addPhoto({ status: "uploaded", listedAt: null, hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true }),
+      await addPhoto({ status: "uploaded", listedAt: null, deletedAt: new Date() }),
+    ];
+    for (const id of ids) {
+      const before = await readRow(id);
+      expect(await markPhotoReady(id, processed), id).toBeNull();
+      expect(await readRow(id), id).toEqual(before);
+    }
+    expect(await markPhotoReady(randomUUID(), processed)).toBeNull();
   });
 });
 

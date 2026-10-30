@@ -1,7 +1,10 @@
 import { fileURLToPath } from "node:url";
+import sharp from "sharp";
 import { getBoss, JOB_QUEUE_SCHEMA } from "@/lib/jobs/boss";
+import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { errorMessage } from "@/lib/log-error";
 import { workerConfig, type WorkerConfig } from "./config";
+import { processPhoto } from "./jobs/photo";
 import type { MediaHandlers } from "./queues";
 import { runWorker } from "./runtime";
 
@@ -12,9 +15,8 @@ import { runWorker } from "./runtime";
  */
 
 /**
- * Each queue's handler. None has shipped yet, so every queue's jobs wait in it, unfailed (Ruling
- * AA), until the release that brings its handler:
- * - media.photo: Task 9, a photo's thumbnail, viewing size and ThumbHash;
+ * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash. A queue with
+ * none yet keeps its jobs waiting, unfailed (Ruling AA), until the release that brings its handler:
  * - media.poster: Task 10, a video's probe and poster;
  * - media.convert: Task 11, a version every phone can play;
  * - media.visibility: Task 12, deleting and purging a hidden item's derived files;
@@ -22,7 +24,9 @@ import { runWorker } from "./runtime";
  * - media.wish: Task 16, a voice or video wish's recording;
  * - media.card: Task 19, a site photo's link-preview card.
  */
-const handlers: MediaHandlers = {};
+const handlers: MediaHandlers = {
+  [MEDIA_QUEUES.photo]: processPhoto,
+};
 
 let config: WorkerConfig;
 try {
@@ -31,6 +35,11 @@ try {
   console.error("[worker] could not start:", errorMessage(error));
   process.exit(1);
 }
+
+// libvips' threads for each image, from WORKER_SHARP_THREADS, never the host's core count (Ruling
+// R). No operation cache: every job's files are new, and a cached one would hold its scratch file open.
+sharp.concurrency(config.threads.sharp);
+sharp.cache(false);
 
 await runWorker({
   config,

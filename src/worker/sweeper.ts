@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { PgBoss } from "pg-boss";
 import { getDb } from "@/lib/db/client";
@@ -13,7 +13,7 @@ import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch
 /*
  * The sweeper makes sure no item stays "processing" for good. At start-up and every 10 minutes it:
  * 1. queues the processing of items `uploaded` more than 5 minutes ago that have no job (the app
- *    couldn't queue it: the queue was starting, or down);
+ *    couldn't queue it: the queue was starting, or down), unless hidden or deleted;
  * 2. queues the conversion of `ready` videos whose conversion is `queued` with no job;
  * 3. (Ruling W) finishes uploads whose phone dropped during or just before its final complete:
  *    `uploading` for over 30 minutes, with every part in R2 adding up to the declared size, or the
@@ -79,13 +79,21 @@ function minutesAgo(minutes: number): SQL {
 
 /**
  * Up to `limit` items `uploaded` more than 5 minutes ago, oldest first, read in order from the
- * partial index of uploaded items. Exported for its plan's test.
+ * partial index of uploaded items. Not a hidden or deleted one: its processing does nothing until
+ * an unhide queues it again (Ruling AG). Exported for its plan's test.
  */
 export function uploadedItemsQuery(limit: number, reader: Reader = getDb()) {
   return reader
     .select({ id: media.id, purpose: media.purpose, kind: media.kind })
     .from(media)
-    .where(and(sql`${media.status} = 'uploaded'`, sql`${media.uploadedAt} < ${minutesAgo(STUCK_AFTER_MINUTES)}`))
+    .where(
+      and(
+        sql`${media.status} = 'uploaded'`,
+        sql`${media.uploadedAt} < ${minutesAgo(STUCK_AFTER_MINUTES)}`,
+        isNull(media.hiddenAt),
+        isNull(media.deletedAt),
+      ),
+    )
     .orderBy(asc(media.uploadedAt))
     .limit(limit);
 }

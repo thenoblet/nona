@@ -11,6 +11,8 @@ import {
   type MEDIA_STATUSES,
   type UPLOAD_EVENT_KINDS,
 } from "@/lib/db/schema";
+import type { DerivedVariant } from "@/lib/storage/keys";
+import type { MediaManifest } from "@/lib/storage/manifest";
 
 type MediaPurpose = (typeof MEDIA_PURPOSES)[number];
 type MediaFileKind = (typeof MEDIA_FILE_KINDS)[number];
@@ -255,6 +257,91 @@ export async function markConversionFailed(mediaId: string): Promise<boolean> {
     .where(and(eq(media.id, mediaId), sql`${media.conversion} <> 'done'`))
     .returning({ id: media.id });
   return rows.length > 0;
+}
+
+/**
+ * Whether a processing job has work to do for the item (Ruling AG): it is `uploaded`, and no one
+ * has hidden it (removing one's own upload hides it too) or deleted it. pg-boss can deliver a job
+ * twice and the sweeper can queue one again, so a job checks this when it starts and again in the
+ * update that finishes it; a hidden item waits, uploaded, for the unhide that queues it again.
+ */
+function awaitsProcessing(mediaId: string) {
+  return and(eq(media.id, mediaId), sql`${media.status} = 'uploaded'`, isNull(media.hiddenAt), isNull(media.deletedAt));
+}
+
+/** What a processing job reads of its item before it starts. */
+export type ItemToProcess = {
+  id: string;
+  originalKey: string;
+  startedAt: Date;
+  /** The time the phone sent, if any: the fallback when the file has none of its own. */
+  capturedAt: Date | null;
+};
+
+/** The item, if a processing job has work to do for it (awaitsProcessing); otherwise null. One read on the primary key. */
+export async function findItemToProcess(mediaId: string): Promise<ItemToProcess | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .select({
+      id: media.id,
+      originalKey: media.originalKey,
+      startedAt: media.startedAt,
+      capturedAt: media.capturedAt,
+    })
+    .from(media)
+    .where(awaitsProcessing(mediaId))
+    .limit(1);
+  return row ?? null;
+}
+
+/** What processing made of a photo, for markPhotoReady. */
+export type ProcessedPhoto = {
+  /** The derived files' keys in the public bucket: the thumbnail and the viewing size. */
+  derived: Partial<Record<DerivedVariant, string>>;
+  /** The upright photo's size in pixels. */
+  width: number;
+  height: number;
+  thumbhash: string;
+  averageColor: string;
+  /** From the file, else the time the phone sent; null when neither had one. */
+  capturedAt: Date | null;
+  /** The celebration that time falls in; the couple's own choice wins over it. */
+  celebration: EventId | "more";
+};
+
+/**
+ * Marks a processed photo `ready` with what its processing made, in one statement and only while a
+ * job still has work to do for it (awaitsProcessing): a second delivery that finished first, or a
+ * hide while this one worked, leaves it as it is. It is listed now, or keeps its place if it was
+ * listed before; its celebration is the one its capture time falls in, unless the couple moved it.
+ * Returns the facts its manifest holds as this left them, or null when it changed nothing.
+ */
+export async function markPhotoReady(mediaId: string, photo: ProcessedPhoto): Promise<MediaManifest | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .update(media)
+    .set({
+      status: "ready",
+      failureReason: null,
+      listedAt: sql`coalesce(${media.listedAt}, now())`,
+      derived: photo.derived,
+      width: photo.width,
+      height: photo.height,
+      thumbhash: photo.thumbhash,
+      averageColor: photo.averageColor,
+      capturedAt: photo.capturedAt,
+      celebration: sql`case when ${media.celebrationSetByAdmin} then ${media.celebration} else ${photo.celebration} end`,
+    })
+    .where(awaitsProcessing(mediaId))
+    .returning({
+      celebration: media.celebration,
+      celebrationSetByAdmin: media.celebrationSetByAdmin,
+      hiddenAt: media.hiddenAt,
+      hiddenBy: media.hiddenBy,
+      removedByUploader: media.removedByUploader,
+      deletedAt: media.deletedAt,
+    });
+  return row ?? null;
 }
 
 /** Where a sweep through unfinished uploads stopped: the last row it looked at. */
