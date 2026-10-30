@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toCsv } from "./csv";
 
-const BOM = "﻿";
+const BOM = "\uFEFF";
 
 describe("toCsv", () => {
   it("starts with a byte order mark so Excel reads Ɔ and Ɛ as UTF-8", () => {

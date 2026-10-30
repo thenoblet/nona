@@ -1,14 +1,16 @@
 import "server-only";
 import { and, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { EventId } from "@/content/wedding";
 import { getDb } from "@/lib/db/client";
-import { rsvps } from "@/lib/db/schema";
+import { rsvpFlagDismissals, rsvps } from "@/lib/db/schema";
 import { emailKey, nameKey, phoneKey } from "@/lib/rsvp/normalize";
-import type { RsvpInput, RsvpRecord } from "./types";
+import type { RsvpFlag, RsvpInput, RsvpRecord } from "./types";
 
 type Row = typeof rsvps.$inferSelect;
+type Dismissal = { rsvpId: string; otherRsvpId: string };
 
-function toRecord(row: Row, possibleDuplicate = false): RsvpRecord {
+function toRecord(row: Row, flags: RsvpFlag[] = []): RsvpRecord {
   return {
     id: row.id,
     fullName: row.fullName,
@@ -21,7 +23,7 @@ function toRecord(row: Row, possibleDuplicate = false): RsvpRecord {
     receivedAt: row.receivedAt.toISOString(),
     supersededAt: row.supersededAt?.toISOString() ?? null,
     emailStatus: row.emailStatus,
-    possibleDuplicate,
+    flags,
   };
 }
 
@@ -36,60 +38,59 @@ const PEOPLE: Record<string, number> = {
 };
 
 /**
- * A new reply replaces an earlier current one only for the same name AND the
- * same phone or email. The advisory lock makes two simultaneous submissions
- * for one name run one after the other.
+ * Saves a reply as its own current reply: a second reply never replaces the first, the couple
+ * chooses between them in the admin. The same reply sent again within 10 minutes (same name,
+ * phone, email, party size, answers, other names and song, compared as keys) is a double tap and
+ * returns the first, so it gets no second confirmation email. The advisory lock makes two
+ * simultaneous submissions for one name run one after the other.
  */
-export async function saveRsvp(
-  input: RsvpInput,
-): Promise<{ record: RsvpRecord; replaced: RsvpRecord | null }> {
-  const nKey = nameKey(input.fullName);
-  const pKey = phoneKey(input.phone);
+export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }> {
+  const guestName = nameKey(input.fullName);
+  const guestPhone = phoneKey(input.phone);
   const email = input.email?.trim() || null;
-  const eKey = email ? emailKey(email) : null;
+  const guestEmail = email ? emailKey(email) : null;
+  const otherNames = input.otherNames ?? null;
+  const song = input.song ?? null;
 
-  return getDb().transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${nKey}))`);
+  return getDb().transaction(async (transaction) => {
+    await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${guestName}))`);
 
-    const sameGuest = eKey
-      ? or(eq(rsvps.phoneKey, pKey), eq(rsvps.emailKey, eKey))
-      : eq(rsvps.phoneKey, pKey);
-    const earlier = await tx
+    const [repeat] = await transaction
       .select()
       .from(rsvps)
-      .where(and(eq(rsvps.nameKey, nKey), isNull(rsvps.supersededAt), sameGuest));
+      .where(
+        and(
+          eq(rsvps.nameKey, guestName),
+          isNull(rsvps.supersededAt),
+          eq(rsvps.phoneKey, guestPhone),
+          sql`${rsvps.emailKey} is not distinct from ${guestEmail}`,
+          eq(rsvps.partySize, input.partySize),
+          sql`${rsvps.answers} = ${JSON.stringify(input.answers)}::jsonb`,
+          sql`${rsvps.otherNames} is not distinct from ${otherNames}`,
+          sql`${rsvps.song} is not distinct from ${song}`,
+          gt(rsvps.receivedAt, sql`now() - interval '10 minutes'`),
+        ),
+      )
+      .orderBy(desc(rsvps.receivedAt))
+      .limit(1);
+    if (repeat) return { record: toRecord(repeat) };
 
-    const [created] = await tx
+    const [created] = await transaction
       .insert(rsvps)
       .values({
         fullName: input.fullName,
-        nameKey: nKey,
+        nameKey: guestName,
         phone: input.phone,
-        phoneKey: pKey,
+        phoneKey: guestPhone,
         email,
-        emailKey: eKey,
+        emailKey: guestEmail,
         partySize: input.partySize,
         answers: input.answers,
-        otherNames: input.otherNames ?? null,
-        song: input.song ?? null,
+        otherNames,
+        song,
       })
       .returning();
-
-    if (earlier.length > 0) {
-      await tx
-        .update(rsvps)
-        .set({ supersededAt: created.receivedAt, supersededBy: created.id })
-        .where(inArray(rsvps.id, earlier.map((row) => row.id)));
-    }
-
-    const replaced =
-      earlier.length > 0
-        ? earlier.reduce((newest, row) => (newest.receivedAt > row.receivedAt ? newest : row))
-        : null;
-    return {
-      record: toRecord(created),
-      replaced: replaced ? toRecord({ ...replaced, supersededAt: created.receivedAt }) : null,
-    };
+    return { record: toRecord(created) };
   });
 }
 
@@ -99,36 +100,132 @@ export async function getRsvp(id: string): Promise<RsvpRecord | null> {
   return row ? toRecord(row) : null;
 }
 
-/** Current replies, newest first. */
-export async function listRsvps(): Promise<RsvpRecord[]> {
-  const rows = await getDb()
-    .select()
-    .from(rsvps)
-    .where(isNull(rsvps.supersededAt))
-    .orderBy(desc(rsvps.receivedAt));
-
-  const names = (keyOf: (row: Row) => string | null) => {
-    const byKey = new Map<string, Set<string>>();
-    for (const row of rows) {
-      const key = keyOf(row);
-      if (!key) continue;
-      byKey.set(key, (byKey.get(key) ?? new Set()).add(row.nameKey));
-    }
-    return byKey;
-  };
-  const byPhone = names((row) => row.phoneKey);
-  const byEmail = names((row) => row.emailKey);
-
-  return rows.map((row) =>
-    toRecord(
-      row,
-      (byPhone.get(row.phoneKey)?.size ?? 0) > 1 ||
-        (row.emailKey !== null && (byEmail.get(row.emailKey)?.size ?? 0) > 1),
-    ),
-  );
+/** The same text for a pair whichever way round it is given. */
+function pairKey(firstId: string, secondId: string): string {
+  return firstId < secondId ? `${firstId} ${secondId}` : `${secondId} ${firstId}`;
 }
 
-/** The earlier replies this one replaced, newest first. */
+function groupBy(rows: Row[], keyOf: (row: Row) => string | null): Map<string, Row[]> {
+  const groups = new Map<string, Row[]>();
+  for (const row of rows) {
+    const key = keyOf(row);
+    if (key) groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  return groups;
+}
+
+/**
+ * For each of these current replies (newest first), the others that share its phone or email,
+ * newest first, leaving out the pairs the couple chose to keep both of.
+ */
+function flagsByReply(rows: Row[], dismissals: Dismissal[]): Map<string, RsvpFlag[]> {
+  const kept = new Set(dismissals.map((dismissal) => pairKey(dismissal.rsvpId, dismissal.otherRsvpId)));
+  const position = new Map(rows.map((row, index) => [row.id, index]));
+  const byPhone = groupBy(rows, (row) => row.phoneKey);
+  const byEmail = groupBy(rows, (row) => row.emailKey);
+
+  const flags = new Map<string, RsvpFlag[]>();
+  for (const row of rows) {
+    const samePhone = byPhone.get(row.phoneKey) ?? [];
+    const sameEmail = row.emailKey ? (byEmail.get(row.emailKey) ?? []) : [];
+    const others = [...new Set([...samePhone, ...sameEmail])]
+      .filter((other) => other.id !== row.id && !kept.has(pairKey(row.id, other.id)))
+      .sort((first, second) => position.get(first.id)! - position.get(second.id)!);
+    flags.set(
+      row.id,
+      others.map((other) => ({
+        kind: other.nameKey === row.nameKey ? "replied-again" : "possible-duplicate",
+        otherId: other.id,
+        otherName: other.fullName,
+        via: samePhone.includes(other) ? "phone" : "email",
+      })),
+    );
+  }
+  return flags;
+}
+
+const dismissalColumns = { rsvpId: rsvpFlagDismissals.rsvpId, otherRsvpId: rsvpFlagDismissals.otherRsvpId };
+
+/** Current replies, newest first, each with the other current replies to check it against. */
+export async function listRsvps(): Promise<RsvpRecord[]> {
+  const [rows, dismissals] = await Promise.all([
+    getDb().select().from(rsvps).where(isNull(rsvps.supersededAt)).orderBy(desc(rsvps.receivedAt)),
+    getDb().select(dismissalColumns).from(rsvpFlagDismissals),
+  ]);
+  const flags = flagsByReply(rows, dismissals);
+  return rows.map((row) => toRecord(row, flags.get(row.id)));
+}
+
+export type KeepResult = { ok: true; moved: number } | { ok: false; error: string };
+
+// "Keep this one" and "Keep both" run one at a time, so two replies kept at once can never
+// each move the other into its history.
+const KEEP_LOCK = "rsvp-keep";
+
+export const REPLY_NOT_FOUND = "That reply could not be found. The page now shows the latest replies.";
+const ALREADY_MOVED = "That reply was already moved into another reply's history. The page now shows the latest replies.";
+
+/** "Keep this one": every current reply flagged against this one moves into its history. */
+export async function keepReply(id: string): Promise<KeepResult> {
+  return getDb().transaction(async (transaction) => {
+    await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${KEEP_LOCK}))`);
+    const [kept] = await transaction.select().from(rsvps).where(eq(rsvps.id, id));
+    if (!kept) return { ok: false, error: REPLY_NOT_FOUND };
+    if (kept.supersededAt) return { ok: false, error: ALREADY_MOVED };
+
+    const sameGuest = kept.emailKey
+      ? or(eq(rsvps.phoneKey, kept.phoneKey), eq(rsvps.emailKey, kept.emailKey))
+      : eq(rsvps.phoneKey, kept.phoneKey);
+    const matching = await transaction
+      .select()
+      .from(rsvps)
+      .where(and(isNull(rsvps.supersededAt), sameGuest))
+      .orderBy(desc(rsvps.receivedAt));
+    const dismissals = await transaction
+      .select(dismissalColumns)
+      .from(rsvpFlagDismissals)
+      .where(or(eq(rsvpFlagDismissals.rsvpId, id), eq(rsvpFlagDismissals.otherRsvpId, id)));
+    const flagged = flagsByReply(matching, dismissals).get(id) ?? [];
+    if (flagged.length === 0) return { ok: true, moved: 0 };
+
+    const moved = await transaction
+      .update(rsvps)
+      .set({ supersededAt: sql`now()`, supersededBy: id })
+      .where(and(inArray(rsvps.id, flagged.map((flag) => flag.otherId)), isNull(rsvps.supersededAt)))
+      .returning({ id: rsvps.id });
+    return { ok: true, moved: moved.length };
+  });
+}
+
+/** "Keep both": the pair stays unflagged from now on. Saving the same pair again changes nothing. */
+export async function keepBoth(
+  id: string,
+  otherId: string,
+  dismissedBy: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (id === otherId) return { ok: false, error: REPLY_NOT_FOUND };
+  return getDb().transaction(async (transaction) => {
+    await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${KEEP_LOCK}))`);
+    const pair = await transaction
+      .select({ supersededAt: rsvps.supersededAt })
+      .from(rsvps)
+      .where(inArray(rsvps.id, [id, otherId]));
+    if (pair.length < 2) return { ok: false, error: REPLY_NOT_FOUND };
+    if (pair.some((reply) => reply.supersededAt)) return { ok: false, error: ALREADY_MOVED };
+
+    await transaction
+      .insert(rsvpFlagDismissals)
+      .values({
+        rsvpId: sql`least(${id}::uuid, ${otherId}::uuid)`,
+        otherRsvpId: sql`greatest(${id}::uuid, ${otherId}::uuid)`,
+        dismissedBy,
+      })
+      .onConflictDoNothing();
+    return { ok: true };
+  });
+}
+
+/** The earlier replies moved into this one's history, newest first. */
 export async function rsvpHistory(id: string): Promise<RsvpRecord[]> {
   const rows = await getDb()
     .select()
@@ -139,27 +236,38 @@ export async function rsvpHistory(id: string): Promise<RsvpRecord[]> {
 }
 
 /**
- * Every changed reply's earlier versions, keyed by the current reply's id, newest first.
- * One query loads all replaced replies; the supersededBy links are then followed in memory,
- * through replies replaced more than once and replies that replaced two at a time.
+ * Every current reply's history, keyed by its id, newest first. One query loads the moved replies
+ * and the current replies they point at; the supersededBy links are then followed in memory,
+ * through replies moved more than once and replies that took in two at a time. A link to a reply
+ * that does not exist, or a loop of links, shows nowhere.
  */
 export async function rsvpHistories(): Promise<Map<string, RsvpRecord[]>> {
-  const replaced = await getDb().select().from(rsvps).where(isNotNull(rsvps.supersededAt));
+  const replaced = alias(rsvps, "replaced");
+  const rows = await getDb()
+    .select()
+    .from(rsvps)
+    .where(
+      or(
+        isNotNull(rsvps.supersededAt),
+        inArray(
+          rsvps.id,
+          getDb().select({ id: replaced.supersededBy }).from(replaced).where(isNotNull(replaced.supersededBy)),
+        ),
+      ),
+    );
 
   const replacedBy = new Map<string, Row[]>();
-  for (const row of replaced) {
-    if (!row.supersededBy) continue;
+  for (const row of rows) {
+    if (!row.supersededAt || !row.supersededBy) continue;
     replacedBy.set(row.supersededBy, [...(replacedBy.get(row.supersededBy) ?? []), row]);
   }
 
-  // A reply that replaced others but was never replaced itself is a current one.
-  const replacedIds = new Set(replaced.map((row) => row.id));
   const histories = new Map<string, RsvpRecord[]>();
-  for (const currentId of replacedBy.keys()) {
-    if (replacedIds.has(currentId)) continue;
+  for (const current of rows) {
+    if (current.supersededAt) continue;
     const earlier: Row[] = [];
-    const seen = new Set([currentId]);
-    const toVisit = [currentId];
+    const seen = new Set([current.id]);
+    const toVisit = [current.id];
     while (toVisit.length > 0) {
       for (const row of replacedBy.get(toVisit.pop()!) ?? []) {
         if (seen.has(row.id)) continue;
@@ -169,7 +277,7 @@ export async function rsvpHistories(): Promise<Map<string, RsvpRecord[]>> {
       }
     }
     earlier.sort((first, second) => second.receivedAt.getTime() - first.receivedAt.getTime());
-    histories.set(currentId, earlier.map((row) => toRecord(row)));
+    histories.set(current.id, earlier.map((row) => toRecord(row)));
   }
   return histories;
 }

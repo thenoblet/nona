@@ -13,5 +13,5 @@ function csvCell(value: string): string {
  * comes first so Excel shows Ɔ and Ɛ, and no cell can start a spreadsheet formula.
  */
 export function toCsv(rows: string[][]): string {
-  return `﻿${rows.map((row) => `${row.map(csvCell).join(",")}\r\n`).join("")}`;
+  return `\uFEFF${rows.map((row) => `${row.map(csvCell).join(",")}\r\n`).join("")}`;
 }

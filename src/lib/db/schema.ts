@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { EventId } from "@/content/wedding";
 
 export const rsvps = pgTable(
@@ -24,6 +24,28 @@ export const rsvps = pgTable(
   (t) => [
     index("rsvps_name_key_current_idx").on(t.nameKey).where(sql`${t.supersededAt} is null`),
     index("rsvps_email_key_idx").on(t.emailKey),
+  ],
+);
+
+/**
+ * Pairs of flagged replies the couple chose to keep both of ("Keep both"). One row per unordered
+ * pair, stored with the smaller id first, so the pair stays unflagged whichever way round it comes.
+ */
+export const rsvpFlagDismissals = pgTable(
+  "rsvp_flag_dismissals",
+  {
+    rsvpId: uuid("rsvp_id")
+      .notNull()
+      .references(() => rsvps.id, { onDelete: "cascade" }),
+    otherRsvpId: uuid("other_rsvp_id")
+      .notNull()
+      .references(() => rsvps.id, { onDelete: "cascade" }),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }).notNull().defaultNow(),
+    dismissedBy: text("dismissed_by").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.rsvpId, table.otherRsvpId] }),
+    check("rsvp_flag_dismissals_smaller_id_first", sql`${table.rsvpId} < ${table.otherRsvpId}`),
   ],
 );
 

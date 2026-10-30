@@ -141,6 +141,27 @@ describe("submitRsvp", () => {
     expect(state.status).toBe("sent");
   });
 
+  it("answers a second reply from the same guest exactly as it answered the first", async () => {
+    const first = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+    const second = await submitRsvp(
+      initialRsvpState,
+      form({ email: "ama@example.com", phone: "+233 24 000 0000", song: "Odo" }),
+    );
+    expect(Object.keys(second).sort()).toEqual(Object.keys(first).sort());
+    expect(second).toEqual({ ...first, values: { ...first.values, phone: "+233 24 000 0000", song: "Odo" } });
+    expect(await rows()).toHaveLength(2);
+    await settle();
+  });
+
+  it("keeps one reply and queues one confirmation when the same reply is sent twice", async () => {
+    await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+    await settle();
+    await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+    await settle();
+    expect(await rows()).toHaveLength(1);
+    expect(boss.send).toHaveBeenCalledOnce();
+  });
+
   it("queues no fourth email to the same address within 24 hours", async () => {
     for (let index = 0; index < 4; index++) {
       await submitRsvp(

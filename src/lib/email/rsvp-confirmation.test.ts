@@ -19,7 +19,7 @@ function record(
     receivedAt: new Date().toISOString(),
     supersededAt: null,
     emailStatus: "queued",
-    possibleDuplicate: false,
+    flags: [],
   };
 }
 

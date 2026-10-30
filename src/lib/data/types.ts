@@ -15,14 +15,26 @@ export type RsvpInput = {
 
 export type EmailStatus = "none" | "queued" | "sent" | "failed";
 
+/**
+ * Another current reply sharing this one's phone or email: "replied-again" when the names match
+ * too, "possible-duplicate" when they don't (families answer for each other).
+ */
+export type RsvpFlag = {
+  kind: "replied-again" | "possible-duplicate";
+  otherId: string;
+  otherName: string;
+  /** The phone when both match. */
+  via: "phone" | "email";
+};
+
 export type RsvpRecord = RsvpInput & {
   id: string;
   receivedAt: string;
-  /** Set when a later reply replaced this one; null for a current reply. */
+  /** Set when the couple kept another reply over this one; null for a current reply. */
   supersededAt: string | null;
   emailStatus: EmailStatus;
-  /** Another current reply shares this phone or email under a different name. */
-  possibleDuplicate: boolean;
+  /** The current replies to check against this one, newest first. Only listRsvps() fills it. */
+  flags: RsvpFlag[];
 };
 
 export type MediaKind = "photo" | "video";

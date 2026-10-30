@@ -4,8 +4,7 @@ import {
   accraDate,
   celebrationDay,
   countByFilter,
-  duplicateMatches,
-  duplicateNote,
+  flagNote,
   matchesFilter,
   matchesSearch,
   receivedLabel,
@@ -27,50 +26,24 @@ function reply(overrides: Partial<RsvpRecord> & Pick<RsvpRecord, "id" | "fullNam
     receivedAt: "2026-10-29T09:41:00.000Z",
     supersededAt: null,
     emailStatus: "none",
-    possibleDuplicate: false,
+    flags: [],
     ...overrides,
   };
 }
 
 const now = new Date("2026-10-30T12:00:00Z");
 
-describe("duplicateMatches", () => {
-  it("names the other reply that shares a phone, after normalising", () => {
-    const matches = duplicateMatches([
-      reply({ id: "kofi-ansah", fullName: "Kofi Ansah", phone: "+233 24 000 0000" }),
-      reply({ id: "kofi-ansa", fullName: "Kofi Ansa", phone: "024 000 0000" }),
-    ]);
-    expect(matches.get("kofi-ansah")).toEqual([{ name: "Kofi Ansa", same: "phone" }]);
-    expect(matches.get("kofi-ansa")).toEqual([{ name: "Kofi Ansah", same: "phone" }]);
+describe("flagNote", () => {
+  it("says who replied again, when in Accra, and which detail matched", () => {
+    expect(
+      flagNote({ kind: "replied-again", otherId: "ama-before", otherName: "Ama Owusu", via: "phone" }, "2026-10-28T18:02:00Z"),
+    ).toBe("Replied again: also replied as Ama Owusu on 28 Oct, 18:02 (same phone)");
   });
 
-  it("names the other reply that shares an email, ignoring case", () => {
-    const matches = duplicateMatches([
-      reply({ id: "ama", fullName: "Ama Owusu", email: "family@example.com" }),
-      reply({ id: "kwame", fullName: "Kwame Owusu", phone: "055 111 2222", email: "Family@Example.com" }),
-    ]);
-    expect(matches.get("ama")).toEqual([{ name: "Kwame Owusu", same: "email" }]);
-  });
-
-  it("says both when the phone and the email match", () => {
-    const matches = duplicateMatches([
-      reply({ id: "ama", fullName: "Ama Owusu", email: "family@example.com" }),
-      reply({ id: "kwame", fullName: "Kwame Owusu", email: "family@example.com" }),
-    ]);
-    expect(matches.get("ama")).toEqual([{ name: "Kwame Owusu", same: "phone and email" }]);
-  });
-
-  it("leaves unrelated replies and the same name on another phone alone", () => {
-    const matches = duplicateMatches([
-      reply({ id: "ama", fullName: "Ama Owusu" }),
-      reply({ id: "ama-again", fullName: "AMA owusu", phone: "055 111 2222" }),
-      reply({ id: "kofi", fullName: "Kofi Mensah", phone: "020 333 4444" }),
-    ]);
-    expect(matches.size).toBe(0);
-  });
-
-  it("writes the note shown under the guest", () => {
-    expect(duplicateNote({ name: "Kofi Ansa", same: "phone" })).toBe("Possible duplicate of “Kofi Ansa” (same phone)");
+  it("names a possible duplicate and the detail it shares", () => {
+    expect(flagNote({ kind: "possible-duplicate", otherId: "kofi", otherName: "Kofi Ansa", via: "email" })).toBe(
+      "Possible duplicate of Kofi Ansa (same email)",
+    );
   });
 });
 
@@ -91,7 +64,7 @@ describe("receivedLabel", () => {
 });
 
 describe("toReplyRows", () => {
-  it("adds labels, duplicate notes and each earlier reply, newest first", () => {
+  it("adds labels and each earlier reply, newest first", () => {
     const current = reply({ id: "ama", fullName: "Ama Owusu", song: "Odo", emailStatus: "failed" });
     const earlier = reply({
       id: "ama-before",
@@ -121,14 +94,54 @@ describe("toReplyRows", () => {
     expect(row.earlier[0].details).toContain("Phone: 055 111 2222");
     expect(row.earlier[0].details.join(" ")).not.toContain("ama@example.com");
   });
+
+  it("writes each flag as a note, dated from the other reply", () => {
+    const ama = reply({
+      id: "ama",
+      fullName: "Ama Owusu",
+      flags: [
+        { kind: "replied-again", otherId: "ama-before", otherName: "AMA owusu", via: "phone" },
+        { kind: "possible-duplicate", otherId: "kwame", otherName: "Kwame Owusu", via: "email" },
+      ],
+    });
+    const amaBefore = reply({ id: "ama-before", fullName: "AMA owusu", receivedAt: "2026-10-28T18:02:00Z" });
+    const kwame = reply({ id: "kwame", fullName: "Kwame Owusu", phone: "055 111 2222" });
+    const [row] = toReplyRows([ama, amaBefore, kwame], new Map(), celebrations, now);
+    expect(row.flags).toEqual([
+      {
+        kind: "replied-again",
+        otherId: "ama-before",
+        otherName: "AMA owusu",
+        note: "Replied again: also replied as AMA owusu on 28 Oct, 18:02 (same phone)",
+      },
+      {
+        kind: "possible-duplicate",
+        otherId: "kwame",
+        otherName: "Kwame Owusu",
+        note: "Possible duplicate of Kwame Owusu (same email)",
+      },
+    ]);
+  });
 });
 
 describe("filters and search", () => {
   const rows = toReplyRows(
     [
       reply({ id: "ama", fullName: "Akosua Ɔfori-Mensah", email: "akosua@example.com", emailStatus: "failed" }),
-      reply({ id: "kofi", fullName: "Kofi Ansah", phone: "055 111 2222", answers: { ceremony: "no", thanks: "no" } }),
-      reply({ id: "kofi-2", fullName: "Kofi Ansa", phone: "+233 55 111 2222", otherNames: "Esi Ansa" }),
+      reply({
+        id: "kofi",
+        fullName: "Kofi Ansah",
+        phone: "055 111 2222",
+        answers: { ceremony: "no", thanks: "no" },
+        flags: [{ kind: "possible-duplicate", otherId: "kofi-2", otherName: "Kofi Ansa", via: "phone" }],
+      }),
+      reply({
+        id: "kofi-2",
+        fullName: "Kofi Ansa",
+        phone: "+233 55 111 2222",
+        otherNames: "Esi Ansa",
+        flags: [{ kind: "possible-duplicate", otherId: "kofi", otherName: "Kofi Ansah", via: "phone" }],
+      }),
     ],
     new Map(),
     celebrations,
@@ -136,15 +149,15 @@ describe("filters and search", () => {
   );
 
   it("counts each filter", () => {
-    expect(countByFilter(rows)).toEqual({ all: 3, coming: 2, notComing: 1, duplicates: 2, emailFailed: 1 });
+    expect(countByFilter(rows)).toEqual({ all: 3, coming: 2, notComing: 1, toCheck: 2, emailFailed: 1 });
   });
 
-  it("filters by coming, can't come, duplicates and failed email", () => {
+  it("filters by coming, can't come, to check and failed email", () => {
     const ids = (filter: Parameters<typeof matchesFilter>[1]) =>
       rows.filter((row) => matchesFilter(row, filter)).map((row) => row.id);
     expect(ids("coming")).toEqual(["ama", "kofi-2"]);
     expect(ids("notComing")).toEqual(["kofi"]);
-    expect(ids("duplicates")).toEqual(["kofi", "kofi-2"]);
+    expect(ids("toCheck")).toEqual(["kofi", "kofi-2"]);
     expect(ids("emailFailed")).toEqual(["ama"]);
   });
 
@@ -174,6 +187,10 @@ describe("replyCsvRows", () => {
         song: "Odo",
         receivedAt: "2026-10-29T23:30:00Z",
         emailStatus: "queued",
+        flags: [
+          { kind: "replied-again", otherId: "ama-before", otherName: "AMA owusu", via: "phone" },
+          { kind: "possible-duplicate", otherId: "kwame", otherName: "Kwame Owusu", via: "email" },
+        ],
       }),
       reply({ id: "kwame", fullName: "Kwame Owusu" }),
     ];
@@ -190,7 +207,7 @@ describe("replyCsvRows", () => {
       "Song",
       "Received",
       "Email status",
-      "Possible duplicate",
+      "Flags",
     ]);
     expect(rows[1]).toEqual([
       "Ama Owusu",
@@ -204,9 +221,10 @@ describe("replyCsvRows", () => {
       "Odo",
       "2026-10-29 23:30",
       "Sending",
-      "Kwame Owusu (same phone)",
+      "Replied again: AMA owusu (same phone); Possible duplicate of Kwame Owusu (same email)",
     ]);
     expect(rows[2][10]).toBe("No email");
+    expect(rows[2][11]).toBe("");
     expect(rows).toHaveLength(3);
   });
 });

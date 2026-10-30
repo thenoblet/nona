@@ -84,10 +84,17 @@
 .admin-stat-big { margin: 8px 0 2px; font-size: 30px; font-weight: 600; line-height: 1.1; }
 .admin-stat-big span { font-size: 14px; font-weight: 400; color: var(--admin-muted); }
 .admin-stat-split { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--admin-muted); }
-.admin-footnote { margin: 8px 0 20px; font-size: 13px; color: var(--admin-muted); }
+.admin-footnote { margin: 8px 0 0; font-size: 13px; color: var(--admin-muted); }
+/* "Includes 2 replies to check": the totals count every current reply, flagged ones too. */
+.admin-checknote { margin: 4px 0 0; font-size: 13px; color: var(--admin-accent-text); }
+.admin .admin-linkbtn {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0; border: 0; background: none;
+  color: var(--admin-accent); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px;
+  vertical-align: middle; cursor: pointer;
+}
 
 /* Replies: search and filters */
-.admin-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 12px; }
+.admin-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 20px 0 12px; }
 .admin-search { position: relative; flex: 1 1 260px; min-width: 0; max-width: 420px; }
 .admin-search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--admin-muted); }
 .admin-search input {
@@ -110,12 +117,32 @@
 .admin-badge-wait { color: var(--admin-wait); background: var(--admin-wait-bg); }
 .admin-badge-bad { color: var(--admin-bad); background: var(--admin-bad-bg); }
 .admin-badge-none { color: var(--admin-none); background: var(--admin-none-bg); }
-.admin-flag { display: block; width: fit-content; max-width: 100%; margin-top: 6px; padding: 3px 8px; border-radius: 6px; background: var(--admin-accent-soft); color: var(--admin-accent-text); font-size: 13px; }
+/* Replies to check: the notes, then "Keep this one" (with its confirm step) and "Keep both". */
+.admin-flags { margin-top: 8px; padding: 8px 10px 10px; border-radius: 8px; background: var(--admin-accent-soft); color: var(--admin-accent-text); font-size: 13.5px; }
+.admin-flags[data-pending] { opacity: 0.6; }
+.admin-flag-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.admin-flag-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.admin-flag-note { min-width: 0; }
+.admin-flag-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.admin-flag-btn {
+  min-height: 36px; padding: 0 12px; border: 1px solid #e7b38f; border-radius: 8px; background: var(--admin-surface);
+  color: var(--admin-text); font: inherit; font-size: 14px; font-weight: 500; white-space: nowrap; cursor: pointer;
+}
+.admin-flag-btn:hover { border-color: var(--admin-accent); }
+.admin-flag-btn:disabled { cursor: progress; }
+.admin-flag-btn-primary, .admin-flag-btn-primary:hover { background: var(--admin-accent); border-color: var(--admin-accent); color: #fff; }
+.admin-confirm { margin-top: 8px; padding-top: 8px; border-top: 1px solid #efc9ae; }
+.admin-confirm p { margin: 0; color: var(--admin-text); font-weight: 500; }
+.admin-flag-error { margin: 8px 0 0; color: var(--admin-bad); font-weight: 500; }
+/* What the last "Keep" did. Always in the page, so screen readers announce each new message. */
+.admin-notice { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--admin-border); border-left: 3px solid var(--admin-ok); border-radius: 8px; background: var(--admin-surface); font-size: 14px; overflow-wrap: anywhere; }
+.admin-notice:empty { margin: 0; padding: 0; border: 0; }
 .admin-yes { font-weight: 600; }
 .admin-no { color: var(--admin-disabled); }
 
-/* Replies: a table on wide screens, a card per reply below 860 px */
-.admin-tablewrap { background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius); overflow: hidden; }
+/* Replies: a table on wide screens, a card per reply below 860 px. The table scrolls sideways
+   rather than cutting off a long unbroken celebration name. */
+.admin-tablewrap { background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius); overflow-x: auto; }
 .admin-replies { width: 100%; border-collapse: collapse; }
 .admin-replies th {
   padding: 10px 12px; border-bottom: 1px solid var(--admin-border); background: var(--admin-subtle);
@@ -164,5 +191,5 @@
 }
 /* Fingers need 44 px; a mouse keeps the compact chips. */
 @media (pointer: coarse) {
-  .admin-filter, .admin-history summary { min-height: 44px; }
+  .admin-filter, .admin-history summary, .admin-flag-btn, .admin .admin-linkbtn { min-height: 44px; }
 }

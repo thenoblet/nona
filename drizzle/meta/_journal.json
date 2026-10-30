@@ -8,6 +8,13 @@
       "when": 1793316935056,
       "tag": "0000_fine_ezekiel",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793342478536,
+      "tag": "0001_abandoned_hulk",
+      "breakpoints": true
     }
   ]
 }

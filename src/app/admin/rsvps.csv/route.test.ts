@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { contentDefaults } from "@/lib/content/defaults";
-import { saveRsvp } from "@/lib/data/rsvp";
+import { keepReply, saveRsvp } from "@/lib/data/rsvp";
 import { resetDb } from "../../../../test/db";
 
 vi.mock("@/lib/content/get", () => ({
@@ -61,11 +61,32 @@ describe("GET /admin/rsvps.csv", () => {
     const bytes = new Uint8Array(await response.clone().arrayBuffer());
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
 
-    const lines = (await response.text()).replace(/^﻿/, "").split("\r\n");
+    const lines = (await response.text()).replace(/^\uFEFF/, "").split("\r\n");
     expect(lines[0]).toBe(
-      "Name,Phone,Email,Party size,White wedding,Reception,Thanksgiving service,Other names,Song,Received,Email status,Possible duplicate",
+      "Name,Phone,Email,Party size,White wedding,Reception,Thanksgiving service,Other names,Song,Received,Email status,Flags",
     );
     expect(lines[1]).toMatch(/^Ama Owusu,024 000 0000,ama@example\.com,2 people,Yes,No,,,'=Odo,\d{4}-\d{2}-\d{2} \d{2}:\d{2},No email,$/);
     expect(lines).toHaveLength(3);
+  });
+
+  it("lists each flag in words and leaves out replies moved into a history", async () => {
+    admin.allowed = true;
+    await saveRsvp({
+      fullName: "Ama Owusu",
+      phone: "+233 24 000 0000",
+      partySize: "Just me",
+      answers: { ceremony: "yes" },
+    });
+    await saveRsvp({ fullName: "Kofi Mensah", phone: "055 111 2222", partySize: "Just me", answers: { ceremony: "no" } });
+    const kept = await saveRsvp({ fullName: "Kofi Mensah", phone: "055 111 2222", partySize: "2 people", answers: { ceremony: "no" } });
+    await keepReply(kept.record.id);
+
+    const lines = (await (await GET()).text()).replace(/^\uFEFF/, "").split("\r\n");
+    expect(lines).toHaveLength(5);
+    expect(lines.filter((line) => line.startsWith("Kofi Mensah,"))).toHaveLength(1);
+    expect(lines.find((line) => line.startsWith("Kofi Mensah,"))).toMatch(/,2 people,/);
+    expect(lines.find((line) => line.startsWith("Ama Owusu,'+233"))).toMatch(
+      /,Replied again: Ama Owusu \(same phone\)$/,
+    );
   });
 });

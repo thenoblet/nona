@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { saveRsvp, getRsvp, setEmailStatus } from "@/lib/data/rsvp";
+import { getRsvp, keepReply, saveRsvp, setEmailStatus } from "@/lib/data/rsvp";
 import { contentDefaults } from "@/lib/content/defaults";
 import { resetDb } from "../../../test/db";
 
@@ -58,9 +58,10 @@ describe("handleRsvpConfirmation", () => {
     expect((await getRsvp(reply.id))?.emailStatus).toBe("sent");
   });
 
-  it("skips a superseded reply", async () => {
+  it("skips a reply moved into another reply's history", async () => {
     const old = await queued();
-    await saveRsvp({ ...input, partySize: "2 people" });
+    const { record: kept } = await saveRsvp({ ...input, partySize: "2 people" });
+    await keepReply(kept.id);
     await handleRsvpConfirmation(old.id, { retryCount: 0, retryLimit: 5 });
     expect(send.fn).not.toHaveBeenCalled();
   });

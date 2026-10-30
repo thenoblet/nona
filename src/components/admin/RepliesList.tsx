@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   countByFilter,
   emailStatusLabels,
@@ -11,11 +11,11 @@ import {
   type ReplyFilter,
   type ReplyRow,
 } from "@/lib/admin/replies";
+import { ReplyFlags } from "./ReplyFlags";
 
-function changedLabel(times: number): string {
-  if (times === 1) return "Changed once";
-  if (times === 2) return "Changed twice";
-  return `Changed ${times} times`;
+/** Counts the replies moved into this one's history, which "Keep this one" can grow by several at once. */
+function earlierLabel(count: number): string {
+  return count === 1 ? "Earlier reply (1)" : `Earlier replies (${count})`;
 }
 
 const badgeTone = { sent: "ok", queued: "wait", failed: "bad", none: "none" } as const;
@@ -24,14 +24,29 @@ const badgeTone = { sent: "ok", queued: "wait", failed: "bad", none: "none" } as
 export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; celebrations: CelebrationColumn[] }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ReplyFilter>("all");
+  const [notice, setNotice] = useState("");
+  const toCheckButton = useRef<HTMLButtonElement>(null);
   const counts = useMemo(() => countByFilter(replies), [replies]);
   const shown = useMemo(
     () => replies.filter((row) => matchesFilter(row, filter) && matchesSearch(row, query)),
     [replies, filter, query],
   );
 
+  const showToCheck = () => {
+    setFilter("toCheck");
+    toCheckButton.current?.focus();
+  };
+
   return (
     <>
+      {counts.toCheck > 0 && (
+        <p className="admin-checknote">
+          Includes{" "}
+          <button type="button" className="admin-linkbtn" onClick={showToCheck}>
+            {counts.toCheck} {counts.toCheck === 1 ? "reply" : "replies"} to check
+          </button>
+        </p>
+      )}
       <div className="admin-toolbar">
         <label className="admin-search">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -50,6 +65,7 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
           {replyFilters.map((option) => (
             <button
               key={option.id}
+              ref={option.id === "toCheck" ? toCheckButton : undefined}
               type="button"
               className={option.attention ? "admin-filter admin-filter-attention" : "admin-filter"}
               aria-pressed={filter === option.id}
@@ -62,6 +78,9 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
       </div>
       <p className="admin-sr-only" role="status">
         {shown.length === replies.length ? "" : `Showing ${shown.length} of ${replies.length} replies`}
+      </p>
+      <p className="admin-notice" role="status">
+        {notice}
       </p>
 
       {replies.length === 0 ? (
@@ -94,14 +113,12 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
                     </div>
                     {row.otherNames && <div className="admin-guest-contact">With {row.otherNames}</div>}
                     {row.song && <div className="admin-guest-contact">Song: {row.song}</div>}
-                    {row.duplicates.map((note) => (
-                      <span className="admin-flag" key={note}>
-                        {note}
-                      </span>
-                    ))}
+                    {row.flags.length > 0 && (
+                      <ReplyFlags replyId={row.id} replyName={row.fullName} flags={row.flags} onDone={setNotice} />
+                    )}
                     {row.earlier.length > 0 && (
                       <details className="admin-history">
-                        <summary>{changedLabel(row.earlier.length)}</summary>
+                        <summary>{earlierLabel(row.earlier.length)}</summary>
                         {row.earlier.map((earlier) => (
                           <div className="admin-earlier" key={earlier.id}>
                             <b>{earlier.received}</b> · {earlier.details.join(" · ")}

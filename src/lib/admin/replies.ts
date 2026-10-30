@@ -1,6 +1,6 @@
 import type { EventId } from "@/content/wedding";
-import type { Answer, EmailStatus, RsvpRecord } from "@/lib/data/types";
-import { emailKey, nameKey, phoneKey } from "@/lib/rsvp/normalize";
+import type { Answer, EmailStatus, RsvpFlag, RsvpRecord } from "@/lib/data/types";
+import { phoneKey } from "@/lib/rsvp/normalize";
 
 // Shared by the replies page, its list in the browser and the CSV export.
 
@@ -54,47 +54,25 @@ export function celebrationDay(date: string): string {
   return shortDay.format(new Date(`${date}T00:00:00Z`));
 }
 
-export type DuplicateMatch = { name: string; same: "phone" | "email" | "phone and email" };
-
 /**
- * For each current reply, the other current replies under a different name that share its phone
- * or email (compared as the replacement rules compare them). Replies with no match are left out.
+ * "Replied again: also replied as Ama Owusu on 28 Oct, 18:02 (same phone)" or
+ * "Possible duplicate of Kofi Ansa (same email)". The date is the other reply's, in Accra.
  */
-export function duplicateMatches(replies: RsvpRecord[]): Map<string, DuplicateMatch[]> {
-  const guests = replies.map((reply) => ({
-    reply,
-    name: nameKey(reply.fullName),
-    phone: phoneKey(reply.phone),
-    email: reply.email ? emailKey(reply.email) : null,
-  }));
-  type Guest = (typeof guests)[number];
-  const byPhone = new Map<string, Guest[]>();
-  const byEmail = new Map<string, Guest[]>();
-  for (const guest of guests) {
-    if (guest.phone) byPhone.set(guest.phone, [...(byPhone.get(guest.phone) ?? []), guest]);
-    if (guest.email) byEmail.set(guest.email, [...(byEmail.get(guest.email) ?? []), guest]);
-  }
-
-  const matches = new Map<string, DuplicateMatch[]>();
-  for (const guest of guests) {
-    const samePhone = byPhone.get(guest.phone) ?? [];
-    const sameEmail = guest.email ? (byEmail.get(guest.email) ?? []) : [];
-    const found: DuplicateMatch[] = [];
-    for (const other of new Set([...samePhone, ...sameEmail])) {
-      if (other.name === guest.name) continue;
-      const phone = samePhone.includes(other);
-      const email = sameEmail.includes(other);
-      found.push({ name: other.reply.fullName, same: phone && email ? "phone and email" : phone ? "phone" : "email" });
-    }
-    if (found.length > 0) matches.set(guest.reply.id, found);
-  }
-  return matches;
+export function flagNote(flag: RsvpFlag, otherReceivedAt?: string): string {
+  if (flag.kind === "possible-duplicate") return `Possible duplicate of ${flag.otherName} (same ${flag.via})`;
+  const when = otherReceivedAt ? ` on ${accraDateTime(otherReceivedAt)}` : "";
+  return `Replied again: also replied as ${flag.otherName}${when} (same ${flag.via})`;
 }
 
-/** Possible duplicate of “Kofi Ansa” (same phone) */
-export function duplicateNote(match: DuplicateMatch): string {
-  return `Possible duplicate of “${match.name}” (same ${match.same})`;
+/** The CSV's shorter wording: "Replied again: Ama Owusu (same phone)". */
+function flagWords(flag: RsvpFlag): string {
+  return flag.kind === "replied-again"
+    ? `Replied again: ${flag.otherName} (same ${flag.via})`
+    : `Possible duplicate of ${flag.otherName} (same ${flag.via})`;
 }
+
+/** A flag as the list shows it, with the other reply's id for "Keep both". */
+export type ReplyFlag = { kind: RsvpFlag["kind"]; otherId: string; otherName: string; note: string };
 
 export type EarlierReply = { id: string; received: string; details: string[] };
 
@@ -111,9 +89,9 @@ export type ReplyRow = {
   receivedAt: string;
   received: string;
   emailStatus: EmailStatus;
-  /** "Possible duplicate of …" notes, empty for most replies. */
-  duplicates: string[];
-  /** The replies this one replaced, newest first. */
+  /** The other current replies to check this one against, empty for most replies. */
+  flags: ReplyFlag[];
+  /** The replies moved into this one's history, newest first. */
   earlier: EarlierReply[];
 };
 
@@ -139,7 +117,7 @@ export function toReplyRows(
   celebrations: CelebrationColumn[],
   now: Date,
 ): ReplyRow[] {
-  const matches = duplicateMatches(replies);
+  const receivedAt = new Map(replies.map((reply) => [reply.id, reply.receivedAt]));
   return replies.map((reply) => ({
     id: reply.id,
     fullName: reply.fullName,
@@ -152,7 +130,12 @@ export function toReplyRows(
     receivedAt: reply.receivedAt,
     received: receivedLabel(reply.receivedAt, now),
     emailStatus: reply.emailStatus,
-    duplicates: (matches.get(reply.id) ?? []).map(duplicateNote),
+    flags: reply.flags.map((flag) => ({
+      kind: flag.kind,
+      otherId: flag.otherId,
+      otherName: flag.otherName,
+      note: flagNote(flag, receivedAt.get(flag.otherId)),
+    })),
     earlier: (histories.get(reply.id) ?? []).map((earlier) => ({
       id: earlier.id,
       received: accraDateTime(earlier.receivedAt),
@@ -165,7 +148,7 @@ export const replyFilters = [
   { id: "all", label: "All", attention: false },
   { id: "coming", label: "Coming", attention: false },
   { id: "notComing", label: "Can't come", attention: false },
-  { id: "duplicates", label: "Possible duplicates", attention: true },
+  { id: "toCheck", label: "To check", attention: true },
   { id: "emailFailed", label: "Email failed", attention: true },
 ] as const;
 
@@ -181,8 +164,8 @@ export function matchesFilter(row: ReplyRow, filter: ReplyFilter): boolean {
       return answers.includes("yes");
     case "notComing":
       return answers.includes("no") && !answers.includes("yes");
-    case "duplicates":
-      return row.duplicates.length > 0;
+    case "toCheck":
+      return row.flags.length > 0;
     case "emailFailed":
       return row.emailStatus === "failed";
   }
@@ -227,7 +210,6 @@ function answerWord(answer: Answer | undefined): string {
 
 /** The CSV export: a header row, then one row per current reply. Times are in Accra. */
 export function replyCsvRows(replies: RsvpRecord[], celebrations: CelebrationColumn[]): string[][] {
-  const matches = duplicateMatches(replies);
   const header = [
     "Name",
     "Phone",
@@ -238,7 +220,7 @@ export function replyCsvRows(replies: RsvpRecord[], celebrations: CelebrationCol
     "Song",
     "Received",
     "Email status",
-    "Possible duplicate",
+    "Flags",
   ];
   return [
     header,
@@ -254,7 +236,7 @@ export function replyCsvRows(replies: RsvpRecord[], celebrations: CelebrationCol
         reply.song ?? "",
         `${accraDate(received)} ${timeOfDay.format(received)}`,
         emailStatusLabels[reply.emailStatus],
-        (matches.get(reply.id) ?? []).map((match) => `${match.name} (same ${match.same})`).join("; "),
+        reply.flags.map(flagWords).join("; "),
       ];
     }),
   ];
