@@ -26,7 +26,7 @@ export const wedding = {
   dateShort: "05 · 12 · 2026",
   town: "Tepa",
   region: "Ashanti",
-  rsvpBy: "23 November",
+  rsvpBy: "20 November",
   /** The wedding weekend starts at midnight on 5 Dec (Ghana is GMT all year). */
   weekendStart: "2026-12-05T00:00:00Z",
   /** The thank-you version starts at midnight on 7 Dec. */

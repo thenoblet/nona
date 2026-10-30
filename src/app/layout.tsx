@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { cormorant, jost, pinyon } from "./fonts";
 import { MusicProvider } from "@/components/music/MusicProvider";
+import { wedding } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
 import { siteUrl } from "@/lib/site-url";
 import "./globals.css";
@@ -17,7 +18,7 @@ export const metadata: Metadata = {
   openGraph: {
     ...shareDefaults,
     title: "Noblet & Nancy · 5 December 2026",
-    description: "Together with their families, they invite you to celebrate the beginning of their forever. Tepa, Ashanti. Kindly reply by 23 November.",
+    description: `Together with their families, they invite you to celebrate the beginning of their forever. Tepa, Ashanti. Kindly reply by ${wedding.rsvpBy}.`,
     url: "/",
   },
   twitter: { card: "summary_large_image" },
