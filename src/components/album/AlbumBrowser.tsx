@@ -7,6 +7,7 @@ import type { MediaItem } from "@/lib/data/types";
 import { Halo } from "@/components/ui/Halo";
 import { Segmented } from "@/components/ui/Segmented";
 import { MediaTile } from "./MediaTile";
+import { PersonalLinkStrip } from "./PersonalLinkOffer";
 
 type EventFilter = EventId | "all";
 type Whose = "everyone" | "mine";
@@ -94,6 +95,9 @@ export function AlbumBrowser({
           {mine ? "Download mine" : "Download all"}
         </button>
       </div>
+
+      {/* The personal link's slim row (gate A). TODO(Task 15): pass the viewer's link from the server. */}
+      {mine ? <PersonalLinkStrip /> : null}
 
       {shown.length ? (
         <ul className="m-0 grid list-none grid-cols-3 gap-1.5 p-0 md:grid-cols-4 lg:grid-cols-5">

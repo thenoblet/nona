@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import {
+  ALBUM_PICKER_ACCEPT,
   checkUpload,
   MAX_PART_COUNT,
   normalizeContentType,
@@ -223,6 +224,21 @@ describe("checkUpload", () => {
       error: "too-large",
       message: "This voice message is over 20 MB, the most a wish takes.",
     });
+  });
+});
+
+describe("the album's gallery picker", () => {
+  it("offers exactly the photo and video types the API takes for the album, by type and by name", () => {
+    const offered = ALBUM_PICKER_ACCEPT.split(",");
+    const types = offered.filter((entry) => !entry.startsWith("."));
+    const extensions = offered.filter((entry) => entry.startsWith("."));
+
+    for (const contentType of types) expect(check({ contentType }).ok, contentType).toBe(true);
+    expect(types).toEqual(expect.arrayContaining(["image/jpeg", "image/heic", "video/mp4", "video/quicktime"]));
+    expect(types.every((type) => type.startsWith("image/") || type.startsWith("video/"))).toBe(true);
+    expect(types).not.toContain("image/svg+xml");
+    expect(extensions).toEqual(expect.arrayContaining([".jpg", ".heic", ".mov", ".mp4"]));
+    expect(new Set(offered).size).toBe(offered.length);
   });
 });
 

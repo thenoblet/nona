@@ -552,6 +552,20 @@ describe("completing", () => {
     expect(await eventsFor(session.mediaId)).toHaveLength(1);
   });
 
+  it("answers a complete for an item that failed processing with its reason, never as uploaded", async () => {
+    await signIn();
+    const body = smallFile();
+    const session = await startSession(body);
+    const parts = await sendParts(session, randomBytes(body.size), [1]);
+    expect((await complete(session.mediaId, parts)).status).toBe(200);
+    // The worker couldn't read it; the phone, its first answer lost, completes again.
+    await getDb().update(media).set({ status: "failed", failureReason: "corrupt" }).where(eq(media.id, session.mediaId));
+
+    const again = await complete(session.mediaId, parts);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ mediaId: session.mediaId, status: "failed", reason: "corrupt" });
+  });
+
   it("counts NoSuchUpload after a real completion as success, when the original is there", async () => {
     await signIn();
     const body = photo();

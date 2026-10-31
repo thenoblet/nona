@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findGuestById } from "@/lib/data/guests";
 import { getDb } from "@/lib/db/client";
 import { guests } from "@/lib/db/schema";
+import { siteUrl } from "@/lib/site-url";
 import { resetDb } from "../../../../test/db";
 import { browserCookies } from "../../../../test/next-cookies";
 
@@ -53,6 +54,15 @@ describe("POST /api/guest", () => {
     const { guestId } = await response.json();
     expect((await findGuestById(guestId))?.displayName).toBe("Ama Owusu");
     expect(await readGuestIds()).toEqual([guestId]);
+  });
+
+  it("returns the guest's personal link with it, for the uploader's offer, with no second lookup", async () => {
+    const response = await post({ displayName: "Ama Owusu" });
+    const { guestId, link } = await response.json();
+    const guest = await findGuestById(guestId);
+    expect(link).toBe(`${siteUrl()}/my/${guest?.linkToken}`);
+    // The same link on a later call from that browser.
+    expect((await (await post()).json()).link).toBe(link);
   });
 
   it("returns the same guest on later calls from that browser, making no other", async () => {

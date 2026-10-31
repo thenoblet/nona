@@ -1,92 +1,140 @@
 "use client";
 
-import { createContext, use, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { createContext, use, useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
 import { Halo } from "@/components/ui/Halo";
 import { Icon, type IconName } from "@/components/ui/Icon";
+import { ALBUM_PICKER_ACCEPT } from "@/lib/media/limits";
+import { readGuestName } from "./guestName";
+import { PersonalLinkOffer } from "./PersonalLinkOffer";
+import { BatchCard, CameraCard } from "./UploadCards";
+import type { Engine } from "./uploader/engine";
+import { loadEngineForPick, prefetchEngineWhenIdle } from "./uploader/load";
+import { setPersonalLink, useLinkOfferHidden, usePersonalLink } from "./uploader/personal-link";
+import { createUploadStore, UPLOAD_WORDS, type UploadSnapshot, type UploadSource, type UploadStore } from "./uploader/state";
 
-/** Where a file comes from: the phone's camera (photo or video) or its gallery. */
-type Source = "photo" | "video" | "gallery";
-type CameraSource = Exclude<Source, "gallery">;
+/*
+ * The album's share buttons and the cards under its header. The store (uploader/state.ts) ships
+ * with the page, so a pick shows at once; the uploader itself (uploader/engine.ts, with Uppy) is
+ * its own chunk, fetched while the page is idle and loaded for certain on the first pick.
+ */
 
-/** One shot straight from the camera, shown with its thumbnail. */
-type Shot = { kind: "shot"; source: CameraSource; url: string; isVideo: boolean; sent: boolean };
-/** Several files picked from the gallery. */
-type Batch = { kind: "batch"; current: number; total: number; percent: number };
+type CameraSource = Exclude<UploadSource, "gallery">;
 
-const UploadContext = createContext<{
-  state: Shot | Batch | null;
-  start: (files: FileList, source: Source) => void;
+type UploadControls = {
+  snapshot: UploadSnapshot;
+  start: (files: FileList, source: UploadSource) => void;
+  retry: (itemId: string) => void;
+  cancel: (itemId: string) => void;
   /** Remembers a camera input, so "Take another" can reopen the camera. */
-  register: (source: CameraSource, el: HTMLInputElement | null) => void;
+  register: (source: CameraSource, input: HTMLInputElement | null) => void;
   reopen: (source: CameraSource) => void;
-} | null>(null);
+};
 
-function useUpload() {
-  const ctx = use(UploadContext);
-  if (!ctx) throw new Error("Album upload controls must sit inside <UploadProvider>.");
-  return ctx;
+const UploadContext = createContext<UploadControls | null>(null);
+
+function useUpload(): UploadControls {
+  const controls = use(UploadContext);
+  if (!controls) throw new Error("Album upload controls must sit inside <UploadProvider>.");
+  return controls;
 }
 
-/** Shares the upload state between the share buttons and the status card under the header. */
+/** Shares the uploads between the share buttons and the cards under the header. */
 export function UploadProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<Shot | Batch | null>(null);
+  const [store] = useState<UploadStore>(() => createUploadStore());
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const engine = useRef<Promise<Engine> | null>(null);
   const inputs = useRef<Partial<Record<CameraSource, HTMLInputElement | null>>>({});
-  const preview = useRef<string | null>(null);
 
-  // Let go of the last thumbnail's memory when it's replaced or the page closes.
-  useEffect(() => () => {
-    if (preview.current) URL.revokeObjectURL(preview.current);
-  }, []);
+  // Let go of the thumbnails' memory when the page goes.
+  useEffect(
+    () => () => {
+      for (const item of store.getSnapshot().items) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    },
+    [store],
+  );
 
-  function start(files: FileList, source: Source) {
-    const total = files.length;
-    if (!total) return;
-    // TODO: upload to S3 with presigned multipart URLs (resumable, a few files at a
-    // time), then add each finished file to the album and mark it sent.
-    // For now this only shows the status card for the picked files.
-    if (source !== "gallery" && total === 1) {
-      const file = files[0];
-      if (preview.current) URL.revokeObjectURL(preview.current);
-      preview.current = URL.createObjectURL(file);
-      setState({ kind: "shot", source, url: preview.current, isVideo: file.type.startsWith("video/"), sent: false });
-      return;
-    }
-    setState({ kind: "batch", current: 1, total, percent: Math.max(6, Math.round(50 / total)) });
+  function loadedEngine(): Promise<Engine> {
+    engine.current ??= loadEngineForPick()
+      .then((module) => module.startEngine(store, { guestName: readGuestName, onPersonalLink: setPersonalLink }))
+      .catch((error: unknown) => {
+        engine.current = null;
+        throw error;
+      });
+    return engine.current;
   }
 
-  const register = (source: CameraSource, el: HTMLInputElement | null) => {
-    inputs.current[source] = el;
-  };
-  const reopen = (source: CameraSource) => inputs.current[source]?.click();
+  /** The uploader couldn't load (no connection yet): the waiting files say so, with Try again. */
+  function engineMissing(itemIds: string[]): void {
+    for (const itemId of itemIds) {
+      store.update(itemId, {
+        status: "failed",
+        failure: { reason: UPLOAD_WORDS.connectionDropped, hint: null, canRetry: true },
+      });
+    }
+  }
 
-  return <UploadContext value={{ state, start, register, reopen }}>{children}</UploadContext>;
+  const controls: UploadControls = {
+    snapshot,
+    start(files, source) {
+      const queued = store.add(Array.from(files), source);
+      if (queued.length === 0) return;
+      loadedEngine().then(
+        (loaded) => loaded.pump(),
+        () => engineMissing(queued.map((item) => item.id)),
+      );
+    },
+    retry(itemId) {
+      if (engine.current) {
+        void engine.current.then((loaded) => loaded.retry(itemId));
+        return;
+      }
+      store.update(itemId, { status: "queued", failure: null });
+      loadedEngine().then(
+        (loaded) => loaded.pump(),
+        () => engineMissing([itemId]),
+      );
+    },
+    cancel(itemId) {
+      if (engine.current) void engine.current.then((loaded) => loaded.cancel(itemId));
+      // Nothing has reached the server before the uploader loads.
+      else store.remove(itemId);
+    },
+    register(source, input) {
+      inputs.current[source] = input;
+    },
+    reopen(source) {
+      inputs.current[source]?.click();
+    },
+  };
+
+  return <UploadContext value={controls}>{children}</UploadContext>;
 }
 
-const choices: Record<Source, { icon: IconName; primary: string; secondary: string; accept: string }> = {
+const choices: Record<UploadSource, { icon: IconName; primary: string; secondary: string; accept: string }> = {
   photo: { icon: "camera", primary: "Take a photo", secondary: "Take a photo", accept: "image/*" },
   video: { icon: "video", primary: "Record a video", secondary: "Record video", accept: "video/*" },
-  gallery: { icon: "image", primary: "Choose photos & videos", secondary: "From your phone", accept: "image/*,video/*" },
+  gallery: { icon: "image", primary: "Choose photos & videos", secondary: "From your phone", accept: ALBUM_PICKER_ACCEPT },
 };
 
 /**
- * One way to share: a label around a hidden file input, so the phone's own camera or
- * gallery opens natively. `capture` hands off to the camera app (full quality, no
- * permission prompt, and it works inside WhatsApp's browser).
+ * One way to share: a label around a hidden file input, so the phone's own camera or gallery
+ * opens natively. `capture` hands off to the camera app (full quality, no permission prompt, and
+ * it works inside WhatsApp's browser). The gallery offers only the album's photo and video types.
  */
-function PickButton({ source, primary = false, className = "" }: { source: Source; primary?: boolean; className?: string }) {
+function PickButton({ source, primary = false, className = "" }: { source: UploadSource; primary?: boolean; className?: string }) {
   const { start, register } = useUpload();
-  const c = choices[source];
+  const choice = choices[source];
 
-  function onChange(e: ChangeEvent<HTMLInputElement>) {
-    if (e.target.files) start(e.target.files, source);
-    e.target.value = "";
+  function onChange(event: ChangeEvent<HTMLInputElement>) {
+    if (event.target.files) start(event.target.files, source);
+    event.target.value = "";
   }
 
   const input = (
     <input
-      ref={source === "gallery" ? undefined : (el) => register(source, el)}
+      ref={source === "gallery" ? undefined : (element) => register(source, element)}
       type="file"
-      accept={c.accept}
+      accept={choice.accept}
       capture={source === "gallery" ? undefined : "environment"}
       multiple={source === "gallery"}
       onChange={onChange}
@@ -100,18 +148,20 @@ function PickButton({ source, primary = false, className = "" }: { source: Sourc
       <label
         className={`press flex min-h-16 w-full cursor-pointer items-center gap-3.5 rounded-full bg-ember py-2 pr-6 pl-2 text-[13px] font-medium uppercase tracking-[0.2em] text-cocoa shadow-[var(--shadow-pill-dark)] ${focus} ${className}`}
       >
-        <Halo icon={c.icon} tone="glass" size="lg" />
-        {c.primary}
+        <Halo icon={choice.icon} tone="glass" size="lg" />
+        {choice.primary}
         {input}
       </label>
     );
   }
+  // Below 390 px the words space tighter, and at 340 px and under the icon makes way, so "From
+  // your phone" fits its half of a 320 px phone.
   return (
     <label
-      className={`press flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-full border border-ember/55 px-3 text-[11px] whitespace-nowrap uppercase tracking-[0.12em] text-white transition-colors hover:bg-white/5 ${focus} ${className}`}
+      className={`press flex min-h-12 min-w-0 cursor-pointer items-center justify-center gap-2 rounded-full border border-ember/55 px-3 text-[11px] whitespace-nowrap uppercase tracking-[0.12em] text-white transition-colors hover:bg-white/5 max-[390px]:gap-1.5 max-[390px]:px-2.5 max-[390px]:tracking-[0.06em] ${focus} ${className}`}
     >
-      <Icon name={c.icon} size={15} className="shrink-0 text-ember" />
-      {c.secondary}
+      <Icon name={choice.icon} size={15} className="shrink-0 text-ember max-[341px]:hidden" />
+      {choice.secondary}
       {input}
     </label>
   );
@@ -121,10 +171,12 @@ const touchOnly = "[@media(pointer:fine)]:hidden";
 const fineOnly = "hidden [@media(pointer:fine)]:flex";
 
 /**
- * The share buttons. On the wedding weekend the camera comes first; before and after,
- * the gallery does. Laptops have no camera to hand off to, so they get the gallery only.
+ * The share buttons. On the wedding weekend the camera comes first; before and after, the gallery
+ * does. Laptops have no camera to hand off to, so they get the gallery only. Once they show, the
+ * uploader is fetched while the page is idle.
  */
 export function ShareButtons({ cameraFirst }: { cameraFirst: boolean }) {
+  useEffect(() => prefetchEngineWhenIdle(), []);
   return (
     <div className="flex flex-col gap-2">
       {cameraFirst ? (
@@ -152,7 +204,7 @@ export function ShareButtons({ cameraFirst }: { cameraFirst: boolean }) {
   );
 }
 
-/** Holds the buttons' space while the page works out which comes first. */
+/** Holds the buttons' space while the page works out which come first, and whether sharing is open. */
 export function ShareButtonsSkeleton() {
   return (
     <div aria-hidden className="flex flex-col gap-2">
@@ -165,82 +217,29 @@ export function ShareButtonsSkeleton() {
   );
 }
 
-/** The white card under the header: the last shot with "Take another", or a batch's progress. */
+/** The cards under the header: the camera card or the gallery batch, then the personal-link offer. */
 export function UploadProgress() {
-  const { state, reopen } = useUpload();
-  if (!state) return null;
+  const { snapshot, retry, cancel, reopen } = useUpload();
+  const link = usePersonalLink();
+  const offerHidden = useLinkOfferHidden();
+  const { view, showLinkOffer } = snapshot;
+  const offer = showLinkOffer && link !== null && !offerHidden;
+  if (view.kind === "none" && !offer) return null;
 
-  if (state.kind === "shot") {
-    const { source, url, isVideo, sent } = state;
-    return (
-      <section
-        key={url}
-        aria-label={isVideo ? "Your video" : "Your photo"}
-        className="relative flex animate-rise items-center gap-3.5 rounded-[var(--radius-paper)] bg-white p-3 shadow-[var(--shadow-paper)]"
-      >
-        <span className="relative size-14 shrink-0">
-          {isVideo ? (
-            // #t=0.1 makes iPhones draw the first frame instead of a blank box.
-            <video src={`${url}#t=0.1`} muted playsInline preload="metadata" className="size-14 rounded-[3px] bg-tile object-cover" />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element -- a local preview of the guest's own file
-            <img src={url} alt="" className="size-14 rounded-[3px] bg-tile object-cover" />
-          )}
-          <span
-            className={`absolute -right-1.5 -bottom-1.5 flex size-5.5 items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${
-              sent ? "bg-ember text-white" : "bg-tray text-mocha"
-            }`}
-          >
-            {sent ? (
-              <Icon name="check" size={12} strokeWidth={2.4} className="animate-rise" />
-            ) : (
-              <span className="size-3 animate-spin rounded-full border-2 border-mocha/30 border-t-mocha" />
-            )}
-          </span>
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5" aria-live="polite">
-          <span className="font-serif text-xl leading-tight italic">{sent ? "Added to the album" : "Sending to the album"}</span>
-          <span className="text-xs text-mocha">{sent ? "Everyone can see it now" : "Keep this page open for a moment"}</span>
-        </div>
-        <button
-          type="button"
-          onClick={() => reopen(source)}
-          className="press flex min-h-11 shrink-0 cursor-pointer items-center rounded-full border-0 bg-ember px-4 text-[11px] font-medium uppercase tracking-[0.14em] text-cocoa"
-        >
-          {source === "video" ? "Record another" : "Take another"}
-        </button>
-      </section>
-    );
-  }
-
-  const { current, total, percent } = state;
   return (
-    <section
-      aria-label="Upload progress"
-      className="relative flex animate-rise items-center gap-3.5 rounded-[var(--radius-paper)] bg-white p-4 shadow-[var(--shadow-paper)]"
-    >
-      <Halo icon="upload" size="md" />
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <span className="text-sm font-medium" aria-live="polite">
-          Sending {current} of {total}
-        </span>
-        <div
-          role="progressbar"
-          aria-valuenow={percent}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Upload progress"
-          className="h-1.5 overflow-hidden rounded-[3px] bg-tray"
-        >
-          {/* Keyed so the fill animation replays for each new batch. */}
-          <div
-            key={`${total}-${percent}`}
-            className="h-full animate-fill rounded-[3px] bg-ember transition-[width] duration-500"
-            style={{ width: `${percent}%` }}
-          />
-        </div>
-        <span className="text-xs text-mocha">Keep this page open while they send.</span>
-      </div>
-    </section>
+    <div className="flex flex-col gap-3">
+      {view.kind === "camera" ? (
+        <CameraCard
+          key={view.item.id}
+          item={view.item}
+          onRetry={() => retry(view.item.id)}
+          onCancel={() => cancel(view.item.id)}
+          onTakeAnother={() => reopen(view.item.source === "video" ? "video" : "photo")}
+        />
+      ) : view.kind === "batch" ? (
+        <BatchCard view={view} onRetry={retry} onCancel={cancel} />
+      ) : null}
+      {offer ? <PersonalLinkOffer link={link} /> : null}
+    </div>
   );
 }

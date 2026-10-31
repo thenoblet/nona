@@ -48,7 +48,9 @@ const completeRequest = zod.object({
  * - Parts missing: 409 `incomplete`, and nothing changes.
  * - Parts holding more than declared (the part URLs bind each size, so only if R2 let one through):
  *   the upload is aborted and its row deleted, 409 `size-mismatch`.
- * - Already completed (a repeat, or two at once): the same answer, with one job queued.
+ * - Already completed (a repeat, or two at once): the same answer, with one job queued. One that
+ *   processing has since made ready answers `ready`; one it failed answers `{ status: "failed",
+ *   reason }`, so the phone shows the failure and its reason, never "Added".
  * - Its row gone while R2 joined the parts: 404 `missing`, and nothing is queued. (A cancel never
  *   deletes the row of an upload R2 has joined, so this is a defence.)
  * - The upload gone with no original made (cancelled first, aborted or expired): 409 `upload-missing`.
@@ -67,6 +69,7 @@ export async function POST(request: Request, { params }: UploadContext) {
   try {
     const [upload, uploads] = await Promise.all([ownedUpload(id, guests.guestIds), readUploadsSwitch()]);
     if (!upload) return forbidden();
+    if (upload.status === "failed") return jsonResponse({ mediaId: upload.id, status: "failed", reason: upload.failureReason });
     if (upload.status !== "uploading") return jsonResponse({ mediaId: upload.id, status: upload.status });
     if (!mayContinueUpload(upload, uploads)) return uploadsClosed();
 

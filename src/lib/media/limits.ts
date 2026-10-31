@@ -78,6 +78,18 @@ const VOICE_TYPES: Record<string, readonly string[]> = {
   "audio/3gpp": ["3gp"],
 };
 
+/**
+ * The album gallery picker's `accept` (layer 1 of the type checks: a convenience, not a check):
+ * the album's photo and video types, with their extensions for pickers that go by name. The
+ * camera's pickers keep image/* and video/*, which phones need to open the camera itself, and
+ * which the camera can only answer with a photo or a video.
+ */
+export const ALBUM_PICKER_ACCEPT = [
+  ...Object.keys(PHOTO_TYPES),
+  ...Object.keys(VIDEO_TYPES),
+  ...new Set([...Object.values(PHOTO_TYPES), ...Object.values(VIDEO_TYPES)].flat().map((extension) => `.${extension}`)),
+].join(",");
+
 type Accepted = { kind: MediaFileKind; extensions: readonly string[]; maxBytes: number; tooLarge: string };
 
 function accepting(

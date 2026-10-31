@@ -63,6 +63,7 @@ const uploadColumns = {
   multipartUploadId: media.multipartUploadId,
   startedAt: media.startedAt,
   status: media.status,
+  failureReason: media.failureReason,
   hiddenAt: media.hiddenAt,
   deletedAt: media.deletedAt,
   removedByUploader: media.removedByUploader,
@@ -82,6 +83,8 @@ export type UploadRow = {
   multipartUploadId: string | null;
   startedAt: Date;
   status: MediaStatus;
+  /** Why processing failed (`corrupt`, `unsupported-type`…), shown to its uploader; null otherwise. */
+  failureReason: string | null;
   hiddenAt: Date | null;
   deletedAt: Date | null;
   removedByUploader: boolean;

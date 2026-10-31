@@ -123,6 +123,11 @@ npm test             # Vitest, against the nona_test database and MinIO
 npm run test:e2e     # Playwright, against a production build on port 3100
 ```
 
+The e2e run starts the media worker beside the site: its production image (`Dockerfile.worker`'s
+`run` target), built from your checkout as it starts (`nona-worker-e2e`; Docker's cache makes later
+runs quick) and run on the host's network as `nona-e2e-worker`, removed when the run ends (its log
+is kept in `test-results/worker.log`). CI builds the image first and names it in `E2E_WORKER_IMAGE`.
+
 The media worker's tests (`npm run test:worker`, `src/worker/`) run ffmpeg and libheif's tools, so
 they run in the worker image's test target, against the same database and MinIO:
 

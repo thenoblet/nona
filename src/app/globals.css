@@ -265,6 +265,74 @@
 
   .no-scrollbar { scrollbar-width: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  /*
+   * The upload cards (gate A). A block that grows and shrinks its height smoothly; a word that
+   * changes in place (the old one lifts away as the new one rises); and the status badge on a
+   * thumbnail, whose spinner turns into a drawn check with one ember pulse once the server has
+   * the file.
+   */
+  .fold {
+    display: grid;
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transition: grid-template-rows 420ms cubic-bezier(0.16, 1, 0.3, 1), opacity 260ms ease;
+  }
+  .fold > * { min-height: 0; overflow: hidden; }
+  .fold.is-folded { grid-template-rows: 0fr; opacity: 0; }
+
+  .morph { position: relative; display: inline-block; white-space: nowrap; }
+  .morph-in { display: inline-block; animation: morph-in 420ms cubic-bezier(0.16, 1, 0.3, 1) 60ms both; }
+  .morph-out { position: absolute; left: 0; top: 0; animation: morph-out 200ms cubic-bezier(0.4, 0, 1, 1) both; }
+
+  .upload-badge {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 9999px;
+    background: var(--color-tray);
+    color: var(--color-mocha);
+    box-shadow: 0 0 0 2px #fff;
+    transition: background-color 300ms ease, color 300ms ease, opacity 220ms ease, scale 380ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .upload-badge > * { grid-area: 1 / 1; transition: opacity 220ms ease, transform 380ms cubic-bezier(0.16, 1, 0.3, 1); }
+  .upload-badge::after { content: ""; position: absolute; inset: 0; border-radius: 9999px; }
+  .upload-spinner {
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    border: 2px solid rgb(106 82 76 / 0.3);
+    border-top-color: var(--color-mocha);
+    animation: upload-spin 900ms linear infinite;
+  }
+  .upload-tick {
+    stroke-dasharray: 22;
+    stroke-dashoffset: 22;
+    opacity: 0;
+    transition: stroke-dashoffset 420ms cubic-bezier(0.16, 1, 0.3, 1) 120ms, opacity 150ms ease;
+  }
+  [data-status="added"] > .upload-badge { background: var(--color-ember); color: #fff; }
+  [data-status="added"] > .upload-badge .upload-spinner { opacity: 0; transform: scale(0.3); }
+  [data-status="added"] > .upload-badge .upload-tick { opacity: 1; stroke-dashoffset: 0; }
+  [data-status="added"] > .upload-badge::after { animation: upload-pulse 1600ms ease-out 1; }
+  [data-status="failed"] > .upload-badge { background: var(--color-halo); color: var(--color-ember-ink); }
+  [data-status="retrying"] > .upload-badge .upload-retry { animation: upload-spin 2400ms linear infinite; }
+
+  @keyframes morph-in {
+    from { opacity: 0; transform: translateY(0.5em); }
+  }
+  @keyframes morph-out {
+    to { opacity: 0; transform: translateY(-0.5em); }
+  }
+  @keyframes upload-spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes upload-pulse {
+    0% { box-shadow: 0 0 0 0 rgb(232 127 57 / 0.45); }
+    100% { box-shadow: 0 0 0 18px rgb(232 127 57 / 0); }
+  }
 }
 
 /*

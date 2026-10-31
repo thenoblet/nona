@@ -1,5 +1,5 @@
 import * as zod from "zod";
-import { ensureOwnGuest, ownGuestId } from "@/lib/guests/cookie";
+import { ensureOwnGuest, ownGuestId, personalLinkOf } from "@/lib/guests/cookie";
 import { rateLimitedResponse, takeToken } from "@/lib/guests/rate-limit";
 import { readBodyText } from "@/lib/http/read-body";
 import { describeError } from "@/lib/log-error";
@@ -37,9 +37,11 @@ async function readJson(request: Request): Promise<{ ok: true; value: unknown } 
 }
 
 /**
- * Makes or finds this browser's own guest and returns `{ guestId }`. Body: `{ displayName? }`.
- * The uploader awaits it once before any upload starts, so a first batch can't race to make
- * several guests. Limited per browser once it has a guest (20, then 1 a second); never by IP.
+ * Makes or finds this browser's own guest and returns `{ guestId, link }`, `link` being their
+ * personal link (/my/<token>), which the uploader offers under the first upload. Body:
+ * `{ displayName? }`. The uploader awaits it once before any upload starts, so a first batch can't
+ * race to make several guests. Limited per browser once it has a guest (20, then 1 a second);
+ * never by IP.
  */
 export async function POST(request: Request) {
   if (!isJson(request)) return errorResponse(415, "unsupported-media-type", "Send the request as JSON.");
@@ -61,7 +63,7 @@ export async function POST(request: Request) {
 
   try {
     const guest = await ensureOwnGuest(parsed.data.displayName);
-    return Response.json({ guestId: guest.id }, { headers: { "Cache-Control": NO_STORE } });
+    return Response.json({ guestId: guest.id, link: personalLinkOf(guest) }, { headers: { "Cache-Control": NO_STORE } });
   } catch (error) {
     // The error's name and code only: a query error carries its parameters, here the guest's name.
     console.error("[guest] could not make or find the browser's guest:", describeError(error));
