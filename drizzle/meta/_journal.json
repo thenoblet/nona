@@ -36,6 +36,13 @@
       "when": 1793391087575,
       "tag": "0004_sweet_lyja",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793433909574,
+      "tag": "0005_open_captain_america",
+      "breakpoints": true
     }
   ]
 }

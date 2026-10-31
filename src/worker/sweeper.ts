@@ -14,9 +14,11 @@ import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch
  * The sweeper makes sure no item stays "processing" for good. At start-up and every 10 minutes it:
  * 1. queues the processing of items `uploaded` more than 5 minutes ago that have no job (the app
  *    couldn't queue it: the queue was starting, or down), unless hidden or deleted;
- * 2. queues the conversion of `ready` videos whose conversion is `queued` with no job, or, for one
- *    a phone asked for or the couple made a highlight, no on-demand job (its backlog job may wait
- *    behind the switch for days);
+ * 2. queues the conversion of `ready`, visible videos whose conversion is `queued` with no job, or,
+ *    for one a phone asked for or the couple made a highlight, no on-demand job (its backlog job may
+ *    wait behind the switch for days); and puts back to `queued`, and queues again, one left
+ *    `converting` that no job will carry on (Ruling AQ): its job is gone, or, for an on-demand one,
+ *    only waits in the backlog;
  * 3. (Ruling W) finishes uploads whose phone dropped during or just before its final complete:
  *    `uploading` for over 30 minutes, with every part in R2 adding up to the declared size, or the
  *    original already joined. Partial uploads are left for their guest to carry on; R2's 7-day
@@ -55,8 +57,9 @@ const CONVERSION_QUEUES: MediaQueueName[] = [MEDIA_QUEUES.convert, MEDIA_QUEUES.
 export type SweepResult = {
   /** Step 1: items queued for processing. */
   requeuedUploads: number;
-  /** Step 2: conversions queued. */
+  /** Step 2: conversions queued, and of them, those recovered from a `converting` no job will carry on. */
   requeuedConversions: number;
+  recoveredConversions: number;
   /** Step 3: unfinished uploads looked at in R2, and those finished. */
   checkedUploads: number;
   rescuedUploads: number;
@@ -70,6 +73,9 @@ export type SweeperOptions = {
   signal?: AbortSignal;
   rescueBatchSize?: number;
 };
+
+/** A conversion step 2 looks at: on demand when a phone asked for it or it is a highlight. */
+type ConversionCandidate = { id: string; onDemand: boolean };
 
 /** What the sweeper's reads run on: the pool, or the read-only transaction steps 1 and 2 read in. */
 type Reader = Pick<PostgresJsDatabase<typeof schema>, "select" | "execute">;
@@ -101,9 +107,10 @@ export function uploadedItemsQuery(limit: number, reader: Reader = getDb()) {
 }
 
 /**
- * Up to `limit` ready videos whose conversion is `queued`, last queued (on becoming ready, or when
- * a phone asked) more than 5 minutes ago, oldest first, on the partial index of queued
- * conversions. Exported for its plan's test.
+ * Up to `limit` ready, visible videos whose conversion is `queued`, last queued (on becoming ready,
+ * or when a phone asked) more than 5 minutes ago, oldest first, on the partial index of queued
+ * conversions. Not a hidden or deleted one: its job would do nothing, and every sweep would send it
+ * again; an unhide brings it back. Exported for its plan's test.
  */
 export function queuedConversionsQuery(limit: number, reader: Reader = getDb()) {
   return reader
@@ -114,7 +121,31 @@ export function queuedConversionsQuery(limit: number, reader: Reader = getDb()) 
         sql`${media.status} = 'ready'`,
         sql`${media.conversion} = 'queued'`,
         eq(media.kind, "video"),
+        isNull(media.hiddenAt),
+        isNull(media.deletedAt),
         sql`greatest(${media.listedAt}, ${media.conversionRequestedAt}) < ${minutesAgo(STUCK_AFTER_MINUTES)}`,
+      ),
+    )
+    .orderBy(asc(media.listedAt))
+    .limit(limit);
+}
+
+/**
+ * Up to `limit` ready, visible videos whose conversion is `converting`, oldest first, on the
+ * partial index of conversions under way: the ones whose job the sweeper checks is still there
+ * (Ruling AQ). Exported for its plan's test.
+ */
+export function convertingConversionsQuery(limit: number, reader: Reader = getDb()) {
+  return reader
+    .select({ id: media.id, onDemand: sql<boolean>`${media.highlight} or ${media.conversionRequestedAt} is not null` })
+    .from(media)
+    .where(
+      and(
+        sql`${media.status} = 'ready'`,
+        sql`${media.conversion} = 'converting'`,
+        eq(media.kind, "video"),
+        isNull(media.hiddenAt),
+        isNull(media.deletedAt),
       ),
     )
     .orderBy(asc(media.listedAt))
@@ -127,7 +158,8 @@ export function queuedConversionsQuery(limit: number, reader: Reader = getDb()) 
  * 12's own table (the parent of every queue's partition), whose index of live jobs covers name and
  * state; package.json pins pg-boss exactly, so an upgrade that changes it is a deliberate one, and
  * it fails these tests. With `minConvertPriority`, a media.convert job counts only at that priority
- * or above (an on-demand conversion's backlog job doesn't); other queues' jobs (media.dead's) count.
+ * or above, or while it runs (an on-demand conversion's backlog job waiting doesn't); other queues'
+ * jobs (media.dead's) count.
  */
 export function liveJobsQuery(
   bossSchema: string,
@@ -142,7 +174,7 @@ export function liveJobsQuery(
   const priority =
     minConvertPriority === undefined
       ? sql``
-      : sql` and (job.name <> ${MEDIA_QUEUES.convert} or job.priority >= ${minConvertPriority})`;
+      : sql` and (job.name <> ${MEDIA_QUEUES.convert} or job.priority >= ${minConvertPriority} or job.state = 'active')`;
   return sql`select distinct job.data ->> 'mediaId' as "mediaId" from ${sql.identifier(bossSchema)}.job as job
     where job.name in (${names})
       and job.state in ('created', 'retry', 'active')
@@ -222,23 +254,52 @@ export function createSweeper(options: SweeperOptions) {
    * switch is off, so it doesn't count, and an on-demand one is sent beside it (the second of the
    * two to run does nothing).
    */
-  async function requeueConversions(): Promise<number> {
-    const stuck = await stuckAmong(
+  async function requeueConversions(): Promise<{ requeued: number; recovered: number }> {
+    const onDemandPriority = (item: ConversionCandidate) => (item.onDemand ? CONVERT_PRIORITY.onDemand : undefined);
+    const stuck = await stuckAmong<ConversionCandidate>(
       bossSchema,
       CONVERSION_QUEUES,
       (reader) => queuedConversionsQuery(CANDIDATE_BATCH_SIZE, reader),
-      (item) => (item.onDemand ? CONVERT_PRIORITY.onDemand : undefined),
+      onDemandPriority,
     );
-    if (stuck.length > 0) {
+    const stranded = await stuckAmong<ConversionCandidate>(
+      bossSchema,
+      CONVERSION_QUEUES,
+      (reader) => convertingConversionsQuery(CANDIDATE_BATCH_SIZE, reader),
+      onDemandPriority,
+    );
+    const recovered = await recoverConversions(stranded);
+    const toSend = [...stuck, ...recovered];
+    if (toSend.length > 0) {
       await boss.insert(
         MEDIA_QUEUES.convert,
-        stuck.map((item) => ({
+        toSend.map((item) => ({
           data: { mediaId: item.id },
           priority: item.onDemand ? CONVERT_PRIORITY.onDemand : CONVERT_PRIORITY.backlog,
         })),
       );
     }
-    return stuck.length;
+    return { requeued: toSend.length, recovered: recovered.length };
+  }
+
+  /**
+   * Puts conversions left `converting` that no job will carry on back to `queued`, their lease
+   * given up (Ruling AQ), and returns those it did. One statement, which leaves alone any whose
+   * job has started running since the snapshot read them: that job is carrying it on.
+   */
+  async function recoverConversions(stranded: ConversionCandidate[]): Promise<ConversionCandidate[]> {
+    if (stranded.length === 0) return [];
+    const rows = await getDb().execute<{ id: string }>(sql`update ${media} set conversion = 'queued', conversion_job_id = null
+      where ${inArray(sql`${media}.id`, stranded.map((item) => item.id))}
+        and ${media}.conversion = 'converting'
+        and not exists (select 1 from ${sql.identifier(bossSchema)}.job as job
+          where job.name = ${MEDIA_QUEUES.convert} and job.state = 'active' and job.data ->> 'mediaId' = ${media}.id::text)
+      returning ${media}.id as "id"`);
+    const recovered = new Set(rows.map((row) => row.id));
+    for (const item of stranded) {
+      if (recovered.has(item.id)) console.log(`[worker] sweeper recovered conversion ${item.id}: converting, with no job to carry it on`);
+    }
+    return stranded.filter((item) => recovered.has(item.id));
   }
 
   /**
@@ -284,14 +345,22 @@ export function createSweeper(options: SweeperOptions) {
 
   /** One sweep: the three steps, each on its own, so one failing doesn't stop the others. */
   async function sweep(): Promise<SweepResult> {
-    const result: SweepResult = { requeuedUploads: 0, requeuedConversions: 0, checkedUploads: 0, rescuedUploads: 0 };
+    const result: SweepResult = {
+      requeuedUploads: 0,
+      requeuedConversions: 0,
+      recoveredConversions: 0,
+      checkedUploads: 0,
+      rescuedUploads: 0,
+    };
     try {
       result.requeuedUploads = await requeueUploads();
     } catch (error) {
       console.error("[worker] sweeper could not queue stuck uploads:", describeError(error));
     }
     try {
-      result.requeuedConversions = await requeueConversions();
+      const conversions = await requeueConversions();
+      result.requeuedConversions = conversions.requeued;
+      result.recoveredConversions = conversions.recovered;
     } catch (error) {
       console.error("[worker] sweeper could not queue stuck conversions:", describeError(error));
     }

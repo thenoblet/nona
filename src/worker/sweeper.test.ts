@@ -16,7 +16,14 @@ import { unfinishedUploadsQuery } from "@/lib/media/rows";
 import { abortMultipart, completeMultipart, startMultipart } from "@/lib/storage/objects";
 import { resetDb } from "../../test/db";
 import { dropBossSchema, startTestBoss } from "../../test/uploads";
-import { createSweeper, liveJobsQuery, queuedConversionsQuery, uploadedItemsQuery, type SweepResult } from "./sweeper";
+import {
+  convertingConversionsQuery,
+  createSweeper,
+  liveJobsQuery,
+  queuedConversionsQuery,
+  uploadedItemsQuery,
+  type SweepResult,
+} from "./sweeper";
 
 // These run against the local MinIO and test database: docker compose up -d db minio && npm run storage:init.
 
@@ -329,6 +336,91 @@ describe("the sweeper's second step: conversions queued with no job", () => {
     expect(await liveJobs(MEDIA_QUEUES.convert, askedWithJob)).toHaveLength(1);
     expect(await liveJobs(MEDIA_QUEUES.convert, backlog)).toHaveLength(1);
   });
+
+  it("leaves a hidden or deleted video's conversion alone, however many sweeps: its job would do nothing", async () => {
+    const hidden = await insertItem({ kind: "video", status: "ready", conversion: "queued", listedAt: minutesAgo(10), hiddenAt: minutesAgo(8), hiddenBy: "admin" });
+    const removed = await insertItem({
+      kind: "video",
+      status: "ready",
+      conversion: "queued",
+      listedAt: minutesAgo(10),
+      hiddenAt: minutesAgo(8),
+      hiddenBy: "guest",
+      removedByUploader: true,
+    });
+    const deleted = await insertItem({ kind: "video", status: "ready", conversion: "queued", listedAt: minutesAgo(10), deletedAt: minutesAgo(8) });
+
+    for (let sweep = 0; sweep < 2; sweep += 1) {
+      const result = await sweeper().sweep();
+      expect(result.requeuedConversions).toBe(0);
+    }
+    for (const id of [hidden, removed, deleted]) expect(await liveJobs(MEDIA_QUEUES.convert, id)).toEqual([]);
+  });
+});
+
+describe("the sweeper's second step: conversions left converting with no job to carry them on (Ruling AQ)", () => {
+  async function conversionOf(id: string) {
+    const [row] = await getDb()
+      .select({ conversion: media.conversion, lease: media.conversionJobId })
+      .from(media)
+      .where(eq(media.id, id));
+    return row;
+  }
+  const converting = (values: Partial<typeof media.$inferInsert> = {}) =>
+    insertItem({ kind: "video", status: "ready", conversion: "converting", conversionJobId: randomUUID(), listedAt: minutesAgo(60), ...values });
+
+  it("puts one whose job is gone back to queued, its lease given up, and queues it: on demand if a guest asked, else in the backlog", async () => {
+    const backlog = await converting();
+    const asked = await converting({ conversionRequestedAt: minutesAgo(30) });
+    const highlight = await converting({ highlight: true });
+
+    const result = await sweeper().sweep();
+
+    expect(result).toMatchObject({ requeuedConversions: 3, recoveredConversions: 3 });
+    for (const id of [backlog, asked, highlight]) expect(await conversionOf(id)).toEqual({ conversion: "queued", lease: null });
+    expect((await liveJobs(MEDIA_QUEUES.convert, backlog)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.backlog]);
+    expect((await liveJobs(MEDIA_QUEUES.convert, asked)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.onDemand]);
+    expect((await liveJobs(MEDIA_QUEUES.convert, highlight)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.onDemand]);
+    // The next sweep finds their jobs.
+    expect((await sweeper().sweep()).requeuedConversions).toBe(0);
+  });
+
+  it("recovers an asked-for one whose only job waits in the backlog (perhaps behind the switch), and sends it on demand", async () => {
+    const lease = randomUUID();
+    const asked = await converting({ conversionJobId: lease, conversionRequestedAt: minutesAgo(30) });
+    // Its own job, waiting to retry at the backlog's priority: once it runs it finds another lease, and does nothing.
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: asked }, { id: lease, priority: CONVERT_PRIORITY.backlog });
+
+    const result = await sweeper().sweep();
+
+    expect(result.recoveredConversions).toBe(1);
+    expect(await conversionOf(asked)).toEqual({ conversion: "queued", lease: null });
+    expect((await liveJobs(MEDIA_QUEUES.convert, asked)).map((job) => job.priority).sort((first, second) => first - second)).toEqual([
+      CONVERT_PRIORITY.backlog,
+      CONVERT_PRIORITY.onDemand,
+    ]);
+  });
+
+  it("leaves one that a job will carry on: waiting to retry under its lease, running, on demand, or in the dead letter queue", async () => {
+    // An asked-for one whose backlog job is running now: it is carrying the conversion on.
+    const running = await converting({ conversionRequestedAt: minutesAgo(30) });
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: running }, { priority: CONVERT_PRIORITY.backlog });
+    const [fetched] = await boss.fetch(MEDIA_QUEUES.convert);
+    expect(fetched.data).toEqual({ mediaId: running });
+    const waiting = await converting();
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: waiting }, { priority: CONVERT_PRIORITY.backlog });
+    const onDemand = await converting({ conversionRequestedAt: minutesAgo(30) });
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: onDemand }, { priority: CONVERT_PRIORITY.onDemand });
+    const deadLettered = await converting();
+    await boss.send(MEDIA_QUEUES.dead, { mediaId: deadLettered });
+    const hidden = await converting({ hiddenAt: minutesAgo(8), hiddenBy: "admin" });
+
+    const before = await Promise.all([waiting, running, onDemand, deadLettered, hidden].map(conversionOf));
+    const result = await sweeper().sweep();
+
+    expect(result.recoveredConversions).toBe(0);
+    expect(await Promise.all([waiting, running, onDemand, deadLettered, hidden].map(conversionOf))).toEqual(before);
+  });
 });
 
 describe("the sweeper's third step (Ruling W): uploads whose phone dropped at the very end", () => {
@@ -499,17 +591,46 @@ describe("the sweeper's queries", () => {
   const client = postgres({ ...dbConfig(), max: 1, onnotice: () => {} });
   afterAll(() => client.end());
 
+  /** Rolls a plan's transaction back once its plan is read. */
+  class PlanRead extends Error {
+    constructor(readonly plan: string) {
+      super("plan read");
+    }
+  }
+
   /**
    * The plan Postgres would use for the query once it is prepared and run with any values (a
-   * generic plan). The test table is nearly empty, so sequential scans are put out of reach, as
-   * they would be with a full one.
+   * generic plan), on a media table like the wedding's: 3,000 items, nearly all ready and listed, a
+   * tenth of them videos with a few conversions queued or under way, a few uploads in transit, a
+   * few hidden. They are written and ANALYZEd in a transaction that is rolled back, so neither the
+   * rows nor their statistics outlive it, and no statistics another test left (an autoanalyze of
+   * a table full of one test's uploads) can sway the plan. Sequential scans are put out of reach,
+   * as they would be on a full table.
    */
   async function genericPlan(query: { sql: string }): Promise<string> {
-    const rows = await client.begin(async (transaction) => {
-      await transaction`set local enable_seqscan = off`;
-      return transaction.unsafe(`explain (generic_plan) ${query.sql}`).simple();
-    });
-    return rows.map((row) => String(row["QUERY PLAN"])).join("\n");
+    try {
+      await client.begin(async (transaction) => {
+        await transaction`insert into media (purpose, kind, celebration, original_key, original_filename, size_bytes,
+            content_type, status, started_at, uploaded_at, listed_at, conversion, hidden_at, multipart_upload_id)
+          select 'album', case when n % 10 = 0 then 'video' else 'photo' end, 'reception',
+            'originals/' || gen_random_uuid() || '.jpg', 'IMG.JPG', 4000, 'image/jpeg',
+            case when n % 100 = 1 then 'uploaded' when n % 100 = 2 then 'uploading' else 'ready' end,
+            now() - n * interval '1 minute', now() - n * interval '1 minute',
+            case when n % 100 in (1, 2) then null else now() - n * interval '1 minute' end,
+            case when n % 10 <> 0 then 'none' when n % 300 = 0 then 'queued' when n % 700 = 0 then 'converting' else 'done' end,
+            case when n % 250 = 0 then now() end,
+            case when n % 100 = 2 then 'upload-' || n end
+          from generate_series(1, 3000) as n`;
+        await transaction`analyze media`;
+        await transaction`set local enable_seqscan = off`;
+        const rows = await transaction.unsafe(`explain (generic_plan) ${query.sql}`).simple();
+        throw new PlanRead(rows.map((row) => String(row["QUERY PLAN"])).join("\n"));
+      });
+    } catch (error) {
+      if (error instanceof PlanRead) return error.plan;
+      throw error;
+    }
+    throw new Error("The plan's transaction ended without reading it");
   }
 
   it("take items stuck in uploaded oldest first, in their partial index's order, with no sort", async () => {
@@ -522,6 +643,13 @@ describe("the sweeper's queries", () => {
   it("take conversions queued with no job oldest first, in their partial index's order, with no sort", async () => {
     const plan = await genericPlan(queuedConversionsQuery(1_000).toSQL());
     expect(plan).toContain("media_conversion_queued_idx");
+    expect(plan).not.toContain("Seq Scan");
+    expect(plan).not.toContain("Sort");
+  });
+
+  it("take conversions under way oldest first, in their partial index's order, with no sort", async () => {
+    const plan = await genericPlan(convertingConversionsQuery(1_000).toSQL());
+    expect(plan).toContain("media_conversion_converting_idx");
     expect(plan).not.toContain("Seq Scan");
     expect(plan).not.toContain("Sort");
   });

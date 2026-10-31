@@ -214,7 +214,12 @@ that fails for good marks its item `failed`, with the reason its uploader sees.
   while the admin's backlog switch is on: the worker reads the switch every 30 s and again before
   each backlog job, and a job fetched as the switch went off goes back to wait, never failed. Each
   conversion downloads its original to scratch (twice its size must be free), runs `nice -n 19`
-  under its own memory cap, and is checked before it is published: exiting 0 isn't enough. Measured
+  under its own memory cap and a CPU-time cap (10 CPU-seconds a second of video and ten minutes:
+  a file that makes ffmpeg work harder than any phone's is blamed on its third attempt), and is
+  checked before it is published: exiting 0 isn't enough. Only the job that claimed a conversion
+  (its lease) carries it on, through its retries; the sweeper puts one whose job is gone back in
+  the queue. A video longer than `WORKER_CONVERT_MAX_SECONDS` isn't converted: its conversion is
+  `failed` with the reason `too-long`, and it plays from its original where a phone can. Measured
   under `--cpus=3` at the defaults, one conversion alone takes 1 to 3 s a second of video for 4K
   HEVC HDR (8K: 1.4 to 3.4 s) and 0.4 to 1 s for 1080p60 H.264, on a dev host whose speed varied
   twofold; each job logs its own speed.
@@ -263,6 +268,7 @@ Its environment:
 | `WORKER_CONVERT_BACKLOG_CONCURRENCY` | 1 | Backlog conversions at once, while the admin's backlog switch is on. |
 | `WORKER_X264_THREADS` | 2 | x264's threads in each conversion (x264 adds a lookahead thread of its own). |
 | `WORKER_X264_PRESET` | `veryfast` | x264's preset in each conversion, at CRF 23: one of `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. A slower one compresses better and takes longer: measure a 4K clip before changing it. |
+| `WORKER_CONVERT_MAX_SECONDS` | 1800 | The longest video converted, in seconds, from 60 to 86400. A longer one's conversion is `failed` at once with the reason `too-long` (no job, no retries); the video stays in the album with its poster, plays from its original where a phone can, and its original stays downloadable. |
 | `WORKER_FFMPEG_DECODER_THREADS` | 2 | ffmpeg's decoder threads in each conversion (its `-threads` before the input), which would otherwise be the host's CPUs. Two decode 4K HEVC in about real time. |
 | `WORKER_SHARP_THREADS` | 1 | sharp's threads in each photo. |
 | `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job. Measured under `--cpus=3`, 2 made a 4K HDR conversion slower (18.4 s against 12 to 17 s, and 43 s against 31 s, for 10 s of video), not faster. |

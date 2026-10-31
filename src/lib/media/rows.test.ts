@@ -13,6 +13,7 @@ import { originalKey } from "@/lib/storage/keys";
 import { resetDb } from "../../../test/db";
 import {
   claimConversion,
+  conversionIsOnDemand,
   findPlayableVideo,
   isVisible,
   markConversionDone,
@@ -102,7 +103,12 @@ describe("the media worker's marks", () => {
 
   async function readRow(id: string) {
     const [row] = await getDb()
-      .select({ status: media.status, failureReason: media.failureReason, conversion: media.conversion })
+      .select({
+        status: media.status,
+        failureReason: media.failureReason,
+        conversion: media.conversion,
+        conversionFailureReason: media.conversionFailureReason,
+      })
       .from(media)
       .where(eq(media.id, id));
     return row;
@@ -120,13 +126,13 @@ describe("the media worker's marks", () => {
     expect(await readRow(id)).toMatchObject({ status: "ready", failureReason: null });
   });
 
-  it("marks a queued conversion failed, and never a done one", async () => {
+  it("marks a queued conversion failed with its reason, and never a done one", async () => {
     const queued = await addPhoto({ kind: "video", conversion: "queued" });
     const done = await addPhoto({ kind: "video", conversion: "done" });
-    expect(await markConversionFailed(queued)).toBe(true);
-    expect(await markConversionFailed(done)).toBe(false);
-    expect(await readRow(queued)).toMatchObject({ status: "ready", conversion: "failed" });
-    expect(await readRow(done)).toMatchObject({ status: "ready", conversion: "done" });
+    expect(await markConversionFailed(queued, "corrupt")).toBe(true);
+    expect(await markConversionFailed(done, "corrupt")).toBe(false);
+    expect(await readRow(queued)).toMatchObject({ status: "ready", conversion: "failed", conversionFailureReason: "corrupt" });
+    expect(await readRow(done)).toMatchObject({ status: "ready", conversion: "done", conversionFailureReason: null });
   });
 });
 
@@ -207,6 +213,7 @@ describe("markVideoReady", () => {
     videoCodec: "hevc",
     browserPlayable: false,
     needsConversion: true,
+    tooLongToConvert: false,
   };
 
   function addVideo(changes: Partial<typeof media.$inferInsert> = {}) {
@@ -235,8 +242,9 @@ describe("markVideoReady", () => {
       },
       conversionQueued: true,
     });
-    const { needsConversion, ...columns } = processed;
+    const { needsConversion, tooLongToConvert, ...columns } = processed;
     expect(needsConversion).toBe(true);
+    expect(tooLongToConvert).toBe(false);
     const row = await readRow(id);
     expect(row).toMatchObject({ ...columns, status: "ready", failureReason: null, conversion: "queued" });
     expect(row.listedAt?.getTime()).toBeGreaterThanOrEqual(before - 5_000);
@@ -249,6 +257,21 @@ describe("markVideoReady", () => {
 
     expect(marked?.conversionQueued).toBe(false);
     expect(await readRow(id)).toMatchObject({ status: "ready", browserPlayable: true, conversion: "none" });
+  });
+
+  it("fails, too-long, the conversion of a video longer than the worker converts, and queues none (Ruling AR)", async () => {
+    const id = await addVideo();
+    const playable = await addVideo();
+    const done = await addVideo({ conversion: "done" });
+
+    expect((await markVideoReady(id, { ...processed, tooLongToConvert: true }))?.conversionQueued).toBe(false);
+    expect((await markVideoReady(playable, { ...processed, browserPlayable: true, tooLongToConvert: true }))?.conversionQueued).toBe(false);
+    await markVideoReady(done, { ...processed, tooLongToConvert: true });
+
+    for (const video of [id, playable]) {
+      expect(await readRow(video)).toMatchObject({ status: "ready", conversion: "failed", conversionFailureReason: "too-long" });
+    }
+    expect(await readRow(done)).toMatchObject({ conversion: "done", conversionFailureReason: null });
   });
 
   it("queues no conversion the row already has, queued or done: only the change from none sends a job", async () => {
@@ -287,10 +310,15 @@ describe("markVideoReady", () => {
   });
 });
 
-describe("a video's conversion (Task 11, Ruling AG)", () => {
+describe("a video's conversion (Task 11, Rulings AG and AQ)", () => {
   const conversionOf = async (id: string) => {
     const [row] = await getDb()
-      .select({ conversion: media.conversion, derived: media.derived, requestedAt: media.conversionRequestedAt })
+      .select({
+        conversion: media.conversion,
+        derived: media.derived,
+        requestedAt: media.conversionRequestedAt,
+        lease: media.conversionJobId,
+      })
       .from(media)
       .where(eq(media.id, id));
     return row;
@@ -298,23 +326,30 @@ describe("a video's conversion (Task 11, Ruling AG)", () => {
   const addVideo = (changes: Partial<typeof media.$inferInsert> = {}) =>
     addPhoto({ kind: "video", contentType: "video/quicktime", conversion: "queued", ...changes });
 
-  it("is claimed by one job: converting, from queued; a second job's first attempt finds nothing to do, its own retry carries on", async () => {
-    const id = await addVideo({ capturedAt: new Date("2026-12-05T23:00:00Z") });
+  it("is claimed under one job's lease: converting, from queued; only that lease carries it on, through its retries", async () => {
+    const id = await addVideo({ capturedAt: new Date("2026-12-05T23:00:00Z"), durationSeconds: 12.5 });
+    const lease = randomUUID();
 
-    expect(await claimConversion(id, { resuming: false })).toEqual({
+    expect(await claimConversion(id, lease)).toEqual({
       originalKey: originalKey(id, "jpg"),
       capturedAt: new Date("2026-12-05T23:00:00Z"),
+      durationSeconds: 12.5,
     });
-    expect((await conversionOf(id)).conversion).toBe("converting");
-    expect(await claimConversion(id, { resuming: false })).toBeNull();
-    expect(await claimConversion(id, { resuming: true })).not.toBeNull();
+    expect(await conversionOf(id)).toMatchObject({ conversion: "converting", lease });
+    // A second job, whatever its attempt, finds nothing to do; the lease's own job carries it on.
+    expect(await claimConversion(id, randomUUID())).toBeNull();
+    expect(await claimConversion(id, lease)).not.toBeNull();
+    expect((await conversionOf(id)).lease).toBe(lease);
   });
 
-  it("is never claimed unless queued (or, on a retry, converting), the video ready, and neither hidden nor deleted", async () => {
+  it("is never claimed unless queued (or converting under the same lease), the video ready, and neither hidden nor deleted", async () => {
+    const lease = randomUUID();
     const ids = [
       await addVideo({ conversion: "none" }),
       await addVideo({ conversion: "done" }),
       await addVideo({ conversion: "failed" }),
+      await addVideo({ conversion: "converting", conversionJobId: randomUUID() }),
+      await addVideo({ conversion: "converting", conversionJobId: null }),
       await addVideo({ status: "uploaded", listedAt: null }),
       await addVideo({ hiddenAt: new Date(), hiddenBy: "admin" }),
       await addVideo({ hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true }),
@@ -323,44 +358,48 @@ describe("a video's conversion (Task 11, Ruling AG)", () => {
     ];
     for (const id of ids) {
       const before = await conversionOf(id);
-      expect(await claimConversion(id, { resuming: true }), id).toBeNull();
+      expect(await claimConversion(id, lease), id).toBeNull();
       expect(await conversionOf(id), id).toEqual(before);
     }
-    expect(await claimConversion(randomUUID(), { resuming: true })).toBeNull();
-    expect(await claimConversion("not-an-id", { resuming: true })).toBeNull();
+    expect(await claimConversion(randomUUID(), lease)).toBeNull();
+    expect(await claimConversion("not-an-id", lease)).toBeNull();
+    expect(await claimConversion(await addVideo(), "not-a-lease")).toBeNull();
   });
 
-  it("goes back to queued when it doesn't finish, but never from done or failed", async () => {
-    const converting = await addVideo({ conversion: "converting" });
-    const done = await addVideo({ conversion: "done" });
-    const failed = await addVideo({ conversion: "failed" });
+  it("gives its lease up, back to queued, only from converting under that lease", async () => {
+    const lease = randomUUID();
+    const converting = await addVideo({ conversion: "converting", conversionJobId: lease });
+    const otherLease = await addVideo({ conversion: "converting", conversionJobId: randomUUID() });
+    const done = await addVideo({ conversion: "done", conversionJobId: lease });
 
-    for (const id of [converting, done, failed]) await releaseConversion(id);
+    for (const id of [converting, otherLease, done]) await releaseConversion(id, lease);
 
-    expect((await conversionOf(converting)).conversion).toBe("queued");
+    expect(await conversionOf(converting)).toMatchObject({ conversion: "queued", lease: null });
+    expect((await conversionOf(otherLease)).conversion).toBe("converting");
     expect((await conversionOf(done)).conversion).toBe("done");
-    expect((await conversionOf(failed)).conversion).toBe("failed");
   });
 
-  it("is marked done with its file's key beside the poster's, returning the manifest's facts, only while the video still wants it", async () => {
+  it("is marked done with its file's key beside the poster's, returning the manifest's facts, only under its lease while the video still wants it", async () => {
     const posters = { "poster-thumb": "derived/a/0000000000000000/poster-thumb.webp" };
-    const id = await addVideo({ conversion: "converting", derived: posters });
+    const lease = randomUUID();
+    const id = await addVideo({ conversion: "converting", conversionJobId: lease, derived: posters });
     const videoKey = `derived/${id}/0123456789abcdef/video.mp4`;
 
-    expect(await markConversionDone(id, videoKey)).toMatchObject({ celebration: "reception", hiddenAt: null });
+    expect(await markConversionDone(id, randomUUID(), videoKey)).toBeNull();
+    expect(await markConversionDone(id, lease, videoKey)).toMatchObject({ celebration: "reception", hiddenAt: null });
     expect(await conversionOf(id)).toMatchObject({ conversion: "done", derived: { ...posters, video: videoKey } });
     // A late job's mark changes nothing.
-    expect(await markConversionDone(id, "derived/x/1111111111111111/video.mp4")).toBeNull();
+    expect(await markConversionDone(id, lease, "derived/x/1111111111111111/video.mp4")).toBeNull();
     expect((await conversionOf(id)).derived.video).toBe(videoKey);
 
     for (const changes of [
       { hiddenAt: new Date(), hiddenBy: "admin" },
       { deletedAt: new Date() },
       { conversion: "failed" as const },
-      { conversion: "none" as const },
+      { conversion: "queued" as const },
     ]) {
-      const other = await addVideo({ conversion: "converting", ...changes });
-      expect(await markConversionDone(other, videoKey), JSON.stringify(changes)).toBeNull();
+      const other = await addVideo({ conversion: "converting", conversionJobId: lease, ...changes });
+      expect(await markConversionDone(other, lease, videoKey), JSON.stringify(changes)).toBeNull();
       expect((await conversionOf(other)).derived.video).toBeUndefined();
     }
   });
@@ -382,11 +421,20 @@ describe("a video's conversion (Task 11, Ruling AG)", () => {
     }
   });
 
-  it("shows a phone only a ready, visible album video's conversion, with its file's key once done", async () => {
+  it("is on demand when a phone asked for it or the couple made it a highlight", async () => {
+    expect(await conversionIsOnDemand(await addVideo({ conversionRequestedAt: new Date() }))).toBe(true);
+    expect(await conversionIsOnDemand(await addVideo({ highlight: true }))).toBe(true);
+    expect(await conversionIsOnDemand(await addVideo())).toBe(false);
+    expect(await conversionIsOnDemand(randomUUID())).toBe(false);
+  });
+
+  it("shows a phone only a ready, visible album video's conversion: its file's key once done, when it was asked for, why it failed", async () => {
     const videoKey = "derived/a/0123456789abcdef/video.mp4";
     const done = await addVideo({ conversion: "done", derived: { video: videoKey } });
-    expect(await findPlayableVideo(done)).toEqual({ conversion: "done", videoKey });
-    expect(await findPlayableVideo(await addVideo())).toEqual({ conversion: "queued", videoKey: null });
+    expect(await findPlayableVideo(done)).toEqual({ conversion: "done", videoKey, requestedAt: null, failureReason: null });
+    const failed = await addVideo({ conversion: "failed", conversionFailureReason: "too-long" });
+    expect(await findPlayableVideo(failed)).toMatchObject({ conversion: "failed", failureReason: "too-long" });
+    expect(await findPlayableVideo(await addVideo())).toMatchObject({ conversion: "queued", videoKey: null });
     for (const changes of [
       { hiddenAt: new Date(), hiddenBy: "admin" },
       { deletedAt: new Date() },

@@ -11,6 +11,9 @@ export const RATE_LIMITS = {
   complete: { burst: 100, refillEveryMs: 500 },
   events: { burst: 100, refillEveryMs: 500 },
   playable: { burst: 100, refillEveryMs: 500 },
+  // Conversions a guest's phone starts on demand (the first ask for each video): 10, then one a
+  // minute, so no one guest can push the whole album onto the on-demand queue (Task 11 review).
+  conversion: { burst: 10, refillEveryMs: 60_000 },
   download: { burst: 100, refillEveryMs: 500 },
   wish: { burst: 100, refillEveryMs: 500 },
   "text-wish": { burst: 5, refillEveryMs: 60_000 },

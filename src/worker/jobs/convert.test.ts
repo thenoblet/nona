@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import sharp from "sharp";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { getSetting, setSetting } from "@/lib/data/settings";
 import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
 import { storageConfig } from "@/lib/env";
@@ -23,6 +24,7 @@ import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers 
 import { prepareScratchRoot } from "../scratch";
 import { conversionMilliseconds, convertHandler, convertVideo, outputProblem, type ConvertOptions } from "./convert";
 import { photoHandler } from "./photo";
+import { runVideoTool } from "./video-tools";
 
 /*
  * media.convert against the local MinIO and test database (docker compose up -d db minio && npm run
@@ -112,6 +114,7 @@ function convertOptions(changes: Partial<ConvertOptions> = {}): ConvertOptions {
     x264Threads: config.threads.x264,
     filterThreads: config.threads.ffmpegFilters,
     x264Preset: config.x264Preset,
+    convertMaxSeconds: config.convertMaxSeconds,
     ...changes,
   };
 }
@@ -147,8 +150,14 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  workers?.stopFetching();
-  workers = null;
+  if (workers) {
+    workers.stopFetching();
+    workers = null;
+    // Let the stopped workers' loops end.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  }
+  // No test's jobs (a held copy, a dead letter) are left for the next test's workers.
+  for (const queue of Object.values(MEDIA_QUEUES)) await boss.deleteAllJobs(queue);
   vi.restoreAllMocks();
 });
 
@@ -325,9 +334,17 @@ async function uploadedPhoto(bytes: Uint8Array): Promise<string> {
   return id;
 }
 
-/** The job as pg-boss delivers it, on its first attempt unless `retryCount` says otherwise. */
-function convertJob(mediaId: string, retryCount = 0, signal: AbortSignal = AbortSignal.timeout(600_000)): MediaJob {
-  return { id: randomUUID(), queue: MEDIA_QUEUES.convert, data: { mediaId }, signal, retryCount };
+/**
+ * The job as pg-boss delivers it, on its first attempt unless `retryCount` says otherwise. pg-boss
+ * keeps a job's id across its attempts, and the id is the conversion's lease: pass the same `id` for
+ * the attempts of one job.
+ */
+function convertJob(
+  mediaId: string,
+  retryCount = 0,
+  { signal = AbortSignal.timeout(600_000), id = randomUUID() }: { signal?: AbortSignal; id?: string } = {},
+): MediaJob {
+  return { id, queue: MEDIA_QUEUES.convert, data: { mediaId }, signal, retryCount };
 }
 
 async function readItem(mediaId: string) {
@@ -352,10 +369,10 @@ async function readPublic(key: string) {
   };
 }
 
-/** The error convertVideo failed with on attempt `retryCount + 1`, or null when it didn't fail. */
-async function failureOf(mediaId: string, retryCount = 0, options = convertOptions()): Promise<Error | null> {
+/** The error convertVideo failed with on attempt `retryCount + 1` of job `id`, or null when it didn't fail. */
+async function failureOf(mediaId: string, retryCount = 0, options = convertOptions(), id = randomUUID()): Promise<Error | null> {
   try {
-    await convertVideo(convertJob(mediaId, retryCount), options);
+    await convertVideo(convertJob(mediaId, retryCount, { id }), options);
     return null;
   } catch (error) {
     return error as Error;
@@ -429,17 +446,21 @@ describe("outputProblem: exiting 0 isn't success (ffmpeg notes §4.17)", () => {
       ...(audio === null ? [] : [{ codec_type: "audio", codec_name: "aac", profile: "LC", duration: "3.008000", ...audio }]),
     ],
   });
-  const expected = { videoSeconds: 3, audio: true };
+  const expected = { length: { streamSeconds: 3, containerSeconds: null }, audio: true };
+  const expecting = (streamSeconds: number | null, containerSeconds: number | null = null, audio = true) => ({
+    length: { streamSeconds, containerSeconds },
+    audio,
+  });
 
   it("passes H.264 High in 8-bit 4:2:0, even-sided within 1920 × 1080 either way up, as long as the original, with AAC", () => {
     expect(outputProblem(output(), expected)).toBeNull();
     expect(outputProblem(output({ width: 1920, height: 1080 }), expected)).toBeNull();
     expect(outputProblem(output({ duration: "3.450000" }), expected)).toBeNull();
-    expect(outputProblem(output({}, null), { videoSeconds: 3, audio: false })).toBeNull();
+    expect(outputProblem(output({}, null), expecting(3, null, false))).toBeNull();
   });
 
   it("refuses anything else, saying what", () => {
-    const problems: [string, unknown, { videoSeconds: number | null; audio: boolean }, RegExp][] = [
+    const problems: [string, unknown, ReturnType<typeof expecting>, RegExp][] = [
       ["High 10", output({ profile: "High 10" }), expected, /profile is High 10, not High/],
       ["10-bit", output({ pix_fmt: "yuv420p10le" }), expected, /yuv420p10le, not yuv420p/],
       ["HEVC", output({ codec_name: "hevc" }), expected, /hevc, not H.264/],
@@ -447,8 +468,11 @@ describe("outputProblem: exiting 0 isn't success (ffmpeg notes §4.17)", () => {
       ["too large", output({ width: 2160, height: 3840 }), expected, /2160 × 3840/],
       ["no audio", output({}, null), expected, /no AAC audio/],
       ["MP3 audio", output({}, { codec_name: "mp3" }), expected, /no AAC audio/],
-      ["half as long", output({ duration: "1.500000" }, {}, "1.500000"), expected, /1\.50 s long, the original's 3\.00 s/],
-      ["no duration", { ...output({ duration: undefined }), format: {} }, expected, /no duration/],
+      ["half as long", output({ duration: "1.500000" }, {}, "1.500000"), expected, /video is 1\.50 s long, the original's 3\.00 s/],
+      ["no duration", { ...output({ duration: undefined }), format: {} }, expected, /video has no duration/],
+      // A WebM original gives only its container's length: the converted file's is what is compared.
+      ["a WebM's half", output({}, {}, "1.500000"), expecting(null, 3), /file is 1\.50 s long, the original's 3\.00 s/],
+      ["a WebM's, with no length", { ...output(), format: {} }, expecting(null, 3), /file has no duration/],
       ["no video", { format: {}, streams: [] }, expected, /0 video streams/],
       ["nothing ffprobe could say", null, expected, /couldn't describe/],
     ];
@@ -457,8 +481,16 @@ describe("outputProblem: exiting 0 isn't success (ffmpeg notes §4.17)", () => {
     }
   });
 
+  it("compares like with like: the video stream's length when the original gave one, else the whole file's (Matroska, WebM)", () => {
+    // The original's video is 3 s and its file 3.5 s (its audio runs on): each compared with its own kind.
+    expect(outputProblem(output({ duration: "3.000000" }, {}, "3.500000"), expecting(3, null))).toBeNull();
+    expect(outputProblem(output({ duration: "2.900000" }, {}, "3.500000"), expecting(null, 3.5))).toBeNull();
+    expect(outputProblem(output({ duration: "3.000000" }, {}, "3.500000"), expecting(null, 3))).toBeNull();
+    expect(outputProblem(output({ duration: "3.000000" }, {}, "4.200000"), expecting(null, 3))).toMatch(/file is 4\.20 s long/);
+  });
+
   it("skips the length check only when the original's length is unknown (a browser's WebM)", () => {
-    expect(outputProblem(output({ duration: "1.500000" }, {}, "1.500000"), { videoSeconds: null, audio: true })).toBeNull();
+    expect(outputProblem(output({ duration: "1.500000" }, {}, "1.500000"), expecting(null, null))).toBeNull();
   });
 });
 
@@ -480,7 +512,7 @@ describe("conversionMilliseconds: the conversion's time, sized from its measured
 describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)", () => {
   it("makes an iPhone's rotated HLG clip H.264 High, upright 1080 × 1920, SDR BT.709, AAC stereo, faststart, with its capture time and no location", async () => {
     const original = await iphoneClip();
-    // The fixture is what it claims: an iPhone's location key (and its loci) in the index, turned −90.
+    // The fixture is what it claims: an iPhone's location key and its coordinates in the index, turned −90.
     expect(locationsIn(original)).toEqual(expect.arrayContaining(["ISO6709", "coordinates"]));
     const mediaId = await readyVideo(original, "mov");
 
@@ -536,8 +568,15 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
 
     const [run] = conversionRuns();
     expect(run.priority).toBe("background");
-    expect(run.args.slice(0, 4)).toEqual(["prlimit", `--as=${3 * 1024 ** 3}`, "--", "ffmpeg"]);
-    const args = run.args.slice(4);
+    // Its memory cap, and its CPU time (Ruling AR): ten minutes and ten CPU-seconds a second of its
+    // 2 s, the hard limit a minute past the soft one, so ffmpeg is told (SIGXCPU) before it is killed.
+    expect(run.args.slice(0, 2)).toEqual(["prlimit", `--as=${3 * 1024 ** 3}`]);
+    const [soft, hard] = (/^--cpu=(\d+):(\d+)$/.exec(run.args[2]) ?? []).slice(1).map(Number);
+    expect(soft).toBeGreaterThanOrEqual(620);
+    expect(soft).toBeLessThanOrEqual(622);
+    expect(hard).toBe(soft + 60);
+    expect(run.args.slice(3, 5)).toEqual(["--", "ffmpeg"]);
+    const args = run.args.slice(5);
     const input = args.indexOf("-i");
     const valueAfter = (flag: string, from = 0) => args[args.indexOf(flag, from) + 1];
     for (const flag of ["-hide_banner", "-nostdin", "-nostats", "-xerror", "-y"]) expect(args.indexOf(flag)).toBeLessThan(input);
@@ -638,17 +677,53 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
   });
 });
 
+/** The conversion's lease and state, as the row has them. */
+async function leaseOf(mediaId: string) {
+  const [row] = await getDb()
+    .select({ conversion: media.conversion, lease: media.conversionJobId, reason: media.conversionFailureReason })
+    .from(media)
+    .where(eq(media.id, mediaId));
+  return row;
+}
+
+/** Polls until `check` passes or `timeoutMilliseconds` runs out, then runs it once more to report. */
+async function eventually(check: () => Promise<void>, timeoutMilliseconds = 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  for (;;) {
+    try {
+      await check();
+      return;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
+/** The worker's queue workers with the real conversion handler, as main.ts starts them. */
+async function startConversions(): Promise<QueueWorkers> {
+  workers = await startQueueWorkers(
+    boss,
+    { [MEDIA_QUEUES.convert]: convertHandler(convertOptions()) },
+    { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
+    { pollingIntervalSeconds: 0.5 },
+  );
+  return workers;
+}
+
 describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
-  it("is retried when the original was cut short (it passes ffprobe), its conversion queued again, and is corrupt for good on its third attempt", async () => {
+  it("is retried when the original was cut short (it passes ffprobe), still converting under its job's lease, and is corrupt for good on its third attempt", async () => {
     const mediaId = await readyVideo(await truncatedClip(), "mp4", { width: 640, height: 360 });
+    const jobId = randomUUID();
 
     for (const retryCount of [0, 1]) {
-      const error = await failureOf(mediaId, retryCount);
+      const error = await failureOf(mediaId, retryCount, convertOptions(), jobId);
       expect(error, `attempt ${retryCount + 1}`).not.toBeInstanceOf(PermanentJobError);
       expect(error?.message).toMatch(/^ffmpeg /);
-      expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "queued" });
+      // Its retry carries it on; any other job finds it taken (Ruling AQ).
+      expect(await leaseOf(mediaId)).toMatchObject({ conversion: "converting", lease: jobId });
     }
-    const last = await failureOf(mediaId, 2);
+    const last = await failureOf(mediaId, 2, convertOptions(), jobId);
     expect(last).toBeInstanceOf(PermanentJobError);
     expect((last as PermanentJobError).reason).toBe("corrupt");
     // Left for media.dead to mark failed (markConversionFailed); the video keeps its poster.
@@ -657,38 +732,70 @@ describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
     expect(await publicKeysOf(mediaId)).toEqual([]);
   });
 
-  it("is marked failed through the queue once it fails for good, and the video stays ready with its poster", async () => {
+  it("is marked failed, with its reason, through the queue once it fails for good, and the video stays ready with its poster", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
-    workers = await startQueueWorkers(
-      boss,
-      { [MEDIA_QUEUES.convert]: convertHandler(convertOptions()) },
-      { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
-      { pollingIntervalSeconds: 0.5 },
-    );
+    await startConversions();
     // A JPEG with a video's name: unsupported-type, at once.
     const jpeg = await clip("photo.jpg", ["-f", "lavfi", "-i", "testsrc2=size=640x480", "-frames:v", "1"]);
     const mediaId = await readyVideo(jpeg, "mp4");
     await boss.send(MEDIA_QUEUES.convert, { mediaId }, { priority: CONVERT_PRIORITY.onDemand });
 
-    const deadline = Date.now() + 30_000;
-    while ((await readItem(mediaId)).conversion !== "failed" && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "failed", failureReason: null });
+    await eventually(async () => expect((await readItem(mediaId)).conversion).toBe("failed"), 30_000);
+    expect(await readItem(mediaId)).toMatchObject({
+      status: "ready",
+      conversion: "failed",
+      conversionFailureReason: "unsupported-type",
+      failureReason: null,
+    });
     expect(Object.keys((await readItem(mediaId)).derived).sort()).toEqual(["poster-thumb", "poster-view"]);
   });
 
   it("is retried, never published, when ffmpeg can't convert within its memory cap", async () => {
     const mediaId = await readyVideo(await iphoneClip(), "mov");
+    const jobId = randomUUID();
 
-    const error = await failureOf(mediaId, 0, convertOptions({ convertMemoryBytes: 400 * 1024 * 1024 }));
+    const error = await failureOf(mediaId, 0, convertOptions({ convertMemoryBytes: 400 * 1024 * 1024 }), jobId);
 
     expect(error).not.toBeInstanceOf(PermanentJobError);
     expect(error?.message).toMatch(/^ffmpeg /);
     expect(conversionRuns()[0].args.slice(0, 2)).toEqual(["prlimit", `--as=${400 * 1024 * 1024}`]);
-    expect(await readItem(mediaId)).toMatchObject({ conversion: "queued" });
+    expect(await leaseOf(mediaId)).toMatchObject({ conversion: "converting", lease: jobId });
     expect(await publicKeysOf(mediaId)).toEqual([]);
+  });
+
+  it("is stopped by its CPU-time limit, which a busy box can't use up, and blamed on the file from its third attempt (Ruling AR)", async () => {
+    // The real ffmpeg 7.1 under prlimit --cpu: a 4K encode far past one CPU-second.
+    const encode = (retryCount: number) =>
+      runVideoTool(
+        "ffmpeg",
+        [
+          ...["-hide_banner", "-loglevel", "error", "-nostdin", "-nostats", "-xerror", "-y"],
+          ...["-f", "lavfi", "-i", "testsrc2=size=3840x2160:rate=30", "-t", "60"],
+          ...["-c:v", "libx264", "-preset", "medium", "-threads", "2", "-f", "mp4", join(folder, `${randomUUID()}.mp4`)],
+        ],
+        {
+          memoryBytes: 3 * 1024 ** 3,
+          cpuSeconds: 1,
+          signal: AbortSignal.timeout(120_000),
+          folder,
+          retryCount,
+          priority: "background",
+          source: "scratch",
+        },
+        120_000,
+      ).then(
+        () => null,
+        (error: unknown) => error as Error,
+      );
+
+    const early = await encode(0);
+    expect(early).not.toBeInstanceOf(PermanentJobError);
+    expect(early?.message).toMatch(/^ffmpeg used up its 1 s of CPU time on the video/);
+    const last = await encode(2);
+    expect(last).toBeInstanceOf(PermanentJobError);
+    expect((last as PermanentJobError).reason).toBe("corrupt");
+    expect(programs.runs.at(-1)?.args.slice(0, 3)).toEqual(["prlimit", `--as=${3 * 1024 ** 3}`, "--cpu=1:61"]);
   });
 
   it("removes its scratch folder however it ends: done, a file ffmpeg refuses, or killed mid-conversion by its job's end", async () => {
@@ -701,7 +808,7 @@ describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
     const killed = await readyVideo(await iphoneClip(), "mov");
     const ending = new AbortController();
     const conversionsBefore = conversionRuns().length;
-    const converting = convertVideo(convertJob(killed, 0, ending.signal), convertOptions());
+    const converting = convertVideo(convertJob(killed, 0, { signal: ending.signal }), convertOptions());
     const deadline = Date.now() + 60_000;
     while (conversionRuns().length === conversionsBefore && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -714,20 +821,60 @@ describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
 
     expect(error).not.toBeInstanceOf(PermanentJobError);
     expect(error?.message).toMatch(/ffmpeg didn't finish with the video: it was killed \(aborted\)/);
-    expect(await readItem(killed)).toMatchObject({ conversion: "queued" });
+    // Its job's retry carries it on.
+    expect(await readItem(killed)).toMatchObject({ conversion: "converting" });
     expect(await readdir(scratchRoot)).toEqual([]);
   });
 });
 
-describe.skipIf(!ffmpegSeven)("a conversion job delivered twice, late, or for a video that has moved on (Ruling AG)", () => {
-  it("does nothing, and runs nothing, unless the conversion is queued and the video ready and visible", async () => {
+describe.skipIf(!ffmpegSeven)("a video too long to convert (Ruling AR)", () => {
+  it("fails at once, too-long, before any download, when its poster's probe already says it is longer than the worker converts", async () => {
+    const mediaId = await readyVideo(await androidClip(), "mov", { durationSeconds: 2 });
+
+    const error = await failureOf(mediaId, 0, convertOptions({ convertMaxSeconds: 1 }));
+
+    expect(error).toBeInstanceOf(PermanentJobError);
+    expect(error).toMatchObject({ reason: "too-long" });
+    expect(programs.runs).toEqual([]);
+    expect(scratch.bytesNeeded).toEqual([]);
+  });
+
+  it("fails at once, too-long, when only the file itself says so, its scratch removed", async () => {
+    const mediaId = await readyVideo(await androidClip(), "mov", { durationSeconds: null });
+
+    const error = await failureOf(mediaId, 0, convertOptions({ convertMaxSeconds: 1 }));
+
+    expect(error).toMatchObject({ reason: "too-long" });
+    expect(conversionRuns()).toEqual([]);
+    expect(await publicKeysOf(mediaId)).toEqual([]);
+    expect(await readdir(scratchRoot)).toEqual([]);
+  });
+
+  it("is marked failed, too-long, through the queue, with no retries: the video stays ready with its poster and its original", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // A 31-minute video, by its poster's probe: past the default 30.
+    const mediaId = await readyVideo(randomBytes(1024), "mp4", { durationSeconds: 31 * 60 });
+    await startConversions();
+    const jobId = await boss.send(MEDIA_QUEUES.convert, { mediaId }, { priority: CONVERT_PRIORITY.onDemand });
+
+    await eventually(async () => expect(await leaseOf(mediaId)).toMatchObject({ conversion: "failed", reason: "too-long" }), 30_000);
+    const [job] = await boss.findJobs(MEDIA_QUEUES.convert, { id: jobId ?? "" });
+    expect(job).toMatchObject({ state: "failed", retryCount: 0 });
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", failureReason: null });
+    expect(programs.runs).toEqual([]);
+  });
+});
+
+describe.skipIf(!ffmpegSeven)("a conversion job delivered twice, late, or for a video that has moved on (Rulings AG and AQ)", () => {
+  it("does nothing, and runs nothing, unless the conversion is queued (or under its own lease) and the video ready and visible", async () => {
     const bytes = randomBytes(1024);
     const items = [
       await readyVideo(bytes, "mp4", { conversion: "none" }),
       await readyVideo(bytes, "mp4", { conversion: "done", derived: { video: "derived/x/0000000000000000/video.mp4" } }),
       await readyVideo(bytes, "mp4", { conversion: "failed" }),
-      // Another job is converting it now: a first attempt of a second job leaves it alone.
-      await readyVideo(bytes, "mp4", { conversion: "converting" }),
+      // Another job holds its lease: any other job, whatever its attempt, leaves it alone.
+      await readyVideo(bytes, "mp4", { conversion: "converting", conversionJobId: randomUUID() }),
       await readyVideo(bytes, "mp4", { hiddenAt: new Date(), hiddenBy: "admin" }),
       await readyVideo(bytes, "mp4", { hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true }),
       await readyVideo(bytes, "mp4", { deletedAt: new Date() }),
@@ -737,7 +884,9 @@ describe.skipIf(!ffmpegSeven)("a conversion job delivered twice, late, or for a 
     const before = await Promise.all(items.map(readItem));
 
     for (const mediaId of [...items, randomUUID(), "not-an-id"]) {
-      expect(await convertVideo(convertJob(mediaId), convertOptions())).toBeUndefined();
+      for (const retryCount of [0, 3]) {
+        expect(await convertVideo(convertJob(mediaId, retryCount), convertOptions())).toBeUndefined();
+      }
     }
 
     expect(programs.runs).toEqual([]);
@@ -745,12 +894,17 @@ describe.skipIf(!ffmpegSeven)("a conversion job delivered twice, late, or for a 
     expect(await Promise.all(items.map(readItem))).toEqual(before);
   });
 
-  it("carries on, on a retry, a conversion its own earlier attempt left converting (its worker died)", async () => {
-    const mediaId = await readyVideo(await androidClip(), "mov", { conversion: "converting" });
+  it("carries on a conversion under its own lease (its worker died mid-way), and a second job with another lease never does", async () => {
+    const lease = randomUUID();
+    const mediaId = await readyVideo(await androidClip(), "mov", { conversion: "converting", conversionJobId: lease });
 
-    await convertVideo(convertJob(mediaId, 1), convertOptions());
+    // Another job, even on a retry, finds it taken.
+    expect(await convertVideo(convertJob(mediaId, 2), convertOptions())).toBeUndefined();
+    expect(programs.runs).toEqual([]);
+    // Its own job's retry, or a held copy carrying its lease, carries it on.
+    await convertVideo({ ...convertJob(mediaId, 0), data: { mediaId, leaseJobId: lease } }, convertOptions());
 
-    expect(await readItem(mediaId)).toMatchObject({ conversion: "done" });
+    expect(await leaseOf(mediaId)).toMatchObject({ conversion: "done", lease });
   });
 
   it("converts once however often it is delivered: the backlog's job after an on-demand one finished does nothing", async () => {
@@ -765,7 +919,24 @@ describe.skipIf(!ffmpegSeven)("a conversion job delivered twice, late, or for a 
     expect(await readItem(mediaId)).toMatchObject({ conversion: "done", derived });
   });
 
-  it("publishes nothing for a video hidden while it converted: its file comes down, and its conversion waits, queued, for an unhide", async () => {
+  it("never converts twice at once: a second job sent while the first converts does nothing, and the first finishes", async () => {
+    const mediaId = await readyVideo(await androidClip(), "mov");
+    let secondJob: unknown = "not run";
+    publishing.afterPut = async () => {
+      const runsBefore = programs.runs.length;
+      secondJob = await convertVideo(convertJob(mediaId, 1), convertOptions());
+      expect(programs.runs).toHaveLength(runsBefore);
+    };
+
+    await convertVideo(convertJob(mediaId), convertOptions());
+
+    expect(secondJob).toBeUndefined();
+    const item = await readItem(mediaId);
+    expect(item.conversion).toBe("done");
+    expect(await publicKeysOf(mediaId)).toEqual([item.derived.video]);
+  });
+
+  it("publishes nothing for a video hidden while it converted: its file comes down, and its conversion waits, queued and unleased, for an unhide", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const mediaId = await readyVideo(await androidClip(), "mov");
     publishing.afterPut = async () => {
@@ -775,22 +946,53 @@ describe.skipIf(!ffmpegSeven)("a conversion job delivered twice, late, or for a 
     await convertVideo(convertJob(mediaId), convertOptions());
 
     const item = await readItem(mediaId);
-    expect(item).toMatchObject({ status: "ready", conversion: "queued" });
+    expect(item).toMatchObject({ status: "ready", conversion: "queued", conversionJobId: null });
     expect(item.derived.video).toBeUndefined();
     expect(await publicKeysOf(mediaId)).toEqual([]);
   });
+});
 
-  it("keeps the file another job finished under the same key while this one worked", async () => {
-    const mediaId = await readyVideo(await androidClip(), "mov");
-    publishing.afterPut = async () => {
-      await convertVideo(convertJob(mediaId, 1), convertOptions());
-    };
+describe.skipIf(!ffmpegSeven)("a worker that died mid-conversion, then the backlog switched off (Ruling AQ)", () => {
+  /**
+   * A conversion its job claimed before its worker died: `converting` under the job's lease, the
+   * job back in the backlog to retry (pg-boss keeps its id). The switch went off between two
+   * heartbeats, so the backlog worker fetches the retry, and holds it.
+   */
+  async function diedThenSwitchedOff(values: Partial<typeof media.$inferInsert>) {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await setSetting("convert_backlog", true);
+    const lease = randomUUID();
+    const mediaId = await readyVideo(await androidClip(), "mov", { conversion: "converting", conversionJobId: lease, ...values });
+    const running = await startConversions();
+    await setSetting("convert_backlog", false);
+    await boss.send(MEDIA_QUEUES.convert, { mediaId }, { id: lease, priority: CONVERT_PRIORITY.backlog });
+    return { mediaId, lease, running };
+  }
 
-    await convertVideo(convertJob(mediaId), convertOptions());
+  it("is finished at once, on demand, when a guest is waiting for it: the held copy carries the lease at priority 20", async () => {
+    const { mediaId, lease } = await diedThenSwitchedOff({ conversionRequestedAt: new Date() });
 
-    const item = await readItem(mediaId);
-    expect(item.conversion).toBe("done");
-    expect(await publicKeysOf(mediaId)).toEqual([item.derived.video]);
+    await eventually(async () => expect(await leaseOf(mediaId)).toMatchObject({ conversion: "done", lease }));
+    // While the switch is still off.
+    expect(await getSetting("convert_backlog", true)).toBe(false);
+  });
+
+  it("is finished once the switch is on again, never stranded converting, when no one is waiting", async () => {
+    const { mediaId, lease, running } = await diedThenSwitchedOff({});
+
+    await eventually(async () =>
+      expect(
+        (await boss.findJobs<{ mediaId: string; leaseJobId?: string }>(MEDIA_QUEUES.convert, { data: { mediaId, leaseJobId: lease } })).map(
+          (job) => job.state,
+        ),
+      ).toEqual(["created"]),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(await leaseOf(mediaId)).toMatchObject({ conversion: "converting", lease });
+
+    await setSetting("convert_backlog", true);
+    await running.followBacklogSwitch();
+    await eventually(async () => expect(await leaseOf(mediaId)).toMatchObject({ conversion: "done", lease }));
   });
 });
 

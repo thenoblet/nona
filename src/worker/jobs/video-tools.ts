@@ -60,6 +60,8 @@ export function ffmpegGlobalArgs(filterThreads: number): string[] {
 export type VideoToolRun = {
   /** The most address space the tool may take (prlimit --as). */
   memoryBytes: number;
+  /** The most CPU time it may use, in seconds (prlimit --cpu): a conversion's, sized from its video's length. */
+  cpuSeconds?: number;
   /** The job's signal: aborting it kills the tool. */
   signal: AbortSignal;
   /** The job's scratch folder, the tool's working folder. */
@@ -78,7 +80,7 @@ export type VideoToolRun = {
   redact?: RedactedLink;
 };
 
-type FailureContext = Pick<VideoToolRun, "memoryBytes" | "retryCount"> & { source?: VideoToolRun["source"] };
+type FailureContext = Pick<VideoToolRun, "memoryBytes" | "retryCount"> & Partial<Pick<VideoToolRun, "source" | "cpuSeconds">>;
 
 // Something between the tool and R2 failed, not the file: a protocol layer complained (ffmpeg
 // names it in its log line), R2 answered with an HTTP error, or the connection was refused, reset,
@@ -112,6 +114,10 @@ const NO_SPACE = /No space left on device/;
 const UNKNOWN_OPTION = /Option not found|Unrecognized option/;
 // What ffmpeg says when it recognised the file as a format other than the two it may open.
 const NOT_ALLOWED_FORMAT = /Format not on whitelist/;
+// ffmpeg catching the SIGXCPU its CPU limit sent: it stops, "Immediate exit requested", and exits
+// 255 (or, past three signals, "hard exiting"). Nothing else sends it a signal it catches: the
+// worker only ever kills with SIGKILL (Ruling AR).
+const CPU_TIME_USED_UP = /Immediate exit requested|Received > 3 system signals|received signal 24/;
 
 /** The last line a tool printed (runProcess has already taken any link out). */
 function lastLineOf(stderr: string): string {
@@ -139,7 +145,8 @@ export function blameFileFromThirdAttempt(message: string, retryCount: number, s
  *   stopped; the tool couldn't run, or didn't know one of its options (an image built with another
  *   ffmpeg).
  * - Anything else looks like the file's fault (the tool refused it, died on it, ran out of memory
- *   under the cap, or printed far too much): retried twice, then `corrupt`.
+ *   under the cap or of CPU time under its limit, or printed far too much): retried twice, then
+ *   `corrupt`.
  * Exported for its test.
  */
 export function videoToolFailure(tool: "ffprobe" | "ffmpeg", error: unknown, context: FailureContext): Error {
@@ -160,6 +167,14 @@ export function videoToolFailure(tool: "ffprobe" | "ffmpeg", error: unknown, con
     return new Error(`${tool} doesn't know an option the worker gave it (is it ffmpeg 7.1?): ${ending}: ${lastLine}`);
   }
   if (killedFromOutside(error)) return new Error(`${tool} was killed from outside the worker: ${ending}`);
+  if (context.cpuSeconds !== undefined && (error.exitSignal === "SIGXCPU" || CPU_TIME_USED_UP.test(error.stderrTail))) {
+    // Waiting for a CPU doesn't count, so a busy box can't do this: the file made it work this hard.
+    return blameFileFromThirdAttempt(
+      `${tool} used up its ${context.cpuSeconds} s of CPU time on the video: ${ending}: ${lastLine}`,
+      context.retryCount,
+      source,
+    );
+  }
   if (error.exitCode !== null && NOT_ALLOWED_FORMAT.test(error.stderrTail)) {
     const refusal = error.stderrTail.split("\n").find((line) => NOT_ALLOWED_FORMAT.test(line)) ?? lastLine;
     return new PermanentJobError("unsupported-type", `The original isn't a video the album takes: ${refusal.trim()}`);
@@ -189,6 +204,7 @@ export async function runVideoTool(
   try {
     return await runCapped(tool, args, {
       memoryBytes: run.memoryBytes,
+      cpuSeconds: run.cpuSeconds,
       signal: run.signal,
       timeoutMilliseconds,
       priority: run.priority,

@@ -42,6 +42,7 @@ const handlers: MediaHandlers = {
     filterThreads: config.threads.ffmpegFilters,
     // The worker's own queue, which runWorker starts (with this pool size) before any job runs.
     jobQueue: () => getBoss(config.queuePoolSize),
+    convertMaxSeconds: config.convertMaxSeconds,
   }),
   [MEDIA_QUEUES.convert]: convertHandler({
     convertMemoryBytes: config.convertMemoryBytes,
@@ -50,6 +51,7 @@ const handlers: MediaHandlers = {
     x264Threads: config.threads.x264,
     filterThreads: config.threads.ffmpegFilters,
     x264Preset: config.x264Preset,
+    convertMaxSeconds: config.convertMaxSeconds,
   }),
 };
 

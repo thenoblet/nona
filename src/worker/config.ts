@@ -78,6 +78,12 @@ export type WorkerConfig = {
   convertMemoryBytes: number;
   /** x264's -preset in a conversion. */
   x264Preset: X264Preset;
+  /**
+   * The longest video the worker converts, in seconds (Ruling AR). A longer one's conversion is
+   * `failed` with the reason `too-long` at once: it plays from its original where a phone can, and
+   * its original stays downloadable.
+   */
+  convertMaxSeconds: number;
   /** Connections in the job queue's pool: room for every handler's polling and heartbeats at once. */
   queuePoolSize: number;
 };
@@ -127,6 +133,11 @@ const schema = zod.object({
   // raises its need: measure again before.
   WORKER_CONVERT_MEMORY_BYTES: bytes(3072 * MEBIBYTE, 2048 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
   WORKER_X264_PRESET: zod.preprocess((value) => (value === "" ? undefined : value), zod.enum(X264_PRESETS).default("veryfast")),
+  // Half an hour: past the longest speech, and a conversion that fits its time and CPU limits.
+  WORKER_CONVERT_MAX_SECONDS: zod.preprocess(
+    (value) => (value === "" ? undefined : value),
+    zod.coerce.number().int().min(60).max(24 * 3600).default(1800),
+  ),
 });
 
 /**
@@ -176,6 +187,7 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
     ffmpegMemoryBytes: settings.WORKER_FFMPEG_MEMORY_BYTES,
     convertMemoryBytes: settings.WORKER_CONVERT_MEMORY_BYTES,
     x264Preset: settings.WORKER_X264_PRESET,
+    convertMaxSeconds: settings.WORKER_CONVERT_MAX_SECONDS,
     queuePoolSize: settings.WORKER_QUEUE_POOL_SIZE,
   };
 }

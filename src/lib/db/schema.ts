@@ -172,6 +172,13 @@ export const media = pgTable(
 
     conversion: text("conversion").$type<(typeof CONVERSION_STATES)[number]>().notNull().default("none"),
     conversionRequestedAt: timestamp("conversion_requested_at", withTimezone),
+    /**
+     * The lease on a `converting` conversion: the media.convert job (pg-boss keeps a job's id across
+     * its retries) that claimed it, and so the only one that may carry it on (Ruling AQ).
+     */
+    conversionJobId: uuid("conversion_job_id"),
+    /** Why a `failed` conversion failed, for its wording: "too-long", "corrupt", "processing-failed"… */
+    conversionFailureReason: text("conversion_failure_reason"),
     highlight: boolean("highlight").notNull().default(false),
 
     hiddenAt: timestamp("hidden_at", withTimezone),
@@ -201,6 +208,10 @@ export const media = pgTable(
     index("media_conversion_queued_idx")
       .on(table.listedAt)
       .where(sql`${table.status} = 'ready' and ${table.conversion} = 'queued'`),
+    // Conversions under way, which the sweeper checks for one whose job is gone (Ruling AQ).
+    index("media_conversion_converting_idx")
+      .on(table.listedAt)
+      .where(sql`${table.status} = 'ready' and ${table.conversion} = 'converting'`),
     index("media_unfinished_upload_idx")
       .on(table.startedAt, table.id)
       .where(sql`${table.status} = 'uploading' and ${table.multipartUploadId} is not null`),

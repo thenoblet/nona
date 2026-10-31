@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import * as zod from "zod";
 import { describeError } from "@/lib/log-error";
+import { conversionLeaseOf } from "@/lib/media/conversion";
 import { claimConversion, markConversionDone, releaseConversion } from "@/lib/media/rows";
 import { derivedKey } from "@/lib/storage/keys";
 import { headOriginal, putPublicObject } from "@/lib/storage/objects";
@@ -74,6 +75,16 @@ const PROBE_MILLISECONDS = 60_000;
 const CONVERT_SECONDS_PER_VIDEO_SECOND = 10;
 const CONVERT_BASE_MILLISECONDS = 10 * 60_000;
 const CONVERT_MAX_MILLISECONDS = 3 * 60 * 60_000;
+/**
+ * The conversion's CPU time (prlimit --cpu: user and system time, all of ffmpeg's threads), from
+ * the video's length (Ruling AR). Measured in the worker image at the defaults, three runs each, on
+ * grainy clips at a phone's bitrate: 8K HEVC 3.0 to 3.2 CPU-seconds a second of video, an iPhone's
+ * portrait 4K HEVC HLG 3.4 (the costliest), 1080p60 H.264 1.1. Three times the costliest, rounded
+ * up, plus ten minutes for a short clip's start: a phone's video never comes near it, even on a CPU
+ * a third as fast per second.
+ */
+const CONVERT_CPU_SECONDS_PER_VIDEO_SECOND = 10;
+const CONVERT_CPU_BASE_SECONDS = 10 * 60;
 /** Scratch beyond twice the original: a small original can come out bigger at CRF 23. */
 const SCRATCH_MARGIN_BYTES = 256 * 1024 * 1024;
 
@@ -91,6 +102,8 @@ export type ConvertOptions = {
   filterThreads: number;
   /** x264's -preset: WORKER_X264_PRESET. */
   x264Preset: X264Preset;
+  /** The longest video converted, in seconds: WORKER_CONVERT_MAX_SECONDS. */
+  convertMaxSeconds: number;
 };
 
 /** What a conversion in the scratch folder made. */
@@ -143,10 +156,24 @@ export function convertArgs(
   ];
 }
 
-/** How long ffmpeg may take over a video this long (or of no known length: the most). */
+/**
+ * How long ffmpeg may take over a video this long (or of no known length: the most). Running past
+ * it is retried: a busy box can't be told from a slow file by the clock (Ruling AR).
+ */
 export function conversionMilliseconds(durationSeconds: number | null): number {
   if (durationSeconds === null) return CONVERT_MAX_MILLISECONDS;
   return Math.min(CONVERT_MAX_MILLISECONDS, CONVERT_BASE_MILLISECONDS + durationSeconds * CONVERT_SECONDS_PER_VIDEO_SECOND * 1000);
+}
+
+/**
+ * How much CPU time ffmpeg may use over a video this long, all its threads together (prlimit
+ * --cpu, Ruling AR); a video of no known length gets the longest's. Waiting for a CPU doesn't
+ * count, so however busy the box (at nice 19 a conversion may get a sliver of one), only a file
+ * that makes ffmpeg work far harder than any phone's runs out: that is the file's fault, blamed from
+ * the third attempt.
+ */
+export function conversionCpuSeconds(durationSeconds: number | null, maxSeconds: number): number {
+  return Math.ceil(CONVERT_CPU_BASE_SECONDS + (durationSeconds ?? maxSeconds) * CONVERT_CPU_SECONDS_PER_VIDEO_SECOND);
 }
 
 /** What ffprobe is asked of the converted file. */
@@ -175,15 +202,20 @@ function seconds(value: string | undefined): number | null {
 }
 
 /**
+ * The length the converted video must have: the original's video stream's, compared with the
+ * converted video stream's, when ffprobe gave the original's stream one (MP4, MOV); otherwise the
+ * original's container's, compared with the converted file's container (Matroska and WebM give
+ * only the container's). Null when neither is known (a browser's WebM recording).
+ */
+export type ExpectedLength = { streamSeconds: number | null; containerSeconds: number | null };
+
+/**
  * What is wrong with the converted file, from ffprobe's JSON (OUTPUT_ENTRIES), or null when it is
  * what the album serves (ffmpeg notes §2.3, §4.17): one H.264 video stream, profile High, 8-bit
- * 4:2:0, within the box with even sides; an AAC stream when the original had audio; and its video
- * within half a second of the original's length, when that is known. Exported for its test.
+ * 4:2:0, within the box with even sides; an AAC stream when the original had audio; and as long as
+ * the original, within half a second, like compared with like (ExpectedLength). Exported for its test.
  */
-export function outputProblem(
-  probeJson: unknown,
-  expected: { videoSeconds: number | null; audio: boolean },
-): string | null {
+export function outputProblem(probeJson: unknown, expected: { length: ExpectedLength; audio: boolean }): string | null {
   const parsed = outputSchema.safeParse(probeJson);
   if (!parsed.success) return "ffprobe couldn't describe the converted file";
   const { streams, format } = parsed.data;
@@ -203,14 +235,26 @@ export function outputProblem(
   if (expected.audio && (audios.length !== 1 || audios[0].codec_name !== "aac")) {
     return "the converted file has no AAC audio, though the original had audio";
   }
-  const madeSeconds = seconds(video.duration) ?? seconds(format?.duration);
-  if (expected.videoSeconds !== null) {
-    if (madeSeconds === null) return "the converted video has no duration";
-    if (Math.abs(madeSeconds - expected.videoSeconds) > DURATION_TOLERANCE_SECONDS) {
-      return `the converted video is ${madeSeconds.toFixed(2)} s long, the original's ${expected.videoSeconds.toFixed(2)} s`;
+  const { streamSeconds, containerSeconds } = expected.length;
+  const [what, originalSeconds, madeSeconds] =
+    streamSeconds !== null
+      ? ["video", streamSeconds, seconds(video.duration)]
+      : ["file", containerSeconds, seconds(format?.duration)];
+  if (originalSeconds !== null) {
+    if (madeSeconds === null) return `the converted ${what} has no duration`;
+    if (Math.abs(madeSeconds - originalSeconds) > DURATION_TOLERANCE_SECONDS) {
+      return `the converted ${what} is ${madeSeconds.toFixed(2)} s long, the original's ${originalSeconds.toFixed(2)} s`;
     }
   }
   return null;
+}
+
+/** What the converted file's length is checked against, from the original's probe (outputProblem). */
+function expectedLength(facts: VideoFacts): ExpectedLength {
+  // facts.durationSeconds is the container's, or the stream's when the container gave none.
+  return facts.videoStreamSeconds !== null
+    ? { streamSeconds: facts.videoStreamSeconds, containerSeconds: null }
+    : { streamSeconds: null, containerSeconds: facts.durationSeconds };
 }
 
 /**
@@ -237,12 +281,18 @@ async function checkOutput(output: string, facts: VideoFacts, run: VideoToolRun)
   } catch {
     // outputProblem says so.
   }
-  const problem = outputProblem(description, {
-    videoSeconds: facts.videoStreamSeconds ?? facts.durationSeconds,
-    audio: facts.audioStreamIndex !== null,
-  });
+  const problem = outputProblem(description, { length: expectedLength(facts), audio: facts.audioStreamIndex !== null });
   if (problem) throw blameFileFromThirdAttempt(`ffmpeg exited 0, but ${problem}`, run.retryCount, run.source);
   return bytes;
+}
+
+/** A video longer than the worker converts: its conversion fails for good, `too-long`, with no retries (Ruling AR). */
+function tooLong(durationSeconds: number | null, options: Pick<ConvertOptions, "convertMaxSeconds">): PermanentJobError | null {
+  if (durationSeconds === null || durationSeconds <= options.convertMaxSeconds) return null;
+  return new PermanentJobError(
+    "too-long",
+    `The video is ${Math.round(durationSeconds)} s long, past the ${options.convertMaxSeconds} s the worker converts`,
+  );
 }
 
 /** Downloads, probes, converts, checks and uploads, in the job's scratch folder. */
@@ -269,10 +319,17 @@ async function convertIn(
   await saveOriginal(originalKey, paths.original, job.signal);
   const convertStartedAt = performance.now();
   const facts = await probeVideo(SCRATCH_FILE_READING, paths.original, run, PROBE_MILLISECONDS);
+  // Its own length, read from the file itself, decides: the row's could be a poster's from a file since replaced.
+  const refusal = tooLong(facts.durationSeconds, options);
+  if (refusal) throw refusal;
   await runVideoTool(
     "ffmpeg",
     convertArgs(facts, paths, options, capturedAt),
-    { ...run, memoryBytes: options.convertMemoryBytes },
+    {
+      ...run,
+      memoryBytes: options.convertMemoryBytes,
+      cpuSeconds: conversionCpuSeconds(facts.durationSeconds, options.convertMaxSeconds),
+    },
     conversionMilliseconds(facts.durationSeconds),
   );
   const outputBytes = await checkOutput(paths.output, facts, run);
@@ -292,59 +349,58 @@ async function convertIn(
   };
 }
 
-/** Puts the conversion back to `queued` for the job's retry. Never throws: a retry also takes it from `converting`. */
-async function release(mediaId: string): Promise<void> {
-  try {
-    await releaseConversion(mediaId);
-  } catch (error) {
-    console.error(`[worker] media.convert media=${mediaId} couldn't be put back to queued:`, describeError(error));
-  }
-}
-
-/** media.convert's work for one job, whose data is `{ mediaId }`. */
+/**
+ * media.convert's work for one job, whose data is `{ mediaId }` (and `leaseJobId` for a held job's
+ * copy). It works under its lease (Ruling AQ): it claims the conversion, or carries on the one its
+ * own earlier attempt claimed; any other job finds nothing to do. A failure leaves the conversion
+ * `converting` under the lease: a retry carries it on, and a failure for good has media.dead mark
+ * it failed. Only a video hidden while it converted gives the lease up, back to `queued`.
+ */
 export async function convertVideo(job: MediaJob, options: ConvertOptions): Promise<JobReport | void> {
   const mediaId = typeof job.data.mediaId === "string" ? job.data.mediaId : "";
-  const item = await claimConversion(mediaId, { resuming: job.retryCount > 0 });
+  const lease = conversionLeaseOf(job);
+  const item = await claimConversion(mediaId, lease);
   if (!item) {
     console.log(
-      `[worker] media.convert job=${job.id}: nothing to do, the conversion is done, failed, running under another job, or not wanted (the item hidden, deleted or not ready)`,
+      `[worker] media.convert job=${job.id}: nothing to do, the conversion is done, failed, under another job's lease, or not wanted (the item hidden, deleted or not ready)`,
     );
     return;
   }
-  try {
-    const original = await headOriginal(item.originalKey, { signal: job.signal });
-    if (!original) throw new Error(`The original ${item.originalKey} isn't in the private bucket`);
-    const contentHash = contentHashOf(original.etag, `convert-settings-${CONVERT_SETTINGS_VERSION}`);
-    const videoKey = derivedKey(mediaId, contentHash, "video", "mp4");
+  // Past the longest the worker converts: failed at once, before any download (the poster's probe said so).
+  const refusal = tooLong(item.durationSeconds, options);
+  if (refusal) throw refusal;
+  const original = await headOriginal(item.originalKey, { signal: job.signal });
+  if (!original) throw new Error(`The original ${item.originalKey} isn't in the private bucket`);
+  const contentHash = contentHashOf(original.etag, `convert-settings-${CONVERT_SETTINGS_VERSION}`);
+  const videoKey = derivedKey(mediaId, contentHash, "video", "mp4");
 
-    const conversion = await withScratch(2 * original.size + SCRATCH_MARGIN_BYTES, (folder) =>
-      convertIn(folder, job, item.originalKey, videoKey, item.capturedAt, options),
-    );
-    const { facts } = conversion;
-    const videoSeconds = facts.videoStreamSeconds ?? facts.durationSeconds;
-    // The real conversion speed, for the couple's status page (spec §8.3): ids, sizes and times only.
-    const length = videoSeconds === null ? "a video of unknown length" : `${videoSeconds.toFixed(1)} s of video`;
-    const speed = videoSeconds ? ` (${(conversion.convertMilliseconds / 1000 / videoSeconds).toFixed(2)} s a second of video)` : "";
-    console.log(
-      `[worker] media.convert job=${job.id} media=${mediaId}: downloaded in ${conversion.downloadMilliseconds} ms, ` +
-        `converted ${length} in ${conversion.convertMilliseconds} ms${speed} to ${conversion.outputBytes} bytes, ` +
-        `uploaded in ${conversion.uploadMilliseconds} ms`,
-    );
+  const conversion = await withScratch(2 * original.size + SCRATCH_MARGIN_BYTES, (folder) =>
+    convertIn(folder, job, item.originalKey, videoKey, item.capturedAt, options),
+  );
+  const { facts } = conversion;
+  const videoSeconds = facts.videoStreamSeconds ?? facts.durationSeconds;
+  // The real conversion speed, for the couple's status page (spec §8.3): ids, sizes and times only.
+  const length = videoSeconds === null ? "a video of unknown length" : `${videoSeconds.toFixed(1)} s of video`;
+  const speed = videoSeconds ? ` (${(conversion.convertMilliseconds / 1000 / videoSeconds).toFixed(2)} s a second of video)` : "";
+  console.log(
+    `[worker] media.convert job=${job.id} media=${mediaId}: downloaded in ${conversion.downloadMilliseconds} ms, ` +
+      `converted ${length} in ${conversion.convertMilliseconds} ms${speed} to ${conversion.outputBytes} bytes, ` +
+      `uploaded in ${conversion.uploadMilliseconds} ms`,
+  );
 
-    const manifest = await markConversionDone(mediaId, videoKey);
-    if (!manifest) {
-      // Hidden or deleted while it converted (or finished by another job, under this same key).
-      await release(mediaId);
-      await withdrawIfHidden(job.queue, mediaId, [videoKey], job.signal);
-      return;
+  const manifest = await markConversionDone(mediaId, lease, videoKey);
+  if (!manifest) {
+    // Hidden or deleted while it converted: the lease goes, so an unhide finds it queued, and the file comes down.
+    try {
+      await releaseConversion(mediaId, lease);
+    } catch (error) {
+      console.error(`[worker] media.convert media=${mediaId} couldn't be put back to queued:`, describeError(error));
     }
-    await rewriteManifest(job.queue, mediaId, manifest, job.signal);
-    return { sizeBytes: original.size, kind: `video/${facts.codec}${facts.hdr ? "-hdr" : ""}` };
-  } catch (error) {
-    // A failure for good leaves it `converting` for media.dead to mark failed; any other is retried.
-    if (!(error instanceof PermanentJobError)) await release(mediaId);
-    throw error;
+    await withdrawIfHidden(job.queue, mediaId, [videoKey], job.signal);
+    return;
   }
+  await rewriteManifest(job.queue, mediaId, manifest, job.signal);
+  return { sizeBytes: original.size, kind: `video/${facts.codec}${facts.hdr ? "-hdr" : ""}` };
 }
 
 /** media.convert's handler, with the worker's settings: both its on-demand and its backlog workers run it. */

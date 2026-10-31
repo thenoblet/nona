@@ -19,6 +19,19 @@ import {
   type QueueWorkers,
 } from "./queues";
 
+// The switch's reads, which a test can make fail as a database that doesn't answer would.
+const settingReads = vi.hoisted(() => ({ fail: false }));
+vi.mock("@/lib/data/settings", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/data/settings")>();
+  return {
+    ...real,
+    getSetting: (async (...args: Parameters<typeof real.getSetting>) => {
+      if (settingReads.fail) throw Object.assign(new Error("connection terminated"), { code: "57P01" });
+      return real.getSetting(...args);
+    }) as typeof real.getSetting,
+  };
+});
+
 // A real pg-boss on the test database, in a schema of its own.
 const BOSS_SCHEMA = "pgboss_worker_queues_test";
 let boss: PgBoss;
@@ -66,7 +79,12 @@ async function insertItem(values: Partial<typeof media.$inferInsert> = {}): Prom
 
 async function readItem(id: string) {
   const [row] = await getDb()
-    .select({ status: media.status, failureReason: media.failureReason, conversion: media.conversion })
+    .select({
+      status: media.status,
+      failureReason: media.failureReason,
+      conversion: media.conversion,
+      conversionFailureReason: media.conversionFailureReason,
+    })
     .from(media)
     .where(eq(media.id, id));
   return row;
@@ -101,6 +119,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  settingReads.fail = false;
   await resetDb();
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -156,7 +175,9 @@ describe("a job that fails for good", () => {
     const mediaId = await insertItem({ kind: "video", status: "ready", conversion: "queued", listedAt: new Date() });
     await boss.send(MEDIA_QUEUES.convert, { mediaId }, { priority: CONVERT_PRIORITY.onDemand });
 
-    await eventually(async () => expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "failed" }));
+    await eventually(async () =>
+      expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "failed", conversionFailureReason: "corrupt" }),
+    );
   });
 
   it("leaves the item as it was when a hide fails for good, and says so in the log", async () => {
@@ -290,11 +311,16 @@ describe("the conversion workers", () => {
     expect(converted).toEqual([onDemandItem]);
     const jobs = await boss.findJobs<{ mediaId: string }>(MEDIA_QUEUES.convert, { data: { mediaId: backlogItem } });
     // The attempt it was fetched for is settled, and the conversion waits again in the backlog with
-    // none of its attempts used: nothing failed.
-    expect(jobs.map((job) => ({ state: job.state, priority: job.priority, retryCount: job.retryCount })).sort()).toEqual(
+    // none of its attempts used, carrying the held job's lease (Ruling AQ): nothing failed.
+    expect(jobs.map((job) => ({ state: job.state, priority: job.priority, retryCount: job.retryCount, data: job.data }))).toEqual(
       expect.arrayContaining([
-        { state: "completed", priority: CONVERT_PRIORITY.backlog, retryCount: 0 },
-        { state: "created", priority: CONVERT_PRIORITY.backlog, retryCount: 0 },
+        { state: "completed", priority: CONVERT_PRIORITY.backlog, retryCount: 0, data: { mediaId: backlogItem } },
+        {
+          state: "created",
+          priority: CONVERT_PRIORITY.backlog,
+          retryCount: 0,
+          data: { mediaId: backlogItem, leaseJobId: backlogJob },
+        },
       ]),
     );
     expect(jobs).toHaveLength(2);
@@ -303,6 +329,45 @@ describe("the conversion workers", () => {
     await setSetting("convert_backlog", true);
     await running.followBacklogSwitch();
     await eventually(async () => expect(converted).toEqual([onDemandItem, backlogItem]));
+  });
+
+  it("sends a held job on at priority 20 when a guest is waiting for the video, and the on-demand worker takes it at once", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await setSetting("convert_backlog", true);
+    const converted: { mediaId: string; leaseJobId: unknown }[] = [];
+    await start({
+      [MEDIA_QUEUES.convert]: async (job) => {
+        converted.push({ mediaId: String(job.data.mediaId), leaseJobId: job.data.leaseJobId });
+      },
+    });
+    await setSetting("convert_backlog", false);
+    const asked = await insertItem({ kind: "video", status: "ready", conversion: "converting", conversionRequestedAt: new Date() });
+    const heldJob = await boss.send(MEDIA_QUEUES.convert, { mediaId: asked }, { priority: CONVERT_PRIORITY.backlog });
+
+    // Held by the switch, and carried on at once by the on-demand worker, under the held job's lease.
+    await eventually(async () => expect(converted).toEqual([{ mediaId: asked, leaseJobId: heldJob }]));
+    expect(log.mock.calls.flat().join(" ")).toContain(`media.convert held back job=${heldJob}`);
+  });
+
+  it("holds a backlog job back, never failing it, when the switch can't be read", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await setSetting("convert_backlog", true);
+    const converted: string[] = [];
+    await start({
+      [MEDIA_QUEUES.convert]: async (job) => {
+        converted.push(String(job.data.mediaId));
+      },
+    });
+    settingReads.fail = true;
+    const mediaId = randomUUID();
+    const jobId = await boss.send(MEDIA_QUEUES.convert, { mediaId }, { priority: CONVERT_PRIORITY.backlog });
+
+    await eventually(async () => expect(await jobState(MEDIA_QUEUES.convert, jobId ?? "")).toBe("completed"));
+    expect(converted).toEqual([]);
+    expect(errors.mock.calls.flat().join(" ")).toContain(`could not read the backlog switch for job=${jobId}`);
+    const jobs = await boss.findJobs<{ mediaId: string }>(MEDIA_QUEUES.convert, { data: { mediaId } });
+    expect(jobs.map((job) => job.state).sort()).toEqual(["completed", "created"]);
+    expect(jobs.every((job) => job.retryCount === 0)).toBe(true);
   });
 
   it("stops the backlog worker fetching as soon as it holds a job back, so it doesn't fetch the next at once", async () => {

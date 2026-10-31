@@ -39,7 +39,8 @@ import {
  * Then the two files go to the public bucket under a content hash, and the item turns `ready`,
  * listed, in the celebration its capture time falls in (unless the couple moved it), with whether
  * every phone can play it as it is. A video that can't be played everywhere, or is long, is queued
- * for a backlog conversion (media.convert, Task 11), sent once.
+ * for a backlog conversion (media.convert, Task 11), sent once; one longer than the worker converts
+ * (WORKER_CONVERT_MAX_SECONDS) has its conversion failed, `too-long`, at once, and none is sent.
  *
  * Both tools run under a memory cap (WORKER_FFMPEG_MEMORY_BYTES) on WORKER_POSTER_THREADS and
  * WORKER_FFMPEG_FILTER_THREADS threads, and read through bounded reconnects. Over the network a
@@ -91,6 +92,8 @@ export type PosterOptions = {
   filterThreads: number;
   /** The job queue the video's conversion is sent to. */
   jobQueue: () => Promise<Pick<PgBoss, "send">>;
+  /** The longest video converted (WORKER_CONVERT_MAX_SECONDS): a longer one's conversion is failed, `too-long`, and never queued. */
+  convertMaxSeconds: number;
 };
 
 /** Where and how a job runs ffprobe and ffmpeg: over the presigned link to the original, a credential, never logged. */
@@ -291,6 +294,7 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
     videoCodec: facts.codec,
     browserPlayable: facts.browserPlayable,
     needsConversion: !facts.browserPlayable || (facts.durationSeconds ?? 0) > LONG_VIDEO_SECONDS,
+    tooLongToConvert: (facts.durationSeconds ?? 0) > options.convertMaxSeconds,
   });
   if (!marked) {
     await withdrawIfHidden(job.queue, mediaId, [keys["poster-thumb"], keys["poster-view"]], job.signal);

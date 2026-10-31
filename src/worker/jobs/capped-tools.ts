@@ -1,5 +1,11 @@
 import { runProcess, type ProcessError, type ProcessOutput, type RedactedLink } from "../processes";
 
+/**
+ * The hard CPU limit's lead over the soft one: SIGXCPU comes first, so the tool can say it ran out
+ * of CPU time, rather than a SIGKILL that would read as the OOM killer's and be retried.
+ */
+const CPU_HARD_LIMIT_MARGIN_SECONDS = 60;
+
 /*
  * The programs the worker runs on a guest's file (heif-info and heif-dec for a HEIC, ffprobe and
  * ffmpeg for a video), each under a memory cap, and what their failures say about whose fault they
@@ -9,6 +15,13 @@ import { runProcess, type ProcessError, type ProcessOutput, type RedactedLink } 
 export type CappedRun = {
   /** The most address space the tool may take: prlimit --as. A crafted file hits it, a real one never does. */
   memoryBytes: number;
+  /**
+   * The most CPU time the tool may use, all its threads together, in seconds: prlimit --cpu (RLIMIT_CPU).
+   * Unlike its run time, a busy box can't eat it: time spent waiting for a CPU doesn't count. Past
+   * it the kernel sends SIGXCPU, and SIGKILL a minute of CPU later if the tool hasn't stopped
+   * (ffmpeg catches SIGXCPU and exits 255, "Immediate exit requested"). None when unset.
+   */
+  cpuSeconds?: number;
   /** The job's signal: aborting it kills the tool. */
   signal: AbortSignal;
   timeoutMilliseconds: number;
@@ -29,7 +42,8 @@ export type CappedRun = {
  * its stdout and the end of its stderr; a failure is the ProcessError runProcess gives.
  */
 export function runCapped(tool: string, args: readonly string[], run: CappedRun): Promise<ProcessOutput> {
-  return runProcess("prlimit", [`--as=${run.memoryBytes}`, "--", tool, ...args], {
+  const cpu = run.cpuSeconds === undefined ? [] : [`--cpu=${run.cpuSeconds}:${run.cpuSeconds + CPU_HARD_LIMIT_MARGIN_SECONDS}`];
+  return runProcess("prlimit", [`--as=${run.memoryBytes}`, ...cpu, "--", tool, ...args], {
     signal: run.signal,
     timeoutMilliseconds: run.timeoutMilliseconds,
     priority: run.priority,

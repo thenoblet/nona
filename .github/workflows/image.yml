@@ -161,9 +161,11 @@ jobs:
           cache-from: type=gha,scope=worker-test
           cache-to: type=gha,scope=worker-test,mode=max
 
-      # Creates MinIO's two buckets, then runs npm run test:worker.
+      # Creates MinIO's two buckets, then runs npm run test:worker on 3 CPUs, as nona-worker-01's
+      # container has them: Ruling E's test (a photo stays fast while a 4K HDR conversion runs)
+      # holds only on the CPUs production has.
       - run: docker run --rm --network host nona-worker-test npm run storage:init
-      - run: docker run --rm --network host nona-worker-test
+      - run: docker run --rm --network host --cpus=3 nona-worker-test
 
   build:
     needs: test

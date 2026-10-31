@@ -112,6 +112,7 @@ function posterOptions(changes: Partial<PosterOptions> = {}): PosterOptions {
     posterThreads: config.threads.poster,
     filterThreads: config.threads.ffmpegFilters,
     jobQueue: async () => boss,
+    convertMaxSeconds: config.convertMaxSeconds,
     ...changes,
   };
 }
@@ -595,6 +596,28 @@ describe.skipIf(!ffmpegSeven)("a video's poster (Review Focus 2)", () => {
     expect(await conversionJobs(mediaId)).toHaveLength(1);
   });
 
+  it("queues no conversion of a video longer than the worker converts: its conversion is failed, too-long, at once (Ruling AR)", async () => {
+    const long = await clip("long.mp4", [
+      ...["-f", "lavfi", "-i", "testsrc2=size=160x90:rate=2", "-t", "185"],
+      ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+    ]);
+    const unplayable = await uploadedVideo(await rotatedClip(), "mov");
+    const longId = await uploadedVideo(long, "mp4");
+
+    await processVideo(videoJob(longId), posterOptions({ convertMaxSeconds: 180 }));
+    await processVideo(videoJob(unplayable), posterOptions({ convertMaxSeconds: 1 }));
+
+    for (const mediaId of [longId, unplayable]) {
+      expect(await readItem(mediaId), mediaId).toMatchObject({
+        status: "ready",
+        failureReason: null,
+        conversion: "failed",
+        conversionFailureReason: "too-long",
+      });
+      expect(await conversionJobs(mediaId)).toEqual([]);
+    }
+  });
+
   it("makes a 4K HDR video's poster well inside the photo's 20 s budget, on one thread", async () => {
     // 4K HLG with keyframes 2 s apart: the poster's frame is decoded from the keyframe before it.
     const mov = await hlgClip("3840x2160", 1.6, 60);
@@ -761,8 +784,16 @@ describe.skipIf(!ffmpegSeven)("a file that isn't a video the album takes (Review
         said.push(parts.map(String).join(" "));
       });
     }
-    // ffprobe ends its error with the link it was given: "<link>: Invalid data found…".
-    const random = await uploadedVideo(randomBytes(20_000), "mp4");
+    // ffprobe ends its error with the link it was given: "<link>: Invalid data found…". An MP4's
+    // `ftyp` box first, then noise: always the MOV demuxer, with no `moov` to find. Noise alone is
+    // now and then sniffed as another format (once, lrc), which the whitelist refuses differently.
+    const ftyp = Buffer.concat([
+      Buffer.from([0, 0, 0, 24]),
+      Buffer.from("ftypisom", "latin1"),
+      Buffer.from([0, 0, 2, 0]),
+      Buffer.from("isomiso2", "latin1"),
+    ]);
+    const random = await uploadedVideo(Buffer.concat([ftyp, randomBytes(20_000)]), "mp4");
     for (const retryCount of [0, 2]) {
       const error = await failureOf(random, retryCount);
       expect(error?.message).toContain("the original: Invalid data found when processing input");
@@ -871,6 +902,25 @@ describe("videoToolFailure: the file's fault for good on the third attempt, the 
       expect(error).not.toBeInstanceOf(PermanentJobError);
       expect(error.cause).toBeUndefined();
     }
+  });
+
+  it("blames the file from its third attempt when ffmpeg used up its CPU time: waiting for a CPU doesn't count (Ruling AR)", () => {
+    // What ffmpeg 7.1 prints when its RLIMIT_CPU's SIGXCPU arrives: it catches it and exits 255.
+    const stopped =
+      "[out#0/mp4 @ 0x574e] Task finished with error code: -1414092869 (Immediate exit requested)\n[out#0/mp4 @ 0x574e] Error closing file: Immediate exit requested\n";
+    const failure = (retryCount: number, error: ProcessError, cpuSeconds?: number) =>
+      videoToolFailure("ffmpeg", error, { memoryBytes: 3 * 1024 ** 3, retryCount, source: "scratch", cpuSeconds });
+    for (const error of [new ProcessError("prlimit", "exit", 255, stopped), new ProcessError("prlimit", "exit", null, "", "SIGXCPU")]) {
+      for (const retryCount of [0, 1]) {
+        const early = failure(retryCount, error, 620);
+        expect(early).not.toBeInstanceOf(PermanentJobError);
+        expect(early.message).toMatch(/^ffmpeg used up its 620 s of CPU time on the video: .*\(tried again: the file is blamed from its third attempt\)$/);
+      }
+      expect(failure(2, error, 620)).toMatchObject({ reason: "corrupt", message: expect.stringMatching(/used up its 620 s of CPU time/) });
+    }
+    // The hard limit's SIGKILL reads as the OOM killer's: retried. A tool with no CPU limit never says it ran out.
+    expect(failure(2, new ProcessError("prlimit", "exit", null, "", "SIGKILL"), 620)).not.toBeInstanceOf(PermanentJobError);
+    expect(failure(0, new ProcessError("prlimit", "exit", 255, stopped)).message).not.toMatch(/CPU time/);
   });
 
   it("tries again, on every attempt, when the tool doesn't know an option: a worker image with an ffmpeg older than 7 (Ruling AP)", () => {

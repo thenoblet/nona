@@ -114,6 +114,17 @@ describe("workerConfig", () => {
     },
   );
 
+  it("converts videos up to 30 minutes long unless WORKER_CONVERT_MAX_SECONDS says otherwise (Ruling AR)", () => {
+    expect(workerConfig({ NODE_ENV: "development" }).convertMaxSeconds).toBe(1800);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CONVERT_MAX_SECONDS: "" }).convertMaxSeconds).toBe(1800);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CONVERT_MAX_SECONDS: "3600" }).convertMaxSeconds).toBe(3600);
+    for (const value of ["0", "59", "1.5", "half an hour", String(24 * 3600 + 1)]) {
+      expect(() => workerConfig({ NODE_ENV: "development", WORKER_CONVERT_MAX_SECONDS: value }), value).toThrow(
+        /WORKER_CONVERT_MAX_SECONDS/,
+      );
+    }
+  });
+
   it("converts at x264's veryfast preset unless WORKER_X264_PRESET names another of x264's presets", () => {
     expect(workerConfig({ NODE_ENV: "development" }).x264Preset).toBe("veryfast");
     expect(workerConfig({ NODE_ENV: "development", WORKER_X264_PRESET: "" }).x264Preset).toBe("veryfast");

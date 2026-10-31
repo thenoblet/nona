@@ -204,14 +204,18 @@ describe("POST /api/media/[id]/playable", () => {
     expect(await conversionJobs(mediaId)).toEqual([expect.objectContaining({ priority: CONVERT_PRIORITY.onDemand })]);
   });
 
-  it("says a conversion that failed for good has failed, and sends nothing: there is no version to wait for", async () => {
+  it("says a conversion that failed for good has failed, and why, and sends nothing: there is no version to wait for", async () => {
     await signIn();
-    const mediaId = await addVideo({ conversion: "failed" });
+    const tooLong = await addVideo({ conversion: "failed", conversionFailureReason: "too-long" });
+    const corrupt = await addVideo({ conversion: "failed", conversionFailureReason: "corrupt" });
+    const noReason = await addVideo({ conversion: "failed" });
 
-    expect(await (await askFor(mediaId)).json()).toEqual({ status: "failed" });
+    expect(await (await askFor(tooLong)).json()).toEqual({ status: "failed", reason: "too-long" });
+    expect(await (await askFor(corrupt)).json()).toEqual({ status: "failed", reason: "corrupt" });
+    expect(await (await askFor(noReason)).json()).toEqual({ status: "failed", reason: "conversion-failed" });
     await afterResponse();
 
-    expect(await conversionJobs(mediaId)).toEqual([]);
+    for (const mediaId of [tooLong, corrupt, noReason]) expect(await conversionJobs(mediaId)).toEqual([]);
   });
 
   it("answers preparing though the job couldn't be sent: the sweeper sends it from the row, at priority 20", async () => {
@@ -267,6 +271,31 @@ describe("POST /api/media/[id]/playable", () => {
     }
     expect((await readItem(mediaId)).conversionRequestedAt).toBeNull();
     expect(await conversionJobs(mediaId)).toEqual([]);
+  });
+
+  it("lets a guest start 10 conversions, then one a minute, with Retry-After: asking again for one started spends nothing", async () => {
+    await signIn();
+    const { burst } = RATE_LIMITS.conversion;
+    expect(RATE_LIMITS.conversion).toEqual({ burst: 10, refillEveryMs: 60_000 });
+    const videos = await Promise.all(Array.from({ length: burst + 1 }, () => addVideo()));
+
+    for (const mediaId of videos.slice(0, burst)) {
+      expect(await (await askFor(mediaId)).json()).toEqual({ status: "preparing" });
+    }
+    const limited = await askFor(videos[burst]);
+    // Asking again for one already started, or for one converted, takes nothing from the bucket.
+    const again = await askFor(videos[0]);
+    await afterResponse();
+
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThanOrEqual(30);
+    expect(limited.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await again.json()).toEqual({ status: "preparing" });
+    expect((await readItem(videos[burst])).conversionRequestedAt).toBeNull();
+    expect(await conversionJobs(videos[burst])).toEqual([]);
+    // Another guest has a bucket of their own.
+    await signIn("Kofi");
+    expect(await (await askFor(videos[burst])).json()).toEqual({ status: "preparing" });
   });
 
   it("limits each guest by their own playable bucket (100, then 2 a second), with Retry-After", async () => {
