@@ -280,9 +280,27 @@ async function iphoneClip({ seconds = 2, grain = false } = {}): Promise<Buffer> 
     ...["-movflags", "use_metadata_tags"],
     ...["-metadata", `com.apple.quicktime.location.ISO6709=${LOCATION}`],
     ...["-metadata", "com.apple.quicktime.creationdate=2026-12-06T01:00:00+0200"],
+    ...["-metadata", "com.apple.quicktime.make=Apple", "-metadata", "com.apple.quicktime.model=iPhone 15 Pro"],
+    ...["-metadata", "com.apple.quicktime.software=17.1.2"],
     ...["-metadata", `location=${LOCATION}`],
     ...["-f", "mov"],
   ]);
+}
+
+/** Apple's keys of the phone that made a clip, which a copy or a conversion must not carry. */
+const PHONE_KEYS = /quicktime\.(make|model|software)|iPhone 15 Pro|17\.1\.2/;
+
+/**
+ * HEVC an Apple player won't play as it is tagged: in Matroska (no sample entry at all), or in an
+ * MP4 tagged hev1 (parameter sets in the stream), turned −90.
+ */
+async function untaggedHevcClips(): Promise<{ matroska: Buffer; hev1: Buffer }> {
+  const hevc = ["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"];
+  const encode = ["-t", "2", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error", "-pix_fmt", "yuv420p", "-c:a", "aac"];
+  const matroska = await clip("hevc.mkv", [...hevc, ...encode, "-f", "matroska"]);
+  const flat = await saved(await clip("hev1.mp4", [...hevc, ...encode, "-tag:v", "hev1", "-f", "mp4"]), "mp4");
+  const hev1 = await clip("hev1-turned.mp4", ["-display_rotation", "-90", "-i", flat, "-c", "copy", "-f", "mp4"]);
+  return { matroska, hev1 };
 }
 
 /** A browser's recording: VP9 and Opus in WebM, which an MP4 doesn't carry as they are. */
@@ -321,7 +339,8 @@ async function uploadedVideo(bytes: Uint8Array, extension: string, values: Parti
       originalKey: key,
       originalFilename: `IMG_0001.${extension.toUpperCase()}`,
       sizeBytes: bytes.length,
-      contentType: extension === "mov" ? "video/quicktime" : extension === "webm" ? "video/webm" : "video/mp4",
+      contentType:
+        extension === "mov" ? "video/quicktime" : extension === "webm" ? "video/webm" : extension === "mkv" ? "video/x-matroska" : "video/mp4",
       status: "uploaded",
       startedAt: new Date("2026-12-06T12:00:00Z"),
       uploadedAt: new Date("2026-12-06T12:01:00Z"),
@@ -477,7 +496,14 @@ describe("copyProblem: a copy is checked before it is published, as a conversion
   const copy = (video: Partial<Stream> = {}, audio: Partial<Stream> | null = {}, extra: Partial<Stream>[] = []) => ({
     format: { duration: "3.008000" },
     streams: [
-      { codec_type: "video", codec_name: "h264", duration: "3.000000", side_data_list: [{ side_data_type: "Display Matrix", rotation: 90 }], ...video },
+      {
+        codec_type: "video",
+        codec_name: "h264",
+        codec_tag_string: "avc1",
+        duration: "3.000000",
+        side_data_list: [{ side_data_type: "Display Matrix", rotation: 90 }],
+        ...video,
+      },
       ...(audio === null ? [] : [{ codec_type: "audio", codec_name: "aac", duration: "3.008000", ...audio }]),
       ...extra,
     ],
@@ -490,11 +516,14 @@ describe("copyProblem: a copy is checked before it is published, as a conversion
     // −90 and 270 are the same turn.
     expect(copyProblem(copy({ side_data_list: [{ rotation: 270 }] }), { ...expected, rotation: -90 })).toBeNull();
     expect(copyProblem(copy({ side_data_list: undefined }, null), { ...expected, rotation: 0, audio: false })).toBeNull();
+    expect(copyProblem(copy({ codec_name: "hevc", codec_tag_string: "hvc1" }), { ...expected, codec: "hevc" })).toBeNull();
   });
 
   it("refuses anything else, saying what", () => {
     const problems: [string, unknown, typeof expected, RegExp][] = [
       ["another codec", copy({ codec_name: "hevc" }), expected, /video is hevc, not the original's h264/],
+      ["HEVC left hev1", copy({ codec_name: "hevc", codec_tag_string: "hev1" }), { ...expected, codec: "hevc" }, /hevc is tagged hev1, not hvc1/],
+      ["H.264 with no tag", copy({ codec_tag_string: undefined }), expected, /h264 is tagged nothing, not avc1/],
       ["its turn lost", copy({ side_data_list: undefined }), expected, /turns it 0°, the original 90°/],
       ["turned the other way", copy({ side_data_list: [{ rotation: -90 }] }), expected, /turns it 270°, the original 90°/],
       ["no sound", copy({}, null), expected, /no AAC audio/],
@@ -589,8 +618,9 @@ describe.skipIf(!ffmpegSeven)("a clean playable copy of a video (Task 14b)", () 
 
     const [run] = ffmpegRuns();
     expect(run.priority).toBe("background");
-    expect(run.args.slice(0, 4)).toEqual(["prlimit", `--as=${1536 * 1024 * 1024}`, "--", "ffmpeg"]);
-    const args = run.args.slice(4);
+    // Its memory cap, and five minutes of CPU time (a 2 GB copy took 7 s), the hard limit a minute on.
+    expect(run.args.slice(0, 5)).toEqual(["prlimit", `--as=${1536 * 1024 * 1024}`, "--cpu=300:360", "--", "ffmpeg"]);
+    const args = run.args.slice(5);
     const input = args.indexOf("-i");
     const valueAfter = (flag: string) => args[args.indexOf(flag) + 1];
     for (const flag of ["-hide_banner", "-nostdin", "-nostats", "-xerror", "-y"]) expect(args.indexOf(flag), flag).toBeLessThan(input);
@@ -601,6 +631,8 @@ describe.skipIf(!ffmpegSeven)("a clean playable copy of a video (Task 14b)", () 
     // The video and the sound the probe picked, never the subtitle (or an iPhone's metadata) tracks.
     expect(args.slice(input + 2, input + 6)).toEqual(["-map", "0:0", "-map", "0:1"]);
     expect(valueAfter("-c")).toBe("copy");
+    // H.264 keeps its avc1: the MP4 muxer refuses hvc1 for it.
+    expect(args).not.toContain("-tag:v");
     expect(valueAfter("-map_metadata")).toBe("-1");
     expect(valueAfter("-map_chapters")).toBe("-1");
     expect(valueAfter("-metadata")).toBe(`creation_time=${CAPTURED_AT.toISOString()}`);
@@ -644,13 +676,20 @@ describe.skipIf(!ffmpegSeven)("a clean playable copy of a video (Task 14b)", () 
     expect(rotationOf(copied)).toBe(-90);
     expect(locationsIn(copy.bytes)).toEqual([]);
     expect(JSON.stringify(await probeDescription(copy.bytes))).not.toMatch(/location|ISO6709|creationdate|05\.6037/i);
+    // Nor the phone that made it: Apple's make, model and software keys (the fixture has them, as an iPhone's does).
+    expect(PHONE_KEYS.test(original.toString("latin1"))).toBe(true);
+    expect(JSON.stringify(await probeDescription(copy.bytes))).not.toMatch(PHONE_KEYS);
+    expect(PHONE_KEYS.test(copy.bytes.toString("latin1"))).toBe(false);
     // Apple's own date, at its offset: 01:00 on Sunday at +02:00 is 23:00 on Saturday in Accra.
     expect((await probeDescription(copy.bytes)).format.tags).toMatchObject({ creation_time: "2026-12-05T23:00:00.000000Z" });
 
     // The conversion: 1080p, its bitrate held to the cap on a clip whose detail would take about 9
     // Mbit/s uncapped. x264's VBV (-maxrate 5M -bufsize 10M) lets any stretch of T seconds hold at
     // most 5 Mbit a second plus the 10 Mbit buffer, which starts nearly full: over 20 s, 5.5 Mbit/s.
-    const converted = await probeDescription((await readPublic(item.derived.video ?? "")).bytes);
+    const convertedBytes = (await readPublic(item.derived.video ?? "")).bytes;
+    const converted = await probeDescription(convertedBytes);
+    expect(JSON.stringify(converted)).not.toMatch(PHONE_KEYS);
+    expect(PHONE_KEYS.test(convertedBytes.toString("latin1"))).toBe(false);
     const video = videoOf(converted);
     expect(video).toMatchObject({ codec_name: "h264", profile: "High", width: 1080, height: 1920 });
     const bitsPerSecond = Number(video.bit_rate);
@@ -663,6 +702,40 @@ describe.skipIf(!ffmpegSeven)("a clean playable copy of a video (Task 14b)", () 
     // Near the cap: the detail made x264 want more, so the cap, not the CRF, set it.
     expect(bitsPerSecond).toBeGreaterThan(4_500_000);
   }, 600_000);
+
+  it("tags HEVC hvc1 whatever the original's (Matroska's none, an MP4's hev1), its packets and turn as they were", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { matroska, hev1 } = await untaggedHevcClips();
+    for (const [what, original, extension, rotation] of [
+      ["Matroska", matroska, "mkv", undefined],
+      ["hev1", hev1, "mp4", -90],
+    ] as const) {
+      programs.runs = [];
+      const mediaId = await readyVideo(original, extension, { videoCodec: "hevc", browserPlayable: false, width: 640, height: 360 });
+
+      await makePlayableCopy(playableJob(mediaId), playableOptions());
+
+      const copy = await readPublic((await readItem(mediaId)).derived.playable ?? "");
+      const video = videoOf(await probeDescription(copy.bytes));
+      expect(video, what).toMatchObject({ codec_name: "hevc", codec_tag_string: "hvc1" });
+      expect(rotationOf(video), what).toBe(rotation);
+      expect(await videoPacketsHash(copy.bytes), what).toBe(await videoPacketsHash(original));
+      const args = ffmpegRuns()[0].args;
+      expect(args.slice(args.indexOf("-c"), args.indexOf("-c") + 4), what).toEqual(["-c", "copy", "-tag:v", "hvc1"]);
+    }
+  });
+
+  it("writes no creation_time when no capture time is known", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const mediaId = await readyVideo(await phoneClip(), "mov", { capturedAt: null });
+
+    await makePlayableCopy(playableJob(mediaId), playableOptions());
+
+    expect(ffmpegRuns()[0].args).not.toContain("-metadata");
+    const description = await probeDescription((await readPublic((await readItem(mediaId)).derived.playable ?? "")).bytes);
+    expect(description.format.tags?.creation_time).toBeUndefined();
+    expect(videoOf(description).tags?.creation_time).toBeUndefined();
+  });
 
   it("is withdrawn with the rest when the video is hidden, and made again under a new key when it is unhidden", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});

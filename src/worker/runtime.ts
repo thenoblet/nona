@@ -40,9 +40,10 @@ export type WorkerOptions = {
  *
  * On a signal it stops fetching, kills every running program at once, gives jobs 5 s to settle,
  * fails the rest back to their queues (as a missed heartbeat would), lets the lock go and exits,
- * all within 8 s. Losing the lock's connection (Postgres restarting, or the network cutting it)
- * stops it the same way, exiting 1: another worker may hold the lock by then, and the container's
- * restart waits for it.
+ * all within 8 s. When the lock's connection closes (Postgres restarting, or the network cutting
+ * it) the worker takes the lock again and carries on, its jobs running (worker-lock.ts); only if
+ * another worker holds it by then does it stop the same way, exiting 1, and its container's restart
+ * waits for the lock.
  */
 export async function runWorker(options: WorkerOptions): Promise<void> {
   const stopping = new AbortController();
@@ -98,7 +99,7 @@ export async function runWorker(options: WorkerOptions): Promise<void> {
     const held = await takeWorkerLock({ signal: stopping.signal });
     lock = held;
     void held.lost.then(() => {
-      console.error("[worker] lost the worker lock's connection; stopping, so a restart takes the lock again");
+      console.error("[worker] another worker holds the worker lock now; stopping, so a restart waits for it");
       void stop("worker lock lost", 1);
     });
     await prepareScratchRoot(options.config.scratchRoot);

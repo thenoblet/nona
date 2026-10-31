@@ -66,8 +66,10 @@ export const MEDIA_QUEUE_OPTIONS: Readonly<Record<MediaQueueName, MediaQueueOpti
   [MEDIA_QUEUES.poster]: JOB_QUEUE,
   [MEDIA_QUEUES.wish]: JOB_QUEUE,
   [MEDIA_QUEUES.convert]: { ...JOB_QUEUE, expireInSeconds: 4 * 60 * 60 },
-  // A video's clean copy (Task 14b): a 2 GB original's download, copy and upload, with room for a slow day at R2.
-  [MEDIA_QUEUES.playable]: { ...JOB_QUEUE, expireInSeconds: 60 * 60 },
+  // A video's clean copy (Task 14b): a 2 GB original's download, copy and upload, with room for a
+  // slow day at R2. A finished job is kept 7 days (pg-boss's default, stated): the sweeper sends a
+  // copy's job only to a video listed within 6 days that never had one.
+  [MEDIA_QUEUES.playable]: { ...JOB_QUEUE, expireInSeconds: 60 * 60, deleteAfterSeconds: 7 * 24 * 60 * 60 },
   [MEDIA_QUEUES.visibility]: JOB_QUEUE,
   [MEDIA_QUEUES.card]: JOB_QUEUE,
   // The dead-letter handler only marks an item failed, so a few flat retries a minute apart. Flat

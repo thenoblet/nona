@@ -72,6 +72,10 @@ describe("the media queues' options", () => {
     }
   });
 
+  it("keep a playable copy's finished jobs 7 days: the sweeper sends a copy's job only to a video listed within 6 days that never had one", () => {
+    expect(MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.playable].deleteAfterSeconds).toBe(7 * 24 * 60 * 60);
+  });
+
   it("put a conversion someone asked for at 20, the worker's on-demand floor, above the backlog's", () => {
     expect(CONVERT_PRIORITY).toEqual({ onDemand: 20, backlog: 0 });
   });

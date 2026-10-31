@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
+import { connect, createServer, type Server, type Socket } from "node:net";
+import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dbConfig } from "@/lib/env";
-import { LOCK_CONNECTION_OPTIONS, takeWorkerLock, WORKER_LOCK_POLL_MILLISECONDS, type WorkerLock } from "./worker-lock";
+import { LOCK_CONNECTION_OPTIONS, takeWorkerLock, WORKER_LOCK_KEYS, WORKER_LOCK_POLL_MILLISECONDS, type WorkerLock } from "./worker-lock";
 
 /*
  * Ruling AZ: two worker containers overlapping (a start-first deploy) never both wipe scratch or
@@ -13,11 +15,17 @@ import { LOCK_CONNECTION_OPTIONS, takeWorkerLock, WORKER_LOCK_POLL_MILLISECONDS,
  */
 
 const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
+const [FIRST_KEY, SECOND_KEY] = WORKER_LOCK_KEYS;
 const held: WorkerLock[] = [];
+const relays: { server: Server; sockets: Socket[] }[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(held.splice(0).map((lock) => lock.release()));
+  for (const { server, sockets } of relays.splice(0)) {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 async function take(options: Parameters<typeof takeWorkerLock>[0] = {}): Promise<WorkerLock> {
@@ -37,6 +45,20 @@ async function settledWithin(promise: Promise<unknown>, milliseconds: number): P
   return settled;
 }
 
+/** Polls until `check` passes or `timeoutMilliseconds` runs out, then runs it once more to report. */
+async function eventually(check: () => Promise<void>, timeoutMilliseconds = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  for (;;) {
+    try {
+      await check();
+      return;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
 /** Runs a query on a connection of the test's own. */
 async function onOwnConnection<TResult>(query: (sql: postgres.Sql) => Promise<TResult>): Promise<TResult> {
   const sql = postgres({ ...dbConfig(), max: 1, connect_timeout: 5, onnotice: () => {} });
@@ -47,9 +69,59 @@ async function onOwnConnection<TResult>(query: (sql: postgres.Sql) => Promise<TR
   }
 }
 
+/** The lock's sessions open in Postgres now. */
+async function lockSessions(): Promise<number> {
+  const [row] = await onOwnConnection(
+    (sql) => sql<{ count: string }[]>`select count(*) from pg_stat_activity where application_name = 'nona-worker-lock'`,
+  );
+  return Number(row.count);
+}
+
+/**
+ * A TCP relay to the test database whose client side can be cut on its own, as a network fault
+ * cuts a worker off: Postgres keeps the session (and its lock) until it notices.
+ */
+async function relayToDatabase(): Promise<{ port: number; cutClients(): void }> {
+  const database = dbConfig();
+  const pairs: { client: Socket; upstream: Socket }[] = [];
+  const sockets: Socket[] = [];
+  const server = createServer((client) => {
+    const upstream = connect(database.port, database.host);
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+    client.pipe(upstream);
+    upstream.pipe(client);
+    pairs.push({ client, upstream });
+    sockets.push(client, upstream);
+  });
+  relays.push({ server, sockets });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    port: (server.address() as AddressInfo).port,
+    cutClients() {
+      for (const { client, upstream } of pairs.splice(0)) {
+        upstream.unpipe(client);
+        client.unpipe(upstream);
+        // The worker's side closes; Postgres's stays open and quiet, its session alive.
+        client.destroy();
+      }
+    },
+  };
+}
+
 describe("the worker lock (Ruling AZ)", () => {
-  it("polls every 5 s in production", () => {
+  it("polls every 5 s in production, on a key space of its own (two int4 keys)", () => {
     expect(WORKER_LOCK_POLL_MILLISECONDS).toBe(5_000);
+    expect(WORKER_LOCK_KEYS).toEqual([0x4e4f4e41, 0x57524b52]);
+  });
+
+  it("never collides with a single-key lock, such as the app's on a hashtext(...)", async () => {
+    await take();
+    const [other] = await onOwnConnection(
+      (sql) => sql<{ single: boolean; same: boolean }[]>`select pg_try_advisory_lock(hashtext('nona-worker')) as single,
+        pg_try_advisory_lock(${FIRST_KEY}::integer, ${SECOND_KEY}::integer) as same`,
+    );
+    expect(other).toEqual({ single: true, same: false });
   });
 
   it("makes a second worker wait, saying so, and hands over within a poll of the first letting go", async () => {
@@ -80,7 +152,7 @@ describe("the worker lock (Ruling AZ)", () => {
         `import postgres from "postgres";
          const sql = postgres({ host: process.env.POSTGRES_HOST, port: Number(process.env.POSTGRES_PORT), database: process.env.POSTGRES_DB,
            username: process.env.POSTGRES_USER, password: process.env.POSTGRES_PASSWORD, max: 1, onnotice: () => {} });
-         const [row] = await sql\`select pg_try_advisory_lock(hashtext('nona-worker')) as locked\`;
+         const [row] = await sql\`select pg_try_advisory_lock(${FIRST_KEY}, ${SECOND_KEY}) as locked\`;
          console.log(row.locked ? "locked" : "refused");`,
       ],
       { cwd: projectRoot, env: process.env, stdio: ["ignore", "pipe", "inherit"] },
@@ -100,25 +172,72 @@ describe("the worker lock (Ruling AZ)", () => {
     }
   });
 
-  it("says it is lost once its connection is gone, so the worker stops rather than run beside another", async () => {
+  it("takes the lock again on a new connection when Postgres ends its session (a restart), and carries on: it isn't lost", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const lock = await take();
-    expect(await lock.isHeld()).toBe(true);
 
-    // Postgres restarting, or the network cutting the session: its advisory lock goes with it.
     await onOwnConnection(
-      (sql) => sql`select pg_terminate_backend(pid) from pg_stat_activity where application_name = 'nona-worker-lock'`,
+      (sql) => sql`select pg_terminate_backend(pid, 5000) from pg_stat_activity where application_name = 'nona-worker-lock'`,
     );
 
-    await expect(Promise.race([lock.lost.then(() => "lost"), new Promise((resolve) => setTimeout(resolve, 5_000, "kept"))])).resolves.toBe(
-      "lost",
+    await eventually(async () => expect(await lock.isHeld()).toBe(true));
+    expect(await settledWithin(lock.lost, 500)).toBe(false);
+    expect(errors.mock.calls.flat().join(" ")).toContain("the worker lock's connection closed; taking the lock again");
+    // Still this worker's: another can't take it.
+    const [other] = await onOwnConnection(
+      (sql) => sql<{ locked: boolean }[]>`select pg_try_advisory_lock(${FIRST_KEY}::integer, ${SECOND_KEY}::integer) as locked`,
     );
-    expect(await lock.isHeld()).toBe(false);
-    // Another worker may now take it.
-    const next = await take();
-    expect(await next.isHeld()).toBe(true);
+    expect(other.locked).toBe(false);
+    expect(await lockSessions()).toBe(1);
   });
 
-  it("stops waiting when the worker is told to stop", async () => {
+  it("takes the lock again after a network cut, ending its own cut-off session that Postgres still thinks alive", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const relay = await relayToDatabase();
+    const lock = await take({ database: { ...dbConfig(), host: "127.0.0.1", port: relay.port } });
+    const [before] = await onOwnConnection(
+      (sql) => sql<{ pid: number }[]>`select pid from pg_stat_activity where application_name = 'nona-worker-lock'`,
+    );
+
+    relay.cutClients();
+
+    await eventually(async () => expect(await lock.isHeld()).toBe(true));
+    expect(await settledWithin(lock.lost, 500)).toBe(false);
+    // Its old session, which still held the lock, is gone; its new one holds it.
+    const after = await onOwnConnection(
+      (sql) => sql<{ pid: number }[]>`select pid from pg_stat_activity where application_name = 'nona-worker-lock'`,
+    );
+    expect(after).toHaveLength(1);
+    expect(after[0].pid).not.toBe(before.pid);
+  });
+
+  it("is lost, so the worker stops, when another worker took the lock while its connection was down", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const lock = await take();
+    const rival = postgres({ ...dbConfig(), max: 1, connect_timeout: 5, onnotice: () => {} });
+    try {
+      // Another worker queues for the lock, so Postgres grants it the moment this worker's session ends.
+      const rivalLocking = rival`select pg_advisory_lock(${FIRST_KEY}::integer, ${SECOND_KEY}::integer)`.execute();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await onOwnConnection(
+        (sql) => sql`select pg_terminate_backend(pid, 5000) from pg_stat_activity where application_name = 'nona-worker-lock'`,
+      );
+      await rivalLocking;
+
+      await expect(Promise.race([lock.lost.then(() => "lost"), new Promise((resolve) => setTimeout(resolve, 5_000, "kept"))])).resolves.toBe(
+        "lost",
+      );
+      expect(await lock.isHeld()).toBe(false);
+      expect(errors.mock.calls.flat().join(" ")).toContain("another worker took the worker lock while its connection was down");
+    } finally {
+      await rival.end({ timeout: 5 });
+    }
+  });
+
+  it("stops waiting when the worker is told to stop, leaving no connection behind", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     await take();
     const stopping = new AbortController();
@@ -128,11 +247,8 @@ describe("the worker lock (Ruling AZ)", () => {
     stopping.abort(new Error("The worker is stopping (SIGTERM)"));
 
     await expect(waiting).rejects.toThrow("The worker is stopping");
-    // It left no connection behind: only the holder's is open.
-    const sessions = await onOwnConnection(
-      (sql) => sql<{ count: string }[]>`select count(*) from pg_stat_activity where application_name = 'nona-worker-lock'`,
-    );
-    expect(Number(sessions[0].count)).toBe(1);
+    // Only the holder's is open.
+    await eventually(async () => expect(await lockSessions()).toBe(1));
   });
 
   it("keeps its session open for good: no idle timeout, no connection lifetime, and keepalives Postgres notices a vanished box by", () => {

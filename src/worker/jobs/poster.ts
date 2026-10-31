@@ -68,12 +68,15 @@ const POSTER_SETTINGS_VERSION = 2;
 const POSTER_AT_MOST_SECONDS = 1;
 /**
  * A video every phone plays is converted only when it is longer than this and its bitrate above
- * HEAVY_BITS_PER_SECOND: a long, heavy original is large to stream, its copy as large, where its
- * 1080p CRF-23 conversion is usually smaller (and capped, where WORKER_X264_MAXRATE is set).
+ * HEAVY_BITS_PER_SECOND: a long, heavy original is large to stream, its copy as large.
  */
 const LONG_VIDEO_SECONDS = 3 * 60;
-/** About 6 Mbit/s (Noblet, Task 14b). */
-const HEAVY_BITS_PER_SECOND = 6_000_000;
+/**
+ * About 12 Mbit/s (fix round 1): with no cap, CRF 23 makes about 8.7 Mbit/s of a phone's grainy
+ * 1080p (measured, Task 14b), so converting a 6 to 9 Mbit/s original saves nothing and costs a
+ * generation of quality; above 12, its conversion is clearly smaller.
+ */
+const HEAVY_BITS_PER_SECOND = 12_000_000;
 /** ffprobe and ffmpeg give up on a read or write that makes no progress for this long (in microseconds: 10 s). */
 const READ_TIMEOUT_MICROSECONDS = 10_000_000;
 /** ffprobe reads only the container's index and a few MB: well under a second for a phone's video. */
@@ -240,8 +243,9 @@ async function posterOf(run: PosterRun): Promise<Poster> {
  * Whether the video gets an H.264 conversion beside its clean copy (Noblet, Task 14b):
  * - every video a phone can't play as it is (HEVC, HDR, 4K, slow motion, a browser's WebM: its
  *   probe's browserPlayable), always;
- * - an H.264 video every phone plays, only when it is longer than 3 minutes and its average
- *   bitrate (the original's size over its length, sound included) is above about 6 Mbit/s;
+ * - an H.264 video every phone plays (within 1920, which browserPlayable requires), only when it is
+ *   longer than 3 minutes and its average bitrate (the original's size over its length, sound
+ *   included) is above about 12 Mbit/s;
  * - otherwise none: its clean copy is what the album plays.
  * Exported for its test.
  */

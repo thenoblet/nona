@@ -24,6 +24,7 @@ import { workerConfig } from "../config";
 import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
 import {
+  conversionCpuSeconds,
   conversionMilliseconds,
   conversionThreads,
   convertHandler,
@@ -233,10 +234,15 @@ async function iphoneClip(): Promise<Buffer> {
     ...["-movflags", "use_metadata_tags"],
     ...["-metadata", `com.apple.quicktime.location.ISO6709=${LOCATION}`],
     ...["-metadata", "com.apple.quicktime.creationdate=2026-12-06T01:00:00+0200"],
+    ...["-metadata", "com.apple.quicktime.make=Apple", "-metadata", "com.apple.quicktime.model=iPhone 15 Pro"],
+    ...["-metadata", "com.apple.quicktime.software=17.1.2"],
     ...["-metadata", `location=${LOCATION}`],
     ...["-f", "mov"],
   ]);
 }
+
+/** Apple's keys of the phone that made a clip, which a conversion must not carry. */
+const PHONE_KEYS = /quicktime\.(make|model|software)|iPhone 15 Pro|17\.1\.2/;
 
 /**
  * An Android phone's clip: H.264 at full range (yuvj420p), with AAC, in a MOV whose location is a
@@ -506,6 +512,24 @@ describe("outputProblem: exiting 0 isn't success (ffmpeg notes §4.17)", () => {
   });
 });
 
+describe("conversionCpuSeconds: the conversion's CPU time, sized from its length and frame rate (Ruling AR)", () => {
+  it("gives ten minutes and 30 CPU-seconds a second of video at 30 fps, or below", () => {
+    expect(conversionCpuSeconds(81.3, 30, 1800)).toBe(600 + 2439);
+    expect(conversionCpuSeconds(10, 24, 1800)).toBe(900);
+    expect(conversionCpuSeconds(10, null, 1800)).toBe(900);
+  });
+
+  it("gives more in proportion to the frames read: twice at 60 fps, eight times for 240 fps slow motion", () => {
+    expect(conversionCpuSeconds(10, 60, 1800)).toBe(600 + 600);
+    expect(conversionCpuSeconds(10, 240, 1800)).toBe(600 + 2400);
+    expect(conversionCpuSeconds(10, 59.94, 1800)).toBe(Math.ceil(600 + 10 * 30 * (59.94 / 30)));
+  });
+
+  it("gives a video of no known length the longest's", () => {
+    expect(conversionCpuSeconds(null, 30, 1800)).toBe(600 + 1800 * 30);
+  });
+});
+
 describe("conversionMilliseconds: the conversion's time, sized from its measured speed", () => {
   it("gives ten seconds a second of video and ten minutes more, never past three hours", () => {
     expect(conversionMilliseconds(10)).toBe(10 * 60_000 + 100_000);
@@ -568,6 +592,10 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     expect(locationsIn(converted.bytes)).toEqual([]);
     expect(description.format.tags).toMatchObject({ creation_time: "2026-12-05T23:00:00.000000Z" });
     expect(JSON.stringify(description)).not.toMatch(/location|ISO6709|creationdate|05\.6037/i);
+    // Nor the phone that made it: Apple's make, model and software keys, which the original has.
+    expect(PHONE_KEYS.test(original.toString("latin1"))).toBe(true);
+    expect(JSON.stringify(description)).not.toMatch(PHONE_KEYS);
+    expect(PHONE_KEYS.test(converted.bytes.toString("latin1"))).toBe(false);
     expect(video.tags).toMatchObject({ creation_time: "2026-12-05T23:00:00.000000Z" });
 
     expect(report).toEqual({ sizeBytes: original.length, kind: "video/hevc-hdr" });
@@ -582,12 +610,12 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
 
     const [run] = conversionRuns();
     expect(run.priority).toBe("background");
-    // Its memory cap, and its CPU time (Ruling AR): ten minutes and ten CPU-seconds a second of its
-    // 2 s, the hard limit a minute past the soft one, so ffmpeg is told (SIGXCPU) before it is killed.
+    // Its memory cap, and its CPU time (Ruling AR): ten minutes and 30 CPU-seconds a second of its
+    // 2 s at 30 fps, the hard limit a minute past the soft one, so ffmpeg is told (SIGXCPU) before it is killed.
     expect(run.args.slice(0, 2)).toEqual(["prlimit", `--as=${3 * 1024 ** 3}`]);
     const [soft, hard] = (/^--cpu=(\d+):(\d+)$/.exec(run.args[2]) ?? []).slice(1).map(Number);
-    expect(soft).toBeGreaterThanOrEqual(620);
-    expect(soft).toBeLessThanOrEqual(622);
+    expect(soft).toBeGreaterThanOrEqual(660);
+    expect(soft).toBeLessThanOrEqual(666);
     expect(hard).toBe(soft + 60);
     expect(run.args.slice(3, 5)).toEqual(["--", "ffmpeg"]);
     const args = run.args.slice(5);

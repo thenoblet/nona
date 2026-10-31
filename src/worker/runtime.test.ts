@@ -7,6 +7,8 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import postgres from "postgres";
+import { dbConfig } from "@/lib/env";
 import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { buildWorker } from "../../scripts/build-worker.mjs";
 import { resetDb } from "../../test/db";
@@ -126,6 +128,37 @@ describe("two workers overlapping, as a start-first deploy runs them (Ruling AZ)
           worker.harness.kill("SIGTERM");
           await worker.exited;
         }
+      }
+    }
+  });
+});
+
+describe("the lock's connection closing under a running worker (Postgres restarting)", () => {
+  it("takes the lock again and keeps the worker running, rather than kill every job", async () => {
+    const worker = startHarness();
+    try {
+      await worker.output.waitFor(/\[worker\] ready/);
+      const sql = postgres({ ...dbConfig(), max: 1, connect_timeout: 5, onnotice: () => {} });
+      try {
+        await sql`select pg_terminate_backend(pid, 5000) from pg_stat_activity where application_name = 'nona-worker-lock'`;
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+
+      await worker.output.waitFor(/\[worker\] took the worker lock again on a new connection/, 20_000);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(worker.harness.exitCode).toBeNull();
+      expect(worker.errors()).toContain("the worker lock's connection closed; taking the lock again");
+      expect(worker.output.lines.join("\n")).not.toContain("stopping");
+
+      worker.harness.kill("SIGTERM");
+      expect(await worker.exited).toBe(0);
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : error}\nThe worker's stderr:\n${worker.errors()}`);
+    } finally {
+      if (worker.harness.exitCode === null) {
+        worker.harness.kill("SIGTERM");
+        await worker.exited;
       }
     }
   });

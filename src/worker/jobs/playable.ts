@@ -38,10 +38,10 @@ import {
  *    delivery included, does nothing;
  * 2. streams the original into its scratch folder (twice its size must be free: the original, the
  *    copy, and `moov` moved to the front in place, §4.13) and probes it there;
- * 3. copies its video and sound into an MP4, nice'd, under the probe's memory cap (a copy decodes
- *    nothing), from the scratch file only;
+ * 3. copies its video and sound into an MP4 (HEVC tagged hvc1), nice'd, under the probe's memory
+ *    cap (a copy decodes nothing) and five minutes of CPU time, from the scratch file only;
  * 4. checks what ffmpeg made, since exiting 0 isn't success (§4.17): one video stream of the
- *    original's codec, turned as the original was, its AAC if it had sound, nothing else, as long
+ *    original's codec, tagged avc1 or hvc1, turned as the original was, its AAC if it had sound, nothing else, as long
  *    as the original, `moov` before `mdat`, and no location in its index in any form a phone writes;
  * 5. puts it in the public bucket under a content hash, cached for good, names it `derived.playable`
  *    while the video is still ready, visible and in the same generation, and writes its manifest.
@@ -67,6 +67,12 @@ const PROBE_MILLISECONDS = 60_000;
  * expireInSeconds) with the download and the upload.
  */
 const COPY_MILLISECONDS = 15 * 60_000;
+/**
+ * The copy's CPU time (prlimit --cpu, Ruling AR): a 2 GB original copied in 7 CPU-seconds
+ * (measured, Task 14b), so five minutes is forty times that. A file that makes the copy spin is
+ * blamed from its third attempt, rather than hold the queue's one slot for 15 minutes an attempt.
+ */
+const COPY_CPU_SECONDS = 300;
 /** Scratch beyond twice the original: `moov` moved to the front, and a small original's headers. */
 const SCRATCH_MARGIN_BYTES = 64 * 1024 * 1024;
 /**
@@ -107,11 +113,13 @@ export function streamsCopyable(facts: Pick<VideoFacts, "codec" | "audioCodec">)
  *   players obey (§4.1, "Rotation survives -map_metadata -1 on stream copy");
  * - -map_metadata -1 and -map_chapters -1 drop every tag, location included (`©xyz`, `loci`,
  *   Apple's location key), and only the capture time is written back (§4.12);
+ * - HEVC is tagged hvc1 (-tag, ffmpeg §5.4), whatever the original's: -c copy would keep an hev1
+ *   tag, or a Matroska original's none, which Apple's players refuse; an iPhone's hvc1 stays so.
+ *   H.264 only, never: the MP4 muxer refuses hvc1 for it;
  * - +faststart writes the `moov` before the `mdat`, by a second pass over a regular file (§4.13).
- * The HEVC tag is the original's (an iPhone's hvc1 stays hvc1): -c copy keeps it.
  */
 export function remuxArgs(
-  facts: Pick<VideoFacts, "streamIndex" | "audioStreamIndex">,
+  facts: Pick<VideoFacts, "streamIndex" | "audioStreamIndex" | "codec">,
   paths: { original: string; output: string },
   capturedAt: Date | null,
 ): string[] {
@@ -123,6 +131,7 @@ export function remuxArgs(
     ...["-i", paths.original],
     ...["-map", `0:${facts.streamIndex}`, ...(audio === null ? [] : ["-map", `0:${audio}`])],
     ...["-c", "copy"],
+    ...(facts.codec === "hevc" ? ["-tag:v", "hvc1"] : []),
     ...["-map_metadata", "-1", "-map_chapters", "-1"],
     // ISO 8601, which ffmpeg stores in mvhd, tkhd and mdhd to the second (§2.3).
     ...(capturedAt === null ? [] : ["-metadata", `creation_time=${capturedAt.toISOString()}`]),
@@ -130,8 +139,10 @@ export function remuxArgs(
   ];
 }
 
-/** What ffprobe is asked of the copy: its streams, their lengths and display matrices, and the file's length. */
-const COPY_ENTRIES = "format=duration:stream=codec_type,codec_name,duration:stream_side_data_list";
+/** What ffprobe is asked of the copy: its streams, their tags, lengths and display matrices, and the file's length. */
+const COPY_ENTRIES = "format=duration:stream=codec_type,codec_name,codec_tag_string,duration:stream_side_data_list";
+/** The sample entry each copied codec must have in the MP4: what every phone's player looks for. */
+const COPY_TAGS: Record<string, string> = { h264: "avc1", hevc: "hvc1" };
 
 const text = zod.string().optional();
 const copySchema = zod.object({
@@ -140,6 +151,7 @@ const copySchema = zod.object({
     zod.object({
       codec_type: text,
       codec_name: text,
+      codec_tag_string: text,
       duration: text,
       side_data_list: zod.array(zod.object({ rotation: zod.number().optional() })).optional(),
     }),
@@ -164,7 +176,8 @@ export type ExpectedCopy = {
 
 /**
  * What is wrong with the copy, from ffprobe's JSON (COPY_ENTRIES), or null when it is what the
- * album serves (ffmpeg notes §4.17): one video stream, the original's codec, turned as the original
+ * album serves (ffmpeg notes §4.17): one video stream, the original's codec tagged as phones expect
+ * (avc1, hvc1), turned as the original
  * (its display matrix kept, §4.1), its AAC when it had sound and no sound otherwise, nothing else
  * (no subtitle or data track), and as long as the original, within half a second. Exported for its test.
  */
@@ -178,6 +191,8 @@ export function copyProblem(probeJson: unknown, expected: ExpectedCopy): string 
   if (other) return `the copy carries a ${other.codec_type ?? "nameless"} stream`;
   const [video] = videos;
   if (video.codec_name !== expected.codec) return `the copy's video is ${video.codec_name ?? "of no codec"}, not the original's ${expected.codec}`;
+  const tag = COPY_TAGS[expected.codec];
+  if (tag && video.codec_tag_string !== tag) return `the copy's ${expected.codec} is tagged ${video.codec_tag_string ?? "nothing"}, not ${tag}`;
   const turn = video.side_data_list?.find((sideData) => typeof sideData.rotation === "number")?.rotation ?? 0;
   if (degrees(turn) !== degrees(expected.rotation)) {
     return `the copy's display matrix turns it ${degrees(turn)}°, the original ${degrees(expected.rotation)}°`;
@@ -351,7 +366,7 @@ async function copyIn(folder: string, job: MediaJob, video: VideoToCopy, key: st
   const copyStartedAt = performance.now();
   const facts = await probeVideo(SCRATCH_FILE_READING, paths.original, run, PROBE_MILLISECONDS);
   if (!streamsCopyable(facts)) return { made: false, facts };
-  await runVideoTool("ffmpeg", remuxArgs(facts, paths, video.capturedAt), run, COPY_MILLISECONDS);
+  await runVideoTool("ffmpeg", remuxArgs(facts, paths, video.capturedAt), { ...run, cpuSeconds: COPY_CPU_SECONDS }, COPY_MILLISECONDS);
   const outputBytes = await checkCopy(paths.output, facts, run);
   const uploadStartedAt = performance.now();
   const copied = createReadStream(paths.output);

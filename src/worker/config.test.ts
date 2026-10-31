@@ -153,6 +153,18 @@ describe("workerConfig", () => {
     expect(conversionPeakBytes(16)).toBe(3850 * 1024 ** 2);
   });
 
+  it("counts every filter thread past the first in a conversion's need, about 85 MiB each", () => {
+    expect(conversionPeakBytes(3, 1)).toBe(1900 * 1024 ** 2);
+    expect(conversionPeakBytes(3, 3)).toBe(2070 * 1024 ** 2);
+    // 16 threads and 3 filter threads: (1,450 + 2,400 + 170) × 1.6, in whole 256 MiB.
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16", WORKER_FFMPEG_FILTER_THREADS: "3" }).convertMemoryBytes).toBe(
+      6656 * 1024 ** 2,
+    );
+    expect(() =>
+      workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16", WORKER_FFMPEG_FILTER_THREADS: "3", WORKER_CONVERT_MEMORY_BYTES: String(3900 * 1024 ** 2) }),
+    ).toThrow(/WORKER_CONVERT_MEMORY_BYTES/);
+  });
+
   it("refuses to start with a conversion cap under what a lone conversion on WORKER_CPUS threads needs, rather than fail every video as corrupt", () => {
     expect(() => workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16", WORKER_CONVERT_MEMORY_BYTES: String(3 * 1024 ** 3) })).toThrow(
       /WORKER_CONVERT_MEMORY_BYTES: 3221225472 bytes is under the 4037017600 a 4K HDR conversion needs on 16 threads \(WORKER_CPUS\)/,

@@ -380,11 +380,13 @@ describe("conversionWanted: which videos get the H.264 conversion beside their c
     expect(conversionWanted({ browserPlayable: false, durationSeconds: null }, 1000)).toBe(true);
   });
 
-  it("leaves an H.264 video every phone plays to its copy, unless it is over 3 minutes and over 6 Mbit/s", () => {
-    expect(conversionWanted({ browserPlayable: true, durationSeconds: 60 }, megabits(16, 60))).toBe(false);
-    expect(conversionWanted({ browserPlayable: true, durationSeconds: 180 }, megabits(16, 180))).toBe(false);
-    expect(conversionWanted({ browserPlayable: true, durationSeconds: 185 }, megabits(5.9, 185))).toBe(false);
-    expect(conversionWanted({ browserPlayable: true, durationSeconds: 185 }, megabits(6.1, 185))).toBe(true);
+  it("leaves an H.264 video every phone plays to its copy, unless it is over 3 minutes and over 12 Mbit/s", () => {
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 60 }, megabits(20, 60))).toBe(false);
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 180 }, megabits(20, 180))).toBe(false);
+    // 6 to 9 Mbit/s: an uncapped CRF-23 conversion would be about as large, a generation worse.
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 185 }, megabits(9, 185))).toBe(false);
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 185 }, megabits(11.9, 185))).toBe(false);
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 185 }, megabits(12.1, 185))).toBe(true);
     expect(conversionWanted({ browserPlayable: true, durationSeconds: 1200 }, megabits(17, 1200))).toBe(true);
     // A length the container doesn't give: nothing says it is long.
     expect(conversionWanted({ browserPlayable: true, durationSeconds: null }, 2 * 1024 ** 3)).toBe(false);
@@ -605,7 +607,7 @@ describe.skipIf(!ffmpegSeven)("a video's poster (Review Focus 2)", () => {
     });
   });
 
-  it("queues no conversion of a playable video over three minutes long under 6 Mbit/s: its clean copy is enough", async () => {
+  it("queues no conversion of a playable video over three minutes long under 12 Mbit/s: its clean copy is enough", async () => {
     const long = await clip("long.mp4", [
       ...["-f", "lavfi", "-i", "testsrc2=size=160x90:rate=2", "-t", "185"],
       ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],

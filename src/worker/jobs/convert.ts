@@ -82,14 +82,18 @@ const CONVERT_BASE_MILLISECONDS = 10 * 60_000;
 const CONVERT_MAX_MILLISECONDS = 3 * 60 * 60_000;
 /**
  * The conversion's CPU time (prlimit --cpu: user and system time, all of ffmpeg's threads), from
- * the video's length (Ruling AR). Measured in the worker image at the defaults, three runs each, on
- * grainy clips at a phone's bitrate: 8K HEVC 3.0 to 3.2 CPU-seconds a second of video, an iPhone's
- * portrait 4K HEVC HLG 3.4 (the costliest), 1080p60 H.264 1.1. Three times the costliest, rounded
- * up, plus ten minutes for a short clip's start: a phone's video never comes near it, even on a CPU
- * a third as fast per second.
+ * the video's length and frame rate (Ruling AR). Measured in the worker image (Task 14b), a 30 fps
+ * HEVC HLG conversion with a phone's detail costs 4.4 to 5.2 CPU-seconds a second of video on a
+ * quiet host, and 6.2 to 7.8 on a busy one (threads sharing cores run slower); the first real one
+ * in production, 4.9. Thirty a second is about four times the busy host's costliest; decoding grows
+ * with the frames read, so 60 fps gets twice that and 240 fps slow motion eight times (x264 encodes
+ * at most 30, -fpsmax). Ten minutes more for a short clip's start. Only a file that makes ffmpeg
+ * work several times harder than any phone's runs out.
  */
-const CONVERT_CPU_SECONDS_PER_VIDEO_SECOND = 10;
+const CONVERT_CPU_SECONDS_PER_VIDEO_SECOND = 30;
 const CONVERT_CPU_BASE_SECONDS = 10 * 60;
+/** The frame rate CONVERT_CPU_SECONDS_PER_VIDEO_SECOND is for: a faster video gets more in proportion. */
+const CPU_BUDGET_FRAMES_PER_SECOND = 30;
 /** Scratch beyond twice the original: a small original can come out bigger at CRF 23. */
 const SCRATCH_MARGIN_BYTES = 256 * 1024 * 1024;
 
@@ -234,14 +238,16 @@ export function conversionMilliseconds(durationSeconds: number | null): number {
 }
 
 /**
- * How much CPU time ffmpeg may use over a video this long, all its threads together (prlimit
- * --cpu, Ruling AR); a video of no known length gets the longest's. Waiting for a CPU doesn't
- * count, so however busy the box (at nice 19 a conversion may get a sliver of one), only a file
- * that makes ffmpeg work far harder than any phone's runs out: that is the file's fault, blamed from
- * the third attempt.
+ * How much CPU time ffmpeg may use over a video this long at this frame rate, all its threads
+ * together (prlimit --cpu, Ruling AR): ten minutes and 30 CPU-seconds a second of video, times
+ * max(1, frames a second / 30). A video of no known length gets the longest's; of no known frame
+ * rate, 30 fps's. Waiting for a CPU doesn't count, so however busy the box (at nice 19 a conversion
+ * may get a sliver of one), only a file that makes ffmpeg work far harder than any phone's runs
+ * out: that is the file's fault, blamed from the third attempt.
  */
-export function conversionCpuSeconds(durationSeconds: number | null, maxSeconds: number): number {
-  return Math.ceil(CONVERT_CPU_BASE_SECONDS + (durationSeconds ?? maxSeconds) * CONVERT_CPU_SECONDS_PER_VIDEO_SECOND);
+export function conversionCpuSeconds(durationSeconds: number | null, framesPerSecond: number | null, maxSeconds: number): number {
+  const frameRateFactor = Math.max(1, (framesPerSecond ?? CPU_BUDGET_FRAMES_PER_SECOND) / CPU_BUDGET_FRAMES_PER_SECOND);
+  return Math.ceil(CONVERT_CPU_BASE_SECONDS + (durationSeconds ?? maxSeconds) * CONVERT_CPU_SECONDS_PER_VIDEO_SECOND * frameRateFactor);
 }
 
 /** What ffprobe is asked of the converted file. */
@@ -408,7 +414,7 @@ async function convertIn(
       {
         ...run,
         memoryBytes: options.convertMemoryBytes,
-        cpuSeconds: conversionCpuSeconds(facts.durationSeconds, options.convertMaxSeconds),
+        cpuSeconds: conversionCpuSeconds(facts.durationSeconds, facts.framesPerSecond, options.convertMaxSeconds),
       },
       conversionMilliseconds(facts.durationSeconds),
     );

@@ -151,14 +151,16 @@ function optionalBytes(min: number, max: number) {
 const CONVERT_MEMORY_FLOOR_BYTES = 3072 * MEBIBYTE;
 
 /**
- * The address space a conversion's ffmpeg peaks at on `threads` decoder and x264 threads each.
- * Measured in the worker image (Task 14b) on the costliest phone video measured, an iPhone-like
- * portrait 4K HEVC HLG clip, alone: 1,873 MiB on 3 threads, 2,614 on 8, 3,834 on 16 (8K HEVC on 3:
- * 1,753), so about 1,450 MiB and 150 more for each thread of each: every thread takes a stack and a
- * heap (malloc arena) of its own, mostly reserved, never used.
+ * The address space a conversion's ffmpeg peaks at on `threads` decoder and x264 threads each and
+ * `filterThreads` filter threads. Measured in the worker image (Task 14b) on the costliest phone
+ * video measured, an iPhone-like portrait 4K HEVC HLG clip, alone: 1,873 MiB on 3 threads, 2,614
+ * on 8, 3,834 on 16 (8K HEVC on 3: 1,753), so about 1,450 MiB and 150 more for each thread of each;
+ * every filter thread past the first, about 85 more (1080p HLG on 3 each: 1,562 MiB with one filter
+ * thread, 1,730 with three). Every thread takes a stack and a heap (malloc arena) of its own,
+ * mostly reserved, never used.
  */
-export function conversionPeakBytes(threads: number): number {
-  return (1450 + 150 * threads) * MEBIBYTE;
+export function conversionPeakBytes(threads: number, filterThreads = 1): number {
+  return (1450 + 150 * threads + 85 * Math.max(0, filterThreads - 1)) * MEBIBYTE;
 }
 
 const schema = zod.object({
@@ -234,7 +236,7 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
   const settings = parsed.data;
   // A conversion's most threads: a lone one's (WORKER_CPUS), or the shared counts if set higher.
   const conversionThreads = Math.max(settings.WORKER_CPUS, settings.WORKER_FFMPEG_DECODER_THREADS, settings.WORKER_X264_THREADS);
-  const conversionNeed = conversionPeakBytes(conversionThreads);
+  const conversionNeed = conversionPeakBytes(conversionThreads, settings.WORKER_FFMPEG_FILTER_THREADS);
   const configuredConvertMemory = settings.WORKER_CONVERT_MEMORY_BYTES;
   // A cap under a 4K HDR conversion's need would fail every one as the file's fault, `corrupt` on
   // its third attempt: refused here, at start-up, instead.

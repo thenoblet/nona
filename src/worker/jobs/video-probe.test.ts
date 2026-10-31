@@ -68,6 +68,7 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
       rotation: 0,
       durationSeconds: 12.5,
       videoStreamSeconds: 12.5,
+      framesPerSecond: 30,
       hdr: null,
       audioCodecs: ["aac"],
       browserPlayable: true,

@@ -104,6 +104,8 @@ export type VideoFacts = {
   durationSeconds: number | null;
   /** The video stream's own duration, which may be shorter than the container's: where a poster can be. */
   videoStreamSeconds: number | null;
+  /** The video's average frame rate (60 for a phone's 60 fps, 240 for slow motion); null when ffprobe doesn't say. */
+  framesPerSecond: number | null;
   /** Null for SDR. */
   hdr: HdrColours | null;
   audioCodecs: string[];
@@ -304,6 +306,7 @@ export function videoFactsFrom(probeJson: unknown): VideoCheck {
       rotation: rotationOf(video),
       durationSeconds,
       videoStreamSeconds,
+      framesPerSecond: rate,
       hdr: hdrColours(video),
       audioCodecs,
       browserPlayable,
