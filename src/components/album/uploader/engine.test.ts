@@ -35,8 +35,12 @@ class FakeServer {
   partCountOff = 0;
   /** Every call fails as a dropped connection while true. */
   down = false;
-  /** Held completes wait for this. */
+  /** Held completes wait for this: every one, or those from call `holdCompletesFrom` on. */
   completeGate: Promise<void> | null = null;
+  holdCompletesFrom = 1;
+  completeCalls = 0;
+  /** This many complete answers are lost on the way back (the server did the work). */
+  loseCompleteAnswers = 0;
   answerDelete: ((mediaId: string) => Answer) | null = null;
   answerRemove: ((mediaId: string) => Answer) | null = null;
   /** Held starts wait for this; `answerStart` answers in the server's place. */
@@ -55,6 +59,10 @@ class FakeServer {
     this.calls.push({ method, path, body });
     if (this.down) throw new TypeError("Failed to fetch");
     const answer = await this.#route(method, path, body);
+    if (path.endsWith("/complete") && this.loseCompleteAnswers > 0) {
+      this.loseCompleteAnswers -= 1;
+      throw new TypeError("Failed to fetch");
+    }
     return new Response(answer.body === undefined ? "" : JSON.stringify(answer.body), { status: answer.status });
   }) as typeof fetch;
 
@@ -90,7 +98,8 @@ class FakeServer {
     }
     if (action === "parts") return { status: 200, body: { parts: this.#partsOf(upload) } };
     if (action === "complete") {
-      await this.completeGate;
+      this.completeCalls += 1;
+      if (this.completeCalls >= this.holdCompletesFrom) await this.completeGate;
       if (upload.removed) return { status: 409, body: { error: "removed" } };
       if (upload.hidden) return { status: 409, body: { error: "hidden" } };
       if (upload.status !== "uploading") return { status: 200, body: { mediaId, status: upload.status } };
@@ -494,6 +503,47 @@ describe("Cancel", () => {
     expect(server.uploads.get("media-sent")?.removed).toBeUndefined();
   });
 
+  /** A file sent whole, whose complete answer was lost (the complete and the API client's three tries), now being asked about, held. */
+  async function lostAnswerBeingAskedAbout(setup: ReturnType<typeof setUp>) {
+    setup.server.loseCompleteAnswers = 4;
+    setup.server.holdCompletesFrom = 5;
+    let release: () => void = () => {};
+    setup.server.completeGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const [item] = setup.pick([video(MEBIBYTE)]);
+    await until(() => setup.server.completeCalls === 5);
+    return { item, release };
+  }
+
+  it("cancels on the server a file of its own whose complete answer was lost, even while it is being asked about", async () => {
+    const setup = setUp();
+    const { item, release } = await lostAnswerBeingAskedAbout(setup);
+    expect(setup.server.uploads.get("media-1")?.status).toBe("uploaded");
+
+    setup.engine.cancel(item.id);
+    release();
+
+    // It had arrived: DELETE answers 409, so it is removed, and only then does the card go.
+    await until(() => setup.store.get(item.id) === undefined);
+    expect(setup.server.count("DELETE", /^\/api\/uploads\/media-1$/)).toBe(1);
+    expect(setup.server.count("POST", /^\/api\/media\/media-1\/remove$/)).toBe(1);
+    expect(setup.server.uploads.get("media-1")?.removed).toBe(true);
+  });
+
+  it("shows the outcome when that Cancel can't be finished, rather than letting the card vanish", async () => {
+    const setup = setUp();
+    const { item, release } = await lostAnswerBeingAskedAbout(setup);
+    setup.server.answerRemove = () => ({ status: 503, body: { error: "unavailable" } });
+
+    setup.engine.cancel(item.id);
+    release();
+
+    await until(() => setup.store.get(item.id)?.status === "failed");
+    expect(setup.store.get(item.id)?.failure).toMatchObject({ reason: "We couldn't remove this one yet", cancelFailed: true });
+    expect(setup.server.uploads.get("media-1")?.removed).toBeUndefined();
+  });
+
   it("keeps the row of a Cancel that failed, even when the upload's start never answered", async () => {
     const server = new FakeServer();
     const storage = memoryStorage();
@@ -518,6 +568,35 @@ describe("Cancel", () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
 
     expect(store.get(item.id)).toMatchObject({ status: "failed", failure: { reason: "We couldn't remove this one yet", cancelFailed: true } });
+  });
+
+  it("takes a failed Cancel's row for good when dismissed while its start is still on its way", async () => {
+    const server = new FakeServer();
+    const storage = memoryStorage();
+    const file = video(MEBIBYTE);
+    const fingerprint = await fingerprintFile(file);
+    server.uploads.set("media-unfinished", { mediaId: "media-unfinished", uploadId: "u", size: file.size, fingerprint, parts: new Set(), status: "uploading" });
+    createSentFiles(storage).remember(file.size, fingerprint, "media-unfinished");
+    let releaseStart: () => void = () => {};
+    server.startGate = new Promise((resolve) => {
+      releaseStart = resolve;
+    });
+    server.answerDelete = () => ({ status: 503, body: { error: "unavailable" } });
+    const { store, engine, pick } = setUp({ server, storage });
+
+    const [item] = pick([file]);
+    await until(() => server.count("POST", /^\/api\/uploads$/) === 1);
+    engine.cancel(item.id);
+    await until(() => store.get(item.id)?.status === "failed");
+    engine.dismiss(item.id);
+    expect(store.get(item.id)).toBeUndefined();
+
+    // The start answers after all: the Cancel goes again (it still can't be finished), but the row stays gone.
+    releaseStart();
+    await until(() => server.count("DELETE", /./) >= 2 * 3 * 4);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(store.get(item.id)).toBeUndefined();
+    expect(store.getSnapshot().items).toEqual([]);
   });
 
   it("takes a file whose Cancel went unanswered off the card when dismissed, still sending it next visit", async () => {

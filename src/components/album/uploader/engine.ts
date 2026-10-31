@@ -286,9 +286,11 @@ class UploadEngine implements Engine {
       this.#store.remove(itemId);
       return;
     }
-    // While the server is asked about a file this phone sent before, Cancel means "stop this copy",
-    // never "take my photo out of the album": that stays Remove my upload's, a deliberate act.
-    const mediaId = run.probing ? null : (run.session?.mediaId ?? item.mediaId);
+    // While the server is asked about a file this phone sent before, and this copy has no upload of
+    // its own, Cancel means "stop this copy", never "take my photo out of the album": that stays
+    // Remove my upload's, a deliberate act. A copy that has its own upload (its complete's answer
+    // lost, now asked about) cancels that upload, as any Cancel does.
+    const mediaId = run.probing && !run.session ? null : (run.session?.mediaId ?? item.mediaId);
     run.cancelled = true;
     this.#leaveUppy(run);
     run.settle?.reject(new DOMException("The guest cancelled", "AbortError"));
@@ -307,7 +309,9 @@ class UploadEngine implements Engine {
     const item = this.#store.get(itemId);
     if (!item || item.status !== "failed") return;
     this.#store.remove(itemId);
-    if (!this.#active.has(itemId)) this.#runs.delete(itemId);
+    // Gone for good, even while a start is still on its way: #run holds its own run to finish with,
+    // and a Cancel still owed is sent again then (or on the next visit), with nothing on the card.
+    this.#runs.delete(itemId);
   }
 
   async replayPendingCancels(): Promise<void> {
