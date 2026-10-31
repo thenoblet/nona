@@ -70,12 +70,22 @@ describe("the Cancels not yet answered", () => {
     createPendingCancels(storage).add("media-1", "upload-1", 5);
     createPendingCancels(storage).add("media-2", null, 6);
 
-    expect(createPendingCancels(storage).list()).toEqual([
+    expect(createPendingCancels(storage).list(10)).toEqual([
       { mediaId: "media-1", uploadId: "upload-1", at: 5 },
       { mediaId: "media-2", uploadId: null, at: 6 },
     ]);
     createPendingCancels(storage).remove("media-1");
-    expect(createPendingCancels(storage).list().map((cancel) => cancel.mediaId)).toEqual(["media-2"]);
+    expect(createPendingCancels(storage).list(10).map((cancel) => cancel.mediaId)).toEqual(["media-2"]);
+  });
+
+  it("are dropped after seven days, so none is sent for ever", () => {
+    const storage = memoryStorage();
+    createPendingCancels(storage).add("media-old", null, 0);
+    createPendingCancels(storage).add("media-new", null, 6 * DAY);
+
+    expect(createPendingCancels(storage).list(8 * DAY).map((cancel) => cancel.mediaId)).toEqual(["media-new"]);
+    // Gone from storage too, not just from the list.
+    expect(createPendingCancels(storage).list(6 * DAY).map((cancel) => cancel.mediaId)).toEqual(["media-new"]);
   });
 
   it("carry on, keeping nothing, when storage is blocked or holds something it can't read", () => {

@@ -123,7 +123,14 @@ type Run = {
   cancelled: boolean;
   /** The guest's Cancel is on its way to the server. */
   cancelInFlight: boolean;
+  /** A Cancel went to the server: from then on, the Cancel's outcome decides what the card shows. */
+  cancelSent: boolean;
+  /** Asking the server about a file this phone sent before: a Cancel now only stops this copy. */
+  probing: boolean;
 };
+
+/** What a Cancel's request came to: done; refused (403: the upload isn't this browser's guest's any more); or no answer. */
+type CancelResult = "done" | "refused" | "unanswered";
 
 export type EngineOptions = {
   /** The guest's name on this phone, sent with their guest and each upload. */
@@ -279,7 +286,9 @@ class UploadEngine implements Engine {
       this.#store.remove(itemId);
       return;
     }
-    const mediaId = run.session?.mediaId ?? item.mediaId;
+    // While the server is asked about a file this phone sent before, Cancel means "stop this copy",
+    // never "take my photo out of the album": that stays Remove my upload's, a deliberate act.
+    const mediaId = run.probing ? null : (run.session?.mediaId ?? item.mediaId);
     run.cancelled = true;
     this.#leaveUppy(run);
     run.settle?.reject(new DOMException("The guest cancelled", "AbortError"));
@@ -290,8 +299,8 @@ class UploadEngine implements Engine {
       this.#store.remove(itemId);
       this.#runs.delete(itemId);
     }
-    // Otherwise its start is on its way: #start cancels the upload once the server names it, or,
-    // if it never does, #run's end takes the file away.
+    // Otherwise it is being asked about, or its start is on its way: #start cancels the upload once
+    // the server names it, or, if it never does, #run's end takes the file away.
   }
 
   dismiss(itemId: string): void {
@@ -307,8 +316,8 @@ class UploadEngine implements Engine {
       pending.map(async ({ mediaId }) => {
         this.#replaying.add(mediaId);
         try {
-          // Not answered again: it stays for the next visit.
-          if (await this.#sendCancel(mediaId)) this.#pendingCancels.remove(mediaId);
+          // Unanswered again, it stays for the next visit; done or refused, it is dropped.
+          if ((await this.#sendCancel(mediaId)) !== "unanswered") this.#pendingCancels.remove(mediaId);
         } finally {
           this.#replaying.delete(mediaId);
         }
@@ -337,6 +346,8 @@ class UploadEngine implements Engine {
         bytesSent: 0,
         cancelled: false,
         cancelInFlight: false,
+        cancelSent: false,
+        probing: false,
       };
       this.#runs.set(itemId, run);
     }
@@ -391,8 +402,9 @@ class UploadEngine implements Engine {
       else this.#retryLater(run, outcome);
     } finally {
       this.#active.delete(itemId);
-      // Cancelled before the server knew of it: nothing to cancel there.
-      if (run.cancelled && !run.cancelInFlight && !run.session) {
+      // Cancelled before the server knew of it, and no Cancel sent: nothing to show. A Cancel that
+      // was sent decides for itself, its failure staying on the card.
+      if (run.cancelled && !run.cancelSent && !run.session) {
         this.#store.remove(itemId);
         this.#runs.delete(itemId);
       }
@@ -463,11 +475,17 @@ class UploadEngine implements Engine {
     const mediaId = this.#sentFiles.find(run.file.size, fingerprint);
     if (!mediaId) return false;
     this.#store.update(run.itemId, { mediaId });
-    const answer = await this.#api.request(`/api/uploads/${mediaId}/complete`, {
-      method: "POST",
-      body: { parts: [] },
-      timeoutMs: TIMEOUTS.complete,
-    });
+    run.probing = true;
+    let answer: ApiAnswer;
+    try {
+      answer = await this.#api.request(`/api/uploads/${mediaId}/complete`, {
+        method: "POST",
+        body: { parts: [] },
+        timeoutMs: TIMEOUTS.complete,
+      });
+    } finally {
+      run.probing = false;
+    }
     if (run.cancelled) return true;
     const outcome = probeOutcome(answer);
     switch (outcome.kind) {
@@ -747,22 +765,26 @@ class UploadEngine implements Engine {
 
   /**
    * The guest's Cancel, on the server. It is kept in localStorage until the server answers, so a
-   * Cancel the phone couldn't send is sent again on the next visit; and should it go unanswered
-   * here, the file comes back to the card saying so, with Try again. Never dropped silently.
+   * Cancel the phone couldn't send is sent again on the next visit (for up to seven days); and
+   * should it go unanswered here, or be refused, the file comes back to the card saying so, with Try
+   * again. Never dropped silently. A refusal (403: the browser no longer holds the upload's guest)
+   * isn't kept to send again, as no later visit could do better.
    */
   async #cancelOnServer(run: Run, mediaId: string): Promise<void> {
     if (run.cancelInFlight) return;
     run.cancelInFlight = true;
+    run.cancelSent = true;
     this.#pendingCancels.add(mediaId, run.session?.uploadId ?? null);
     if (run.fingerprint) {
       this.#sentFiles.forget(run.file.size, run.fingerprint);
       this.#startedFiles.finish(run.file.size, run.fingerprint);
     }
     this.#startedFiles.forgetMedia(mediaId);
-    const done = await this.#sendCancel(mediaId);
+    const result = await this.#sendCancel(mediaId);
     run.cancelInFlight = false;
-    if (done) {
-      this.#pendingCancels.remove(mediaId);
+    // Refused (403), no later visit could do better: it isn't kept to send again.
+    if (result !== "unanswered") this.#pendingCancels.remove(mediaId);
+    if (result === "done") {
       this.#store.remove(run.itemId);
       this.#runs.delete(run.itemId);
       return;
@@ -771,17 +793,21 @@ class UploadEngine implements Engine {
       status: "failed",
       failure: { reason: UPLOAD_WORDS.cancelUnanswered, hint: null, canRetry: true, cancelFailed: true },
     });
-    this.#events.report({ kind: "failed", mediaId, reason: "cancel-unanswered" });
+    this.#events.report({ kind: "failed", mediaId, reason: result === "refused" ? "cancel-refused" : "cancel-unanswered" });
   }
 
-  /** Sends a Cancel until it is answered, or its tries run out; offline, it waits to be back online, uncounted. */
-  async #sendCancel(mediaId: string): Promise<boolean> {
+  /**
+   * Sends a Cancel until it is done or refused, or its tries run out; offline, it waits to be back
+   * online, uncounted.
+   */
+  async #sendCancel(mediaId: string): Promise<CancelResult> {
     const delays = this.#timings.cancelRetryDelays;
     for (let attempt = 0; ; ) {
       await this.#whenOnline();
-      if (await this.#cancelOnce(mediaId)) return true;
+      const result = await this.#cancelOnce(mediaId);
+      if (result !== "unanswered") return result;
       if (this.#environment.isOffline()) continue;
-      if (attempt >= delays.length) return false;
+      if (attempt >= delays.length) return "unanswered";
       await sleep(delays[attempt]);
       attempt += 1;
     }
@@ -789,19 +815,21 @@ class UploadEngine implements Engine {
 
   /**
    * One Cancel: done when DELETE answers 2xx, or 404 (gone already: an earlier Cancel went through),
-   * or 409 already-uploaded and then Remove answers 2xx or 404. Anything else, a 403 included, is
-   * not done.
+   * or 409 already-uploaded and then Remove answers 2xx or 404. Refused when either answers 403: the
+   * browser no longer holds the upload's guest. Anything else is no answer.
    */
-  async #cancelOnce(mediaId: string): Promise<boolean> {
+  async #cancelOnce(mediaId: string): Promise<CancelResult> {
     try {
       const cancelled = await this.#api.request(`/api/uploads/${mediaId}`, { method: "DELETE", timeoutMs: TIMEOUTS.cancel });
-      if (isSuccess(cancelled) || cancelled.status === 404) return true;
+      if (isSuccess(cancelled) || cancelled.status === 404) return "done";
+      if (cancelled.status === 403) return "refused";
       const code = (cancelled.body as { error?: unknown } | null)?.error;
-      if (cancelled.status !== 409 || code !== "already-uploaded") return false;
+      if (cancelled.status !== 409 || code !== "already-uploaded") return "unanswered";
       const removed = await this.#api.request(`/api/media/${mediaId}/remove`, { method: "POST", timeoutMs: TIMEOUTS.cancel });
-      return isSuccess(removed) || removed.status === 404;
+      if (isSuccess(removed) || removed.status === 404) return "done";
+      return removed.status === 403 ? "refused" : "unanswered";
     } catch {
-      return false;
+      return "unanswered";
     }
   }
 

@@ -39,6 +39,9 @@ class FakeServer {
   completeGate: Promise<void> | null = null;
   answerDelete: ((mediaId: string) => Answer) | null = null;
   answerRemove: ((mediaId: string) => Answer) | null = null;
+  /** Held starts wait for this; `answerStart` answers in the server's place. */
+  startGate: Promise<void> | null = null;
+  answerStart: (() => Answer) | null = null;
   #made = 0;
 
   count(method: string, pattern: RegExp): number {
@@ -58,7 +61,11 @@ class FakeServer {
   async #route(method: string, path: string, body: Record<string, unknown> | undefined): Promise<Answer> {
     if (path === "/api/guest") return { status: 200, body: { guestId: "guest-1", link: "https://example.com/my/token" } };
     if (path === "/api/upload-events") return { status: 200, body: { stored: 1 } };
-    if (path === "/api/uploads" && method === "POST") return this.#start(body as { size: number; fingerprint: string });
+    if (path === "/api/uploads" && method === "POST") {
+      await this.startGate;
+      if (this.answerStart) return this.answerStart();
+      return this.#start(body as { size: number; fingerprint: string });
+    }
     const match = /^\/api\/(uploads|media)\/([^/]+)(?:\/(parts|complete|remove))?$/.exec(path);
     if (!match) return { status: 404 };
     const [, , mediaId, action] = match;
@@ -407,12 +414,14 @@ describe("Cancel", () => {
     expect(setup.server.count("DELETE", /./)).toBe(1);
   });
 
-  // Three tries, each of them retried three more times by the API client when the server is down.
-  for (const [what, answer, deletes] of [
-    ["the server never answers", { status: 503, body: { error: "unavailable" } }, 3 * 4],
-    ["the server refuses it (403 is not done)", { status: 403, body: { error: "forbidden" } }, 3],
+  // A server that never answers: three tries, each retried three more times by the API client;
+  // kept for the next visit. A 403 (the upload is no longer this browser's guest's): one try, and
+  // dropped, as no later visit can do better.
+  for (const [what, answer, deletes, kept] of [
+    ["the server never answers", { status: 503, body: { error: "unavailable" } }, 3 * 4, ["media-1"]],
+    ["the server refuses it (403 is not done)", { status: 403, body: { error: "forbidden" } }, 1, []],
   ] as const) {
-    it(`tells the guest when ${what}, keeps it for the next visit, and Try again sends it again`, async () => {
+    it(`tells the guest when ${what}, and Try again sends it again`, async () => {
       const setup = setUp();
       const { item } = await sending(setup);
       setup.server.answerDelete = () => answer;
@@ -426,7 +435,7 @@ describe("Cancel", () => {
         cancelFailed: true,
       });
       expect(setup.server.count("DELETE", /./)).toBe(deletes);
-      expect(createPendingCancels(setup.storage).list().map((cancel) => cancel.mediaId)).toEqual(["media-1"]);
+      expect(createPendingCancels(setup.storage).list().map((cancel) => cancel.mediaId)).toEqual(kept);
 
       setup.server.answerDelete = null;
       setup.engine.retry(item.id);
@@ -435,18 +444,80 @@ describe("Cancel", () => {
     });
   }
 
-  it("sends a Cancel left from an earlier visit, and keeps it while it isn't answered", async () => {
+  it("sends a Cancel left from an earlier visit: keeps it while unanswered, drops it once done, refused (403) or a week old", async () => {
     const storage = memoryStorage();
-    createPendingCancels(storage).add("media-gone", null);
-    createPendingCancels(storage).add("media-stuck", "upload-9");
+    const pending = createPendingCancels(storage);
+    pending.add("media-gone", null);
+    pending.add("media-refused", null);
+    pending.add("media-unanswered", "upload-9");
+    pending.add("media-old", null, Date.now() - 8 * 24 * 60 * 60 * 1000);
     const server = new FakeServer();
-    server.answerDelete = (mediaId) => (mediaId === "media-gone" ? { status: 404, body: { error: "not-found" } } : { status: 403, body: { error: "forbidden" } });
+    const answers: Record<string, Answer> = {
+      "media-gone": { status: 404, body: { error: "not-found" } },
+      "media-refused": { status: 403, body: { error: "forbidden" } },
+      "media-unanswered": { status: 503, body: { error: "unavailable" } },
+    };
+    server.answerDelete = (mediaId) => answers[mediaId] ?? { status: 200 };
     const { engine } = setUp({ server, storage });
 
     await engine.replayPendingCancels();
 
-    expect(createPendingCancels(storage).list().map((cancel) => cancel.mediaId)).toEqual(["media-stuck"]);
+    expect(createPendingCancels(storage).list().map((cancel) => cancel.mediaId)).toEqual(["media-unanswered"]);
     expect(server.count("DELETE", /media-gone/)).toBe(1);
+    expect(server.count("DELETE", /media-refused/)).toBe(1);
+    expect(server.count("DELETE", /media-old/)).toBe(0);
+  });
+
+  it("only stops a file picked again while it is being asked about: the copy in the album stays", async () => {
+    const server = new FakeServer();
+    const storage = memoryStorage();
+    const file = video(MEBIBYTE);
+    const fingerprint = await fingerprintFile(file);
+    server.uploads.set("media-sent", { mediaId: "media-sent", uploadId: "u", size: file.size, fingerprint, parts: new Set([1]), status: "uploaded" });
+    createSentFiles(storage).remember(file.size, fingerprint, "media-sent");
+    let release: () => void = () => {};
+    server.completeGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const { store, engine, pick } = setUp({ server, storage });
+
+    const [item] = pick([file]);
+    await until(() => server.count("POST", /\/complete$/) === 1);
+    engine.cancel(item.id);
+    expect(store.getSnapshot().view).toEqual({ kind: "none" });
+    release();
+
+    await until(() => store.get(item.id) === undefined);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(server.count("DELETE", /./)).toBe(0);
+    expect(server.count("POST", /\/remove$/)).toBe(0);
+    expect(server.uploads.get("media-sent")?.removed).toBeUndefined();
+  });
+
+  it("keeps the row of a Cancel that failed, even when the upload's start never answered", async () => {
+    const server = new FakeServer();
+    const storage = memoryStorage();
+    const file = video(MEBIBYTE);
+    const fingerprint = await fingerprintFile(file);
+    // An upload of this file left unfinished: asked about, it isn't finished, so it is started again.
+    server.uploads.set("media-unfinished", { mediaId: "media-unfinished", uploadId: "u", size: file.size, fingerprint, parts: new Set(), status: "uploading" });
+    createSentFiles(storage).remember(file.size, fingerprint, "media-unfinished");
+    let releaseStart: () => void = () => {};
+    server.startGate = new Promise((resolve) => {
+      releaseStart = resolve;
+    });
+    server.answerDelete = () => ({ status: 503, body: { error: "unavailable" } });
+    const { store, engine, pick } = setUp({ server, storage });
+
+    const [item] = pick([file]);
+    await until(() => server.count("POST", /^\/api\/uploads$/) === 1);
+    engine.cancel(item.id);
+    await until(() => store.get(item.id)?.status === "failed");
+    server.answerStart = () => ({ status: 503, body: { error: "unavailable" } });
+    releaseStart();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(store.get(item.id)).toMatchObject({ status: "failed", failure: { reason: "We couldn't remove this one yet", cancelFailed: true } });
   });
 
   it("takes a file whose Cancel went unanswered off the card when dismissed, still sending it next visit", async () => {

@@ -181,8 +181,9 @@ jobs:
           load: true
           tags: nona-worker-test
           # Each worker build keeps its own cache: one shared scope would have each overwrite the other's.
+          # Only main writes it: a branch's own would fill GitHub's 10 GB of cache for nothing.
           cache-from: type=gha,scope=worker-test
-          cache-to: type=gha,scope=worker-test,mode=max
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=worker-test,mode=max' || '' }}
 
       # Creates MinIO's two buckets, then runs npm run test:worker on 3 CPUs, as nona-worker-01's
       # container has them: Ruling E's test (a photo stays fast while a 4K HDR conversion runs)

@@ -43,6 +43,9 @@ function visibleItem(mediaId: string) {
   return and(eq(media.id, mediaId), isNull(media.hiddenAt), isNull(media.deletedAt), eq(media.removedByUploader, false));
 }
 
+/** hidden_by for an item its uploader removed ("Remove my upload"); anything else there is the couple. */
+export const HIDDEN_BY_UPLOADER = "guest";
+
 /*
  * The upload API's queries (Task 7). Each is one statement on an index, and none runs inside a
  * transaction: the R2 calls happen between them, never while a row is locked.
@@ -65,6 +68,7 @@ const uploadColumns = {
   status: media.status,
   failureReason: media.failureReason,
   hiddenAt: media.hiddenAt,
+  hiddenBy: media.hiddenBy,
   deletedAt: media.deletedAt,
   removedByUploader: media.removedByUploader,
 };
@@ -86,6 +90,8 @@ export type UploadRow = {
   /** Why processing failed (`corrupt`, `unsupported-type`…), shown to its uploader; null otherwise. */
   failureReason: string | null;
   hiddenAt: Date | null;
+  /** Who hid it: HIDDEN_BY_UPLOADER for its own guest, else the couple. */
+  hiddenBy: string | null;
   deletedAt: Date | null;
   removedByUploader: boolean;
 };

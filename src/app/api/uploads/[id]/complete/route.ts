@@ -3,6 +3,7 @@ import * as zod from "zod";
 import { errorResponse, jsonResponse, readJsonBody } from "@/lib/http/json";
 import { describeError } from "@/lib/log-error";
 import { MAX_PART_COUNT } from "@/lib/media/limits";
+import { HIDDEN_BY_UPLOADER } from "@/lib/media/rows";
 import { completeUpload, isVisibleUpload, mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads";
 import {
   badRequest,
@@ -51,10 +52,11 @@ const completeRequest = zod.object({
  * - Already completed (a repeat, or two at once): the same answer, with one job queued. One that
  *   processing has since made ready answers `ready`; one it failed answers `{ status: "failed",
  *   reason }`, so the phone shows the failure and its reason, never "Added".
+ * - Hidden by the couple, or deleted: 409 `hidden`, and the phone says it can't be added. A file
+ *   picked again never gets round the couple's moderation by being "Added" here. Checked first: an
+ *   item the couple hid stays theirs whatever its guest did after.
  * - Removed by its uploader ("Remove my upload", or a Cancel that found it arrived): 409 `removed`.
  *   The phone, asked to send that file again, starts a new upload of it: the guest wants it back.
- * - Hidden by the couple, or deleted: 409 `hidden`, and the phone says it can't be added. A file
- *   picked again never gets round the couple's moderation by being "Added" here.
  * - Its row gone while R2 joined the parts: 404 `missing`, and nothing is queued. (A cancel never
  *   deletes the row of an upload R2 has joined, so this is a defence.)
  * - The upload gone with no original made (cancelled first, aborted or expired): 409 `upload-missing`.
@@ -73,6 +75,8 @@ export async function POST(request: Request, { params }: UploadContext) {
   try {
     const [upload, uploads] = await Promise.all([ownedUpload(id, guests.guestIds), readUploadsSwitch()]);
     if (!upload) return forbidden();
+    const hiddenByCouple = upload.hiddenAt !== null && upload.hiddenBy !== HIDDEN_BY_UPLOADER;
+    if (upload.deletedAt || hiddenByCouple) return errorResponse(409, "hidden");
     if (upload.removedByUploader) return errorResponse(409, "removed");
     if (!isVisibleUpload(upload)) return errorResponse(409, "hidden");
     if (upload.status === "failed") return jsonResponse({ mediaId: upload.id, status: "failed", reason: upload.failureReason });

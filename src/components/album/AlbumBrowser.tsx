@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useState, type ComponentType } from "react";
 import type { EventId } from "@/content/wedding";
 import type { Celebration } from "@/lib/content/schema";
 import type { MediaItem } from "@/lib/data/types";
@@ -9,8 +9,17 @@ import { Segmented } from "@/components/ui/Segmented";
 import { MediaTile } from "./MediaTile";
 import { usePersonalLink } from "./uploader/personal-link";
 
-// Its own chunk, loaded only once the page knows the guest's link.
-const PersonalLinkStrip = lazy(() => import("./PersonalLinkOffer").then((module) => ({ default: module.PersonalLinkStrip })));
+// Its own chunk, loaded only once the page knows the guest's link. One that can't be fetched leaves
+// the row out, never the album.
+const PersonalLinkStrip = lazy<ComponentType<{ link: string }>>(() =>
+  import("./PersonalLinkOffer")
+    .then((module) => ({ default: module.PersonalLinkStrip }))
+    .catch(() => ({ default: NothingShown })),
+);
+
+function NothingShown(): null {
+  return null;
+}
 
 type EventFilter = EventId | "all";
 type Whose = "everyone" | "mine";

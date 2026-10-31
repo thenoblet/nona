@@ -91,8 +91,12 @@ export type PendingCancel = { mediaId: string; uploadId: string | null; at: numb
 export type PendingCancels = {
   add(mediaId: string, uploadId: string | null, now?: number): void;
   remove(mediaId: string): void;
-  list(): PendingCancel[];
+  /** The Cancels still to send; one older than seven days is dropped, so none is sent for ever. */
+  list(now?: number): PendingCancel[];
 };
+
+/** How long a Cancel is kept: as long as R2 keeps an unfinished upload. */
+const PENDING_CANCEL_FOR_MILLISECONDS = UNFINISHED_FOR_MILLISECONDS;
 
 /** The Cancels not yet answered, by upload. */
 export function createPendingCancels(storage: StorageLike | null): PendingCancels {
@@ -108,10 +112,13 @@ export function createPendingCancels(storage: StorageLike | null): PendingCancel
       delete entries[mediaId];
       writeRecord(storage, PENDING_CANCELS_KEY, entries);
     },
-    list() {
-      return Object.values(readRecord<PendingCancel>(storage, PENDING_CANCELS_KEY)).filter(
-        (entry) => typeof entry?.mediaId === "string",
-      );
+    list(now = Date.now()) {
+      const entries = readRecord<PendingCancel>(storage, PENDING_CANCELS_KEY);
+      const current = (entry: PendingCancel | undefined) =>
+        typeof entry?.mediaId === "string" && typeof entry.at === "number" && now - entry.at < PENDING_CANCEL_FOR_MILLISECONDS;
+      const kept = Object.fromEntries(Object.entries(entries).filter(([, entry]) => current(entry)));
+      if (Object.keys(kept).length !== Object.keys(entries).length) writeRecord(storage, PENDING_CANCELS_KEY, kept);
+      return Object.values(kept);
     },
   };
 }

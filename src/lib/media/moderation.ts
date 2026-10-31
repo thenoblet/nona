@@ -10,6 +10,7 @@ import { CONVERT_PRIORITY, MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/
 import { describeError } from "@/lib/log-error";
 import { deleteOriginal, deletePublicObjects } from "@/lib/storage/objects";
 import { processingQueue, type Defer } from "./completion";
+import { HIDDEN_BY_UPLOADER } from "./rows";
 import { requestConversion } from "./conversion";
 import { syncManifest } from "./manifest-sync";
 
@@ -45,7 +46,7 @@ export type VisibilityJobData = { mediaId: string; action: VisibilityAction };
 export type HiddenBy = { admin: string } | { guestIds: string[] };
 
 /** hidden_by for an item its uploader removed (the owner is its guest_id). */
-const REMOVED_BY_UPLOADER = "guest";
+const REMOVED_BY_UPLOADER = HIDDEN_BY_UPLOADER;
 /**
  * What a permanent delete leaves in a column that can't be empty (an original's filename, a wish's
  * signature): the tombstone keeps no personal data (Ruling AU).
@@ -159,7 +160,12 @@ async function hideForAdmin(mediaId: string, admin: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** Hides an item for its uploader (Ruling Y): only one of these guests' own, and removed_by_uploader with hidden_at. */
+/**
+ * Hides an item for its uploader (Ruling Y): only one of these guests' own, and removed_by_uploader
+ * with hidden_at. An item the couple had already hidden stays theirs, unchanged, and the removal
+ * still succeeds: marked removed by its guest, it would read as the guest's own doing, which picking
+ * the file again may undo (Ruling AX).
+ */
 async function removeForUploader(mediaId: string, guestIds: string[]): Promise<boolean> {
   const owners = guestIds.filter((guestId) => isUuid(guestId));
   if (owners.length === 0) return false;
@@ -168,7 +174,7 @@ async function removeForUploader(mediaId: string, guestIds: string[]): Promise<b
     .set({
       hiddenAt: sql`coalesce(${media.hiddenAt}, now())`,
       hiddenBy: sql`case when ${media.hiddenAt} is null then ${REMOVED_BY_UPLOADER}::text else ${media.hiddenBy} end`,
-      removedByUploader: true,
+      removedByUploader: sql`case when ${media.hiddenAt} is null then true else ${media.removedByUploader} end`,
     })
     .where(and(eq(media.id, mediaId), isNull(media.deletedAt), inArray(media.guestId, owners)))
     .returning({ id: media.id });

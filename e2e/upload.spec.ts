@@ -468,6 +468,41 @@ test.describe("uploading from the phone", () => {
     }
   });
 
+  test("an offer whose script can't be fetched (the venue's network, or a deploy) is left out: the album and the upload carry on", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      // The chunk that draws the offer fails to arrive; every other script comes as usual.
+      let offerChunkRefused = false;
+      await page.route(/\/_next\/static\/chunks\/.*\.js$/, async (route) => {
+        const response = await route.fetch();
+        if ((await response.text()).includes("Save this to find your uploads on any phone.")) {
+          offerChunkRefused = true;
+          return route.abort("failed");
+        }
+        return route.fulfill({ response });
+      });
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await openAlbum(page);
+
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("no-offer.jpg", 300, 200));
+      const card = page.getByRole("region", { name: "Your photo" });
+      await expect(card.getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
+      await expect.poll(() => offerChunkRefused, { timeout: 15_000 }).toBe(true);
+      await expect(page.getByRole("region", { name: "Your personal link" })).toHaveCount(0);
+      await expect(page.getByText(/Application error/)).toHaveCount(0);
+      await expect(inMain(page).getByText("Capture it with us")).toBeVisible();
+
+      // The page still works: another photo goes up.
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("still-works.jpg", 300, 200));
+      await expect(page.getByRole("region", { name: "Your photo" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
   test("the personal link is offered once: a later visit's upload doesn't offer it again", async ({ browser, baseURL }) => {
     const context = await phone(browser, baseURL);
     try {

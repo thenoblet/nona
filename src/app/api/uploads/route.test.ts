@@ -781,6 +781,29 @@ describe("Ruling AX: a file the couple hid", () => {
     expect((await start({ ...body, fingerprint: newFingerprint() })).status).toBe(200);
   });
 
+  it("stays the couple's when its guest removes it after they hid it: still refused, from any phone, and complete says hidden", async () => {
+    const guest = await signIn();
+    const body = smallFile();
+    const hidden = await uploadWhole(body);
+    await hideMedia(hidden.mediaId, { admin: "couple@example.com" });
+    expect(await hideMedia(hidden.mediaId, { guestIds: [guest.id] })).toEqual({ ok: true });
+
+    expect(await (await complete(hidden.mediaId, [])).json()).toEqual({ error: "hidden" });
+    expect((await asBrowser(await otherBrowser(), () => start(body))).status).toBe(409);
+    expect((await start(body)).status).toBe(409);
+  });
+
+  it("answers hidden before removed for a row both hidden by the couple and marked removed (one from before this rule)", async () => {
+    await signIn();
+    const session = await uploadWhole(smallFile());
+    await getDb()
+      .update(media)
+      .set({ hiddenAt: new Date(), hiddenBy: "couple@example.com", removedByUploader: true })
+      .where(eq(media.id, session.mediaId));
+
+    expect(await (await complete(session.mediaId, [])).json()).toEqual({ error: "hidden" });
+  });
+
   it("lets a guest send again a file they removed themselves", async () => {
     const guest = await signIn();
     const body = smallFile();

@@ -11,6 +11,7 @@ import {
   useState,
   useSyncExternalStore,
   type ChangeEvent,
+  type ComponentType,
   type ReactNode,
 } from "react";
 import { Halo } from "@/components/ui/Halo";
@@ -31,7 +32,17 @@ import { createUploadStore, UPLOAD_WORDS, type UploadSnapshot, type UploadSource
  * personal-link offer is a chunk of its own too: it shows only once a file has been added.
  */
 
-const PersonalLinkOffer = lazy(() => import("./PersonalLinkOffer").then((module) => ({ default: module.PersonalLinkOffer })));
+// A chunk that can't be fetched (the venue's network, or one a deploy removed) leaves the offer out:
+// the album and the upload under way carry on.
+const PersonalLinkOffer = lazy<ComponentType<{ link: string; onHidden?: () => void }>>(() =>
+  import("./PersonalLinkOffer")
+    .then((module) => ({ default: module.PersonalLinkOffer }))
+    .catch(() => ({ default: NothingShown })),
+);
+
+function NothingShown(): null {
+  return null;
+}
 
 type CameraSource = Exclude<UploadSource, "gallery">;
 

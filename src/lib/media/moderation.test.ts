@@ -410,15 +410,16 @@ describe("hideMedia by its uploader: Remove my upload (Ruling Y)", () => {
     expect(await hideMedia(randomUUID(), { guestIds: [guestId] })).toEqual({ ok: false, reason: "not-found" });
   });
 
-  it("marks removed an item the couple had already hidden, keeping their hide", async () => {
+  it("leaves an item the couple had already hidden as theirs: its guest's removal succeeds and changes nothing", async () => {
     const guestId = await addGuest();
     const mediaId = await addItem({ guestId });
     await hideMedia(mediaId, { admin: ADMIN });
     const hidden = await readItem(mediaId);
 
-    await hideMedia(mediaId, { guestIds: [guestId] });
+    // Marked removed, the item would read as the guest's own doing, which a re-upload may undo (Ruling AX).
+    expect(await hideMedia(mediaId, { guestIds: [guestId] })).toEqual({ ok: true });
 
-    expect(await readItem(mediaId)).toMatchObject({ hiddenAt: hidden.hiddenAt, hiddenBy: ADMIN, removedByUploader: true });
+    expect(await readItem(mediaId)).toMatchObject({ hiddenAt: hidden.hiddenAt, hiddenBy: ADMIN, removedByUploader: false });
   });
 });
 
