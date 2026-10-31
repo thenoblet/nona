@@ -51,8 +51,10 @@ const CONTENT_HASH_CHARACTERS = 16;
  * The most pixels a JPEG may have: 210 MP, a Galaxy Ultra's 200 MP mode (16320 × 12240) and room
  * (Ruling AK). Measured with sharp 0.35.5 on one thread, decoding to the 1600 px copy: a baseline
  * JPEG decodes straight at an eighth of its size, so 108 MP and 200 MP ones peak at 81–86 MiB, turned
- * or not. The worst a JPEG this size can do is be progressive, which libjpeg must hold whole: about
- * 650 MiB a job, about 1.3 GiB with WORKER_PHOTO_CONCURRENCY's 2 at once.
+ * or not. The worst a JPEG this size can do is hold several scans (progressive, or a sequential one
+ * with a scan per component), which libjpeg must keep whole at about 8 bytes a pixel with four
+ * components: a crafted 209.7 MP file peaked at 1,687 MiB. So about 1.65 GiB a job and 3.3 GiB with
+ * WORKER_PHOTO_CONCURRENCY's 2 at once, accepted inside the worker's 12 GB (Ruling AK).
  */
 const MAX_JPEG_PIXELS = 210_000_000;
 /**
@@ -65,7 +67,7 @@ const MAX_OTHER_PIXELS = 100_000_000;
  * many as a JPEG, since a Galaxy Ultra saves its 200 MP shots as HEIF when "High efficiency
  * pictures" is on. Measured in the worker image on one thread: heif-dec decodes a 200 MP tiled HEIC
  * within 366 MiB of address space (a 48 MP one within 271 MiB), far inside WORKER_HEIF_MEMORY_BYTES's
- * 2 GiB, and writes a baseline JPEG that sharp then decodes at an 82 MiB peak.
+ * 2 GiB, and writes a baseline JPEG that sharp then decodes at a 174 MiB peak (a detailed 200 MP one).
  */
 const MAX_HEIF_PIXELS = MAX_JPEG_PIXELS;
 const VIEW = { longEdge: 1600, quality: 80 };
