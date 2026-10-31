@@ -51,10 +51,12 @@ const PLAYABLE_PIXEL_FORMATS = new Set(["yuv420p", "yuvj420p"]);
 /**
  * What every phone decodes, as the original is (ffmpeg notes §4.19): at most 1080p (its long edge),
  * 60 frames a second and H.264 level 4.2 (ffprobe gives the level times ten). A 4K, slow-motion or
- * higher-level H.264 video gets a 1080p conversion instead.
+ * higher-level H.264 video gets a 1080p conversion instead. The frame rate is an average, which a
+ * phone's variable-frame-rate 60 fps clip puts a little over 60 (60.02): half a frame's slack
+ * keeps it playable, while slow motion (120 or 240) stays far past it.
  */
 const PLAYABLE_LONG_EDGE = 1920;
-const PLAYABLE_FRAMES_PER_SECOND = 60;
+const PLAYABLE_FRAMES_PER_SECOND = 60.5;
 const PLAYABLE_H264_LEVEL = 42;
 // 3GPP's brands: a 3GP file isn't an MP4 or MOV, whatever its codecs.
 const THIRD_GENERATION_BRAND = /^3g[p2]/;

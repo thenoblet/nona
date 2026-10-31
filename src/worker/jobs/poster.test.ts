@@ -871,6 +871,18 @@ describe("videoToolFailure: the file's fault for good on the third attempt, the 
       expect(error.cause).toBeUndefined();
     }
   });
+
+  it("tries again, on every attempt, when the tool doesn't know an option: a worker image with an ffmpeg older than 7 (Ruling AP)", () => {
+    // What ffmpeg and ffprobe 4.4 print for 7.0's -reconnect_max_retries.
+    for (const stderr of [
+      "Unrecognized option 'reconnect_max_retries'.\nError splitting the argument list: Option not found\n",
+      "Failed to set value '2' for option 'reconnect_max_retries': Option not found\n",
+    ]) {
+      const error = ended(stderr, 2);
+      expect(error, stderr).not.toBeInstanceOf(PermanentJobError);
+      expect(error.message).toMatch(/doesn't know an option/);
+    }
+  });
 });
 
 describe.skipIf(!ffmpegSeven)("a job delivered twice, or for an item that has moved on (Ruling AG)", () => {

@@ -142,6 +142,9 @@ const NETWORK_TROUBLE = new RegExp(
 );
 // A thread the tool couldn't start (EAGAIN): the worker's limits on threads or memory, not the file.
 const NO_THREAD = /pthread_create|Resource temporarily unavailable/;
+// The tool refused one of its own options: the image's ffmpeg isn't the 7.1 the job was written
+// for (ffmpeg 4.4 has no -reconnect_max_retries). The worker's build, never the file (Ruling AP).
+const UNKNOWN_OPTION = /Option not found|Unrecognized option/;
 // What ffmpeg says when it recognised the file as a format other than the two it may open.
 const NOT_ALLOWED_FORMAT = /Format not on whitelist/;
 
@@ -165,7 +168,8 @@ function blameFileFromThirdAttempt(message: string, retryCount: number): Error {
  * - `unsupported-type` at once: ffmpeg recognised a format other than the two allowed.
  * - Retried, always: R2 or the network failed the read; a thread couldn't start (EAGAIN); a SIGKILL
  *   from outside (the OOM killer); the tool ran past its time (it reads over the network, so a slow
- *   read can't be told from a slow file); the job ended; the worker stopped; the tool couldn't run.
+ *   read can't be told from a slow file); the job ended; the worker stopped; the tool couldn't run,
+ *   or didn't know one of its options (an image built with another ffmpeg).
  * - Anything else looks like the file's fault (the tool refused it, died on it, ran out of memory
  *   under the cap, or printed far too much): retried twice, then `corrupt`.
  * Exported for its test.
@@ -187,6 +191,9 @@ export function videoToolFailure(
   }
   if (error.ending !== "exit") return new Error(`${tool} didn't finish reading the video: ${ending}`);
   if (toolDidNotRun(error)) return new Error(`${tool} couldn't run: ${ending}: ${lastLine}`);
+  if (UNKNOWN_OPTION.test(error.stderrTail)) {
+    return new Error(`${tool} doesn't know an option the worker gave it (is it ffmpeg 7.1?): ${ending}: ${lastLine}`);
+  }
   if (killedFromOutside(error)) return new Error(`${tool} was killed from outside the worker: ${ending}`);
   if (error.exitCode !== null && NOT_ALLOWED_FORMAT.test(error.stderrTail)) {
     const refusal = error.stderrTail.split("\n").find((line) => NOT_ALLOWED_FORMAT.test(line)) ?? lastLine;

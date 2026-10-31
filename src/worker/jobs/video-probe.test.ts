@@ -180,6 +180,9 @@ describe("videoFactsFrom: which phones can play the original as it is", () => {
     expect(facts(probe([videoStream({ width: 1080, height: 1920 })])).browserPlayable).toBe(true);
     expect(facts(probe([videoStream({ avg_frame_rate: "60/1", level: 42 })])).browserPlayable).toBe(true);
     expect(facts(probe([videoStream({ avg_frame_rate: "30000/1001" })])).browserPlayable).toBe(true);
+    // A phone's variable-frame-rate 60 fps clip averages a little over 60 (Ruling AP).
+    expect(facts(probe([videoStream({ avg_frame_rate: "3001/50", level: 42 })])).browserPlayable).toBe(true);
+    expect(facts(probe([videoStream({ avg_frame_rate: "121/2", level: 42 })])).browserPlayable).toBe(true);
   });
 
   it("isn't HEVC, 10-bit or 4:2:2 H.264, another audio codec, or H.264 in Matroska", () => {
@@ -196,6 +199,7 @@ describe("videoFactsFrom: which phones can play the original as it is", () => {
       ["4K", probe([videoStream({ width: 3840, height: 2160, level: 51 })])],
       ["4K at level 4.2", probe([videoStream({ width: 3840, height: 2160 })])],
       ["slow motion", probe([videoStream({ avg_frame_rate: "240/1", level: 42 })])],
+      ["past 60 fps by more than half a frame", probe([videoStream({ avg_frame_rate: "6051/100", level: 42 })])],
       ["level 5.1", probe([videoStream({ level: 51 })])],
       ["no level", probe([videoStream({ level: undefined })])],
       ["no frame rate", probe([videoStream({ avg_frame_rate: "0/0" })])],
