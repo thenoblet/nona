@@ -101,6 +101,39 @@ describe("the upload store", () => {
     expect(store.getSnapshot().view).toMatchObject({ sent: 1, total: 2, busy: false });
   });
 
+  it("fills the overall bar to the end with a file over its limit in the batch, still counting it in N of M", () => {
+    const { store } = storeWithPreviews();
+    const [photo] = pick(store, "gallery", picked("a.jpg", "image/jpeg", 1_000_000), picked("long.mp4", "video/mp4", SIZE_LIMITS.video + 1));
+
+    store.update(photo.id, { status: "sending", percent: 50 });
+    expect(store.getSnapshot().view).toMatchObject({ percent: 50, sent: 0, total: 2, busy: true });
+    store.update(photo.id, { status: "added", percent: 100 });
+    expect(store.getSnapshot().view).toMatchObject({ percent: 100, sent: 1, total: 2, busy: false });
+  });
+
+  it("leaves a file waiting for Try again out of the bar until it is tried again", () => {
+    const { store } = storeWithPreviews();
+    const [first, second] = pick(store, "gallery", picked("a.jpg", "image/jpeg", 1_000_000), picked("b.jpg", "image/jpeg", 1_000_000));
+    store.update(first.id, { status: "sending", percent: 80 });
+    store.update(second.id, { status: "failed", failure: { reason: UPLOAD_WORDS.unreadable, hint: null, canRetry: true } });
+    expect(store.getSnapshot().view).toMatchObject({ percent: 80 });
+
+    store.update(second.id, { status: "queued", percent: 0, failure: null });
+    expect(store.getSnapshot().view).toMatchObject({ percent: 40 });
+  });
+
+  it("takes a file being cancelled off the card at once, and keeps it through a new pick until the server answers", () => {
+    const { store } = storeWithPreviews();
+    const [first, second] = pick(store, "gallery", picked("a.jpg", "image/jpeg"), picked("b.jpg", "image/jpeg"));
+    store.update(first.id, { status: "added", percent: 100 });
+    store.update(second.id, { status: "cancelling" });
+    expect(store.getSnapshot().view).toMatchObject({ kind: "batch", total: 1, sent: 1, busy: false });
+
+    pick(store, "photo", picked("c.jpg", "image/jpeg"));
+    expect(store.getSnapshot().items.map((item) => item.file.name)).toEqual(["b.jpg", "c.jpg"]);
+    expect(store.getSnapshot().view).toMatchObject({ kind: "camera" });
+  });
+
   it("starts afresh with a new pick once nothing is sending: added files leave, ones to try again stay", () => {
     const { store, revoked } = storeWithPreviews();
     const [added, retryable, refused] = pick(

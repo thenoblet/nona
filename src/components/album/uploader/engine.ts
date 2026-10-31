@@ -1,8 +1,15 @@
 import AwsS3, { type AwsS3Part, type AwsS3UploadParameters } from "@uppy/aws-s3";
 import Uppy, { type UppyFile } from "@uppy/core";
-import { PART_SIZE_BYTES } from "@/lib/media/limits";
-import { createApiClient, type ApiClient } from "./api";
+import { createApiClient, type ApiAnswer, type ApiClient } from "./api";
 import { EventReporter } from "./events";
+import {
+  browserStorage,
+  createPendingCancels,
+  createStartedFiles,
+  type PendingCancels,
+  type StartedFiles,
+  type StorageLike,
+} from "./local-records";
 import {
   completionOutcome,
   errorOutcome,
@@ -13,14 +20,15 @@ import {
   type Outcome,
   type UploadSession,
 } from "./outcomes";
+import { createPartPut, type PartPut, type PartPutResult } from "./part-put";
 import { PartUrlCache, type PartUrl } from "./presign-cache";
 import { createSentFiles, fingerprintFile, type SentFiles } from "./resume";
-import { UPLOAD_WORDS, type UploadStore } from "./state";
+import { UPLOAD_WORDS, type UploadFailure, type UploadStore } from "./state";
 
 /*
- * The uploader: every file a presigned multipart upload straight to R2 in 8 MiB parts, through
- * Uppy 5's @uppy/aws-s3, with the site's own API for each step. Loaded apart from the album page
- * (load.ts). Uppy 5's traps, and how each is met:
+ * The uploader: every file a presigned multipart upload straight to R2, in the parts the server
+ * names, through Uppy 5's @uppy/aws-s3, with the site's own API for each step. Loaded apart from
+ * the album page (load.ts). Uppy 5's traps, and how each is met:
  * - It would create the multipart upload itself. Instead the uploader awaits POST /api/guest once,
  *   fingerprints the file and calls POST /api/uploads first (which resumes this guest's unfinished
  *   upload of the same file, renamed or not), then sets the file's s3Multipart state, so Uppy
@@ -28,33 +36,71 @@ import { UPLOAD_WORDS, type UploadStore } from "./state";
  *   first time) and sends only the rest. createMultipartUpload only returns that state.
  * - It aborts the multipart upload on any final error, which would lose every part sent. Its
  *   abortMultipartUpload does nothing: only the guest's Cancel ends an upload, through DELETE
- *   /api/uploads/[id] (and "Remove my upload" when that answers already-uploaded).
+ *   /api/uploads/[id] (and "Remove my upload" when that answers already-uploaded), kept in
+ *   localStorage until the server answers, and sent again on the next visit if it never does.
  * - Its upload() retries every failed file it still holds, its own way. A file leaves Uppy as soon
  *   as it succeeds or fails; Try again runs it through this same path.
  * - It signs each part with its own call. signPart reads presign-cache.ts, 20 parts a call.
- * - It never times a PUT out. Each part's PUT is dropped and retried after a minute without progress.
- * Files go three at a time and parts four at a time (Uppy's limit, across files). A part that
- * fails is retried by Uppy with backoff; a file whose trouble outlasts that (no signal for a while)
- * tries again by itself for about five minutes, then waits for the guest's Try again. A file shows
- * "Added" only once its complete answers that the server verified it.
+ * - Its own part PUT hangs for good when the ETag can't be read, and never times out: the PUT is
+ *   done by part-put.ts, which resolves without an ETag and drops a part after a minute stalled.
+ * Files go two at a time and parts four at a time (Uppy's limit, across files). A part that fails
+ * is retried by Uppy with backoff; a file whose trouble outlasts that (no signal for a while) tries
+ * again by itself for about five minutes (offline time not counted), then waits for the guest's
+ * Try again. A file shows "Added" only once its complete answers that the server verified it.
  */
 
-const FILES_IN_FLIGHT = 3;
+/** Files sent at once (gate A: two at a time). */
+export const FILES_IN_FLIGHT = 2;
 const PARTS_IN_FLIGHT = 4;
-/** Uppy's waits before each retry of a part's PUT, or of signing it. */
-const PART_RETRY_DELAYS_MILLISECONDS = [0, 1_000, 3_000, 5_000, 10_000];
-/** The file's own waits before it starts again by itself, about five minutes in all. */
-const FILE_RETRY_DELAYS_MILLISECONDS = [3_000, 10_000, 20_000, 30_000, 45_000, 60_000, 60_000, 60_000];
-/** A part's PUT with no progress for this long is dropped and sent again. */
-const PART_STALL_MILLISECONDS = 60_000;
+
+export type UploadTimings = {
+  /** Uppy's waits before each retry of a part's PUT, or of signing it. */
+  partRetryDelays: number[];
+  /** A file's own waits before it starts again by itself: about five minutes in all. */
+  fileRetryDelays: number[];
+  /** A Cancel's waits before it is sent again, once online; past these the guest is told. */
+  cancelRetryDelays: number[];
+  /** How long a file may take to open for its fingerprint (one in the cloud downloads first). */
+  fingerprintTimeoutMs: number;
+};
+
+export const UPLOAD_TIMINGS: UploadTimings = {
+  partRetryDelays: [0, 1_000, 3_000, 5_000, 10_000],
+  fileRetryDelays: [3_000, 10_000, 20_000, 30_000, 45_000, 60_000, 60_000, 60_000],
+  cancelRetryDelays: [2_000, 5_000, 10_000, 20_000],
+  fingerprintTimeoutMs: 60_000,
+};
+
 /** Each call's timeout. A complete may take the server up to 40 s (its R2 budget). */
 const TIMEOUTS = { guest: 10_000, start: 20_000, parts: 15_000, complete: 60_000, cancel: 20_000 };
-/** Cancelling (or removing) on the server: tried this many times, a little apart, then left. */
-const CANCEL_RETRY_DELAYS_MILLISECONDS = [2_000, 5_000, 10_000, 20_000];
+/** S3's smallest part but the last: a session naming a smaller one is not the server's. */
+const MIN_PART_BYTES = 5 * 1024 * 1024;
 
 type FileMeta = { itemId: string; relativePath: string };
 type FileBody = Record<string, never>;
 type EngineFile = UppyFile<FileMeta, FileBody>;
+
+/** Where the uploader hears that the phone is back online or the page is going. */
+export type EngineEnvironment = {
+  onOnline(listener: () => void): void;
+  onPageHide(listener: () => void): void;
+  isOffline(): boolean;
+};
+
+const browserEnvironment: EngineEnvironment = {
+  onOnline: (listener) => window.addEventListener("online", listener),
+  onPageHide: (listener) => window.addEventListener("pagehide", listener),
+  isOffline: () => typeof navigator !== "undefined" && navigator.onLine === false,
+};
+
+/** What a test can stand in for: the site's API, the part PUT, storage, the network's state and the waits. */
+export type EngineDependencies = {
+  api?: ApiClient;
+  putPart?: PartPut;
+  storage?: StorageLike | null;
+  environment?: EngineEnvironment;
+  timings?: Partial<UploadTimings>;
+};
 
 /** What the uploader keeps of a file it has started, beyond what the store shows. */
 type Run = {
@@ -68,13 +114,15 @@ type Run = {
   uppyFileId: string | null;
   /** Settles the current attempt: Uppy's success or error, or the uploader giving up on it. */
   settle: { resolve: () => void; reject: (error: unknown) => void } | null;
-  /** Ends this attempt's own API calls when the guest cancels. */
-  abort: AbortController;
+  /** Which part each link handed out is for, so a failed PUT can say; cleared with each attempt. */
+  partOfUrl: Map<string, { partNumber: number; attempt: number }>;
   partAttempts: Map<number, number>;
   autoRetries: number;
   retryAt: number;
   bytesSent: number;
   cancelled: boolean;
+  /** The guest's Cancel is on its way to the server. */
+  cancelInFlight: boolean;
 };
 
 export type EngineOptions = {
@@ -85,56 +133,72 @@ export type EngineOptions = {
 };
 
 export type Engine = {
-  /** Starts the queued files, up to three at a time. */
+  /** Starts the queued files, up to two at a time. */
   pump(): void;
-  /** Try again: sends a failed file again through the same path. */
+  /** Try again: sends a failed file again through the same path (or, for a Cancel never answered, the Cancel). */
   retry(itemId: string): void;
   /** Cancel: stops the file and ends its upload on the server (removing it if it already arrived). */
   cancel(itemId: string): void;
+  /** Takes a failed file off the card (a Cancel never answered is still sent on the next visit). */
+  dismiss(itemId: string): void;
+  /** Sends again the Cancels an earlier visit couldn't get answered. */
+  replayPendingCancels(): Promise<void>;
 };
-
-function storageOrNull(): Storage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
 
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const isOffline = () => typeof navigator !== "undefined" && navigator.onLine === false;
+const isSuccess = (answer: ApiAnswer) => answer.status >= 200 && answer.status < 300;
 
 function toS3Part(part: { partNumber: number; etag: string; size: number }): AwsS3Part {
   return { PartNumber: part.partNumber, ETag: part.etag, Size: part.size };
+}
+
+function failedOutcome(code: string, failure: UploadFailure): Extract<Outcome, { kind: "failed" }> {
+  return { kind: "failed", code, failure };
 }
 
 class UploadEngine implements Engine {
   readonly #store: UploadStore;
   readonly #options: EngineOptions;
   readonly #api: ApiClient;
+  readonly #putPartBytes: PartPut;
+  readonly #environment: EngineEnvironment;
+  readonly #timings: UploadTimings;
   readonly #events: EventReporter;
   readonly #sentFiles: SentFiles;
+  readonly #startedFiles: StartedFiles;
+  readonly #pendingCancels: PendingCancels;
   readonly #uppy: Uppy<FileMeta, FileBody>;
   readonly #runs = new Map<string, Run>();
   readonly #active = new Set<string>();
-  /** Which file and part each handed-out part URL is for, so a failed PUT can say. */
-  readonly #partOfUrl = new Map<string, { itemId: string; partNumber: number; attempt: number }>();
+  readonly #replaying = new Set<string>();
+  readonly #onlineWaiters: (() => void)[] = [];
   #guest: Promise<void> | null = null;
   #pumpTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(store: UploadStore, options: EngineOptions) {
+  constructor(store: UploadStore, options: EngineOptions, dependencies: EngineDependencies) {
     this.#store = store;
     this.#options = options;
-    this.#api = createApiClient();
-    this.#events = new EventReporter(this.#api);
-    this.#sentFiles = createSentFiles(storageOrNull());
+    this.#api = dependencies.api ?? createApiClient();
+    this.#putPartBytes = dependencies.putPart ?? createPartPut();
+    this.#environment = dependencies.environment ?? browserEnvironment;
+    this.#timings = { ...UPLOAD_TIMINGS, ...dependencies.timings };
+    const storage = dependencies.storage === undefined ? browserStorage() : dependencies.storage;
+    this.#sentFiles = createSentFiles(storage);
+    this.#startedFiles = createStartedFiles(storage);
+    this.#pendingCancels = createPendingCancels(storage);
+    this.#events = new EventReporter(this.#api, this.#environment.onPageHide);
     this.#uppy = new Uppy<FileMeta, FileBody>({ id: "nona-album", autoProceed: false, allowMultipleUploadBatches: true });
     this.#uppy.use(AwsS3<FileMeta, FileBody>, {
       shouldUseMultipart: true,
       limit: PARTS_IN_FLIGHT,
-      retryDelays: PART_RETRY_DELAYS_MILLISECONDS,
-      getChunkSize: () => PART_SIZE_BYTES,
+      retryDelays: this.#timings.partRetryDelays,
+      // The parts the server named for this upload (it binds each part URL to its size).
+      getChunkSize: (data) => {
+        const session = this.#runOfData(data)?.session;
+        if (!session) throw new Error("The upload hasn't started");
+        return session.partSize;
+      },
       createMultipartUpload: (file) => {
         const session = this.#runOfFile(file).session;
         if (!session) throw new Error("The upload hasn't started");
@@ -159,14 +223,17 @@ class UploadEngine implements Engine {
     });
     this.#uppy.on("upload-success", (file) => this.#settled(file, null));
     this.#uppy.on("upload-error", (file, error) => this.#settled(file, error ?? new Error("The upload failed")));
-    window.addEventListener("online", () => this.pump());
+    this.#environment.onOnline(() => {
+      for (const waiter of this.#onlineWaiters.splice(0)) waiter();
+      this.pump();
+    });
   }
 
   // ---------- The queue ----------
 
   pump(): void {
     clearTimeout(this.#pumpTimer);
-    if (isOffline()) return;
+    if (this.#environment.isOffline()) return;
     const now = Date.now();
     let wakeAt = Number.POSITIVE_INFINITY;
     for (const item of this.#store.getSnapshot().items) {
@@ -187,11 +254,17 @@ class UploadEngine implements Engine {
     const item = this.#store.get(itemId);
     if (!item || item.status !== "failed" || !item.failure?.canRetry) return;
     const run = this.#runs.get(itemId);
+    const mediaId = run?.session?.mediaId ?? item.mediaId;
+    if (item.failure.cancelFailed && run && mediaId) {
+      this.#store.update(itemId, { status: "cancelling", failure: null });
+      void this.#cancelOnServer(run, mediaId);
+      return;
+    }
     if (run) {
       run.autoRetries = 0;
       run.retryAt = 0;
-      // A file the phone couldn't read is read afresh.
-      if (item.failure.reason === UPLOAD_WORDS.unreadable) run.fingerprint = null;
+      // A file the phone couldn't read, or took too long to open, is read afresh.
+      if (item.failure.reason === UPLOAD_WORDS.unreadable || item.failure.reason === UPLOAD_WORDS.slowToOpen) run.fingerprint = null;
     }
     this.#store.update(itemId, { status: "queued", failure: null });
     this.pump();
@@ -199,16 +272,48 @@ class UploadEngine implements Engine {
 
   cancel(itemId: string): void {
     const item = this.#store.get(itemId);
-    if (!item || item.status === "added") return;
+    if (!item || item.status === "added" || item.status === "cancelling") return;
     const run = this.#runs.get(itemId);
-    this.#store.remove(itemId);
-    if (!run) return;
+    if (!run) {
+      // Never started: nothing to tell the server.
+      this.#store.remove(itemId);
+      return;
+    }
+    const mediaId = run.session?.mediaId ?? item.mediaId;
     run.cancelled = true;
-    run.abort.abort();
     this.#leaveUppy(run);
     run.settle?.reject(new DOMException("The guest cancelled", "AbortError"));
-    const mediaId = run.session?.mediaId ?? item.mediaId;
-    if (mediaId) void this.#cancelOnServer(run, mediaId);
+    this.#store.update(itemId, { status: "cancelling" });
+    if (mediaId) {
+      void this.#cancelOnServer(run, mediaId);
+    } else if (!this.#active.has(itemId)) {
+      this.#store.remove(itemId);
+      this.#runs.delete(itemId);
+    }
+    // Otherwise its start is on its way: #start cancels the upload once the server names it, or,
+    // if it never does, #run's end takes the file away.
+  }
+
+  dismiss(itemId: string): void {
+    const item = this.#store.get(itemId);
+    if (!item || item.status !== "failed") return;
+    this.#store.remove(itemId);
+    if (!this.#active.has(itemId)) this.#runs.delete(itemId);
+  }
+
+  async replayPendingCancels(): Promise<void> {
+    const pending = this.#pendingCancels.list().filter((cancel) => !this.#replaying.has(cancel.mediaId));
+    await Promise.all(
+      pending.map(async ({ mediaId }) => {
+        this.#replaying.add(mediaId);
+        try {
+          // Not answered again: it stays for the next visit.
+          if (await this.#sendCancel(mediaId)) this.#pendingCancels.remove(mediaId);
+        } finally {
+          this.#replaying.delete(mediaId);
+        }
+      }),
+    );
   }
 
   // ---------- One file ----------
@@ -225,12 +330,13 @@ class UploadEngine implements Engine {
         startParts: null,
         uppyFileId: null,
         settle: null,
-        abort: new AbortController(),
+        partOfUrl: new Map(),
         partAttempts: new Map(),
         autoRetries: 0,
         retryAt: 0,
         bytesSent: 0,
         cancelled: false,
+        cancelInFlight: false,
       };
       this.#runs.set(itemId, run);
     }
@@ -243,6 +349,11 @@ class UploadEngine implements Engine {
     return run;
   }
 
+  #runOfData(data: unknown): Run | undefined {
+    for (const run of this.#runs.values()) if (run.file === data) return run;
+    return undefined;
+  }
+
   async #run(itemId: string): Promise<void> {
     const item = this.#store.get(itemId);
     if (!item) {
@@ -250,21 +361,22 @@ class UploadEngine implements Engine {
       return;
     }
     const run = this.#runOf(itemId, item.file);
-    run.abort = new AbortController();
     run.retryAt = 0;
+    run.partOfUrl.clear();
     this.#store.update(itemId, { status: "sending", failure: null });
     try {
       await this.#ensureGuest();
       if (run.cancelled) return;
-      run.fingerprint ??= await fingerprintFile(run.file);
+      run.fingerprint ??= await this.#fingerprint(run.file);
       if (run.cancelled) return;
       if (this.#isDuplicate(run)) {
-        // The same file picked twice while the first is still sending: the first one carries it.
+        // The same file picked twice while the first is still on its way: the first one carries it.
         this.#store.remove(itemId);
         this.#runs.delete(itemId);
         return;
       }
       if (await this.#settledBefore(run)) return;
+      if (run.cancelled) return;
       await this.#start(run);
       if (run.cancelled) return;
       await this.#send(run);
@@ -279,6 +391,11 @@ class UploadEngine implements Engine {
       else this.#retryLater(run, outcome);
     } finally {
       this.#active.delete(itemId);
+      // Cancelled before the server knew of it: nothing to cancel there.
+      if (run.cancelled && !run.cancelInFlight && !run.session) {
+        this.#store.remove(itemId);
+        this.#runs.delete(itemId);
+      }
       this.pump();
     }
   }
@@ -297,6 +414,29 @@ class UploadEngine implements Engine {
         throw error;
       });
     return this.#guest;
+  }
+
+  /** The file's fingerprint, or a plain failure (with Try again) when it takes over a minute to open. */
+  #fingerprint(file: File): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            new OutcomeError(failedOutcome("slow-to-open", { reason: UPLOAD_WORDS.slowToOpen, hint: null, canRetry: true })),
+          ),
+        this.#timings.fingerprintTimeoutMs,
+      );
+      fingerprintFile(file).then(
+        (fingerprint) => {
+          clearTimeout(timer);
+          resolve(fingerprint);
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   }
 
   /**
@@ -327,7 +467,6 @@ class UploadEngine implements Engine {
       method: "POST",
       body: { parts: [] },
       timeoutMs: TIMEOUTS.complete,
-      signal: run.abort.signal,
     });
     if (run.cancelled) return true;
     const outcome = probeOutcome(answer);
@@ -341,6 +480,7 @@ class UploadEngine implements Engine {
       case "retry":
         throw new OutcomeError(outcome);
       case "forget":
+        // Gone, or removed by the guest, who picking it again wants it back: send it afresh.
         this.#sentFiles.forget(run.file.size, fingerprint);
         this.#store.update(run.itemId, { mediaId: null });
         return false;
@@ -349,7 +489,11 @@ class UploadEngine implements Engine {
     }
   }
 
-  /** POST /api/uploads: a new upload, or this guest's unfinished one of the same file, with its parts so far. */
+  /**
+   * POST /api/uploads: a new upload, or this guest's unfinished one of the same file, with its
+   * parts so far. Sent without the Cancel's signal: a start the guest cancels still answers, so
+   * the upload it made can be cancelled on the server rather than left behind.
+   */
   async #start(run: Run): Promise<void> {
     const item = this.#store.get(run.itemId);
     if (!item) throw new DOMException("The file left the card", "AbortError");
@@ -365,7 +509,6 @@ class UploadEngine implements Engine {
         uploaderName: this.#options.guestName() ?? undefined,
       },
       timeoutMs: TIMEOUTS.start,
-      signal: run.abort.signal,
     });
     const outcome = startOutcome(answer);
     if (outcome.kind !== "session") {
@@ -374,10 +517,25 @@ class UploadEngine implements Engine {
       throw new OutcomeError(outcome);
     }
     const { session } = outcome;
+    // The parts must be the ones the server binds each URL to: a session that disagrees with
+    // itself is not the server's answer.
+    const partsAgree =
+      Number.isInteger(session.partSize) &&
+      session.partSize >= MIN_PART_BYTES &&
+      session.partCount === Math.ceil(run.file.size / session.partSize);
+    if (!partsAgree) {
+      throw new OutcomeError(failedOutcome("unexpected-answer", { reason: UPLOAD_WORDS.notSent, hint: null, canRetry: true }));
+    }
+    // Nothing in R2 yet (a new upload, or one started again after it expired): the bar starts again.
+    if (session.uploadedParts.length === 0) {
+      run.bytesSent = 0;
+      this.#store.update(run.itemId, { percent: 0 });
+    }
     run.session = session;
     run.startParts = session.uploadedParts;
     run.partUrls = this.#partUrlsFor(run, session.uploadedParts.map((part) => part.partNumber));
     this.#store.update(run.itemId, { mediaId: session.mediaId });
+    this.#startedFiles.record(run.file.size, run.fingerprint as string, session.mediaId);
     if (run.cancelled) void this.#cancelOnServer(run, session.mediaId);
   }
 
@@ -451,6 +609,8 @@ class UploadEngine implements Engine {
   #leaveUppy(run: Run): void {
     const fileId = run.uppyFileId;
     run.uppyFileId = null;
+    // Links handed out for PUTs that will now never start.
+    run.partOfUrl.clear();
     if (fileId && this.#uppy.getFile(fileId)) this.#uppy.removeFile(fileId);
   }
 
@@ -480,62 +640,48 @@ class UploadEngine implements Engine {
     const attempt = (run.partAttempts.get(partNumber) ?? 0) + 1;
     run.partAttempts.set(partNumber, attempt);
     const url = await run.partUrls.urlFor(partNumber, signal);
-    this.#partOfUrl.set(url, { itemId: run.itemId, partNumber, attempt });
+    run.partOfUrl.set(url, { partNumber, attempt });
     // A plain PUT of the part's bytes: no headers, so R2 takes the metadata the server set.
     return { method: "PUT", url };
   }
 
-  /** One part's PUT (Uppy's own), dropped and retried after a minute without progress, and reported when it fails. */
-  async #putPart(options: Parameters<typeof AwsS3.uploadPartBytes>[0]) {
-    const part = this.#partOfUrl.get(options.signature.url);
-    this.#partOfUrl.delete(options.signature.url);
-    const controller = new AbortController();
-    const outer = options.signal;
-    const onAbort = () => controller.abort(outer?.reason);
-    outer?.addEventListener("abort", onAbort, { once: true });
-    let stalled = false;
-    const stall = () => {
-      stalled = true;
-      controller.abort();
-    };
-    let stallTimer = setTimeout(stall, PART_STALL_MILLISECONDS);
+  /** One part's PUT (part-put.ts), reported when it fails for a reason other than the guest's. */
+  async #putPart(options: Parameters<typeof AwsS3.uploadPartBytes>[0]): Promise<PartPutResult> {
+    const { url } = options.signature;
+    let run: Run | undefined;
+    for (const candidate of this.#runs.values()) if (candidate.partOfUrl.has(url)) run = candidate;
+    const part = run?.partOfUrl.get(url);
+    run?.partOfUrl.delete(url);
     const startedAt = Date.now();
     try {
-      return await AwsS3.uploadPartBytes({
-        ...options,
-        signal: controller.signal,
-        onProgress: (event: ProgressEvent) => {
-          clearTimeout(stallTimer);
-          stallTimer = setTimeout(stall, PART_STALL_MILLISECONDS);
-          options.onProgress(event);
-        },
+      return await this.#putPartBytes({
+        signature: options.signature,
+        body: options.body,
+        size: options.size,
+        onProgress: options.onProgress,
+        onComplete: options.onComplete,
+        signal: options.signal,
       });
     } catch (error) {
-      if (outer?.aborted) throw error;
-      // A stalled part looks like a dropped connection to Uppy, which then sends it again.
-      const failure = stalled ? Object.assign(new Error("The part stalled"), { source: { status: 0 } }) : error;
-      if (part) this.#partFailed(part, failure, Date.now() - startedAt, stalled);
-      throw failure;
-    } finally {
-      clearTimeout(stallTimer);
-      outer?.removeEventListener("abort", onAbort);
+      if (!options.signal?.aborted && run && part) this.#partFailed(run, part, error, Date.now() - startedAt);
+      throw error;
     }
   }
 
-  #partFailed(part: { itemId: string; partNumber: number; attempt: number }, error: unknown, elapsedMs: number, stalled: boolean): void {
-    const run = this.#runs.get(part.itemId);
-    if (!run || run.cancelled) return;
-    const status = Number((error as { source?: { status?: unknown } } | null)?.source?.status) || 0;
-    this.#store.update(part.itemId, { status: "retrying" });
+  #partFailed(run: Run, part: { partNumber: number; attempt: number }, error: unknown, elapsedMs: number): void {
+    if (run.cancelled) return;
+    const failure = error as { stalled?: unknown; source?: { status?: unknown } } | null;
+    const status = Number(failure?.source?.status) || 0;
+    this.#store.update(run.itemId, { status: "retrying" });
     this.#events.report({
       kind: "part-retry",
       mediaId: run.session?.mediaId,
-      reason: stalled ? "stalled" : status > 0 ? `http-${status}` : "network-error",
+      reason: failure?.stalled ? "stalled" : status > 0 ? `http-${status}` : "network-error",
       detail: {
         partNumber: part.partNumber,
         attempt: part.attempt,
         httpStatus: status > 0 ? status : undefined,
-        online: typeof navigator === "undefined" ? undefined : navigator.onLine,
+        online: !this.#environment.isOffline(),
         elapsedMs: Math.round(elapsedMs),
       },
     });
@@ -565,6 +711,7 @@ class UploadEngine implements Engine {
 
   #added(run: Run): void {
     this.#store.update(run.itemId, { status: "added", percent: 100, failure: null });
+    if (run.fingerprint) this.#startedFiles.finish(run.file.size, run.fingerprint);
     this.#runs.delete(run.itemId);
   }
 
@@ -574,54 +721,97 @@ class UploadEngine implements Engine {
       kind: "failed",
       mediaId: run.session?.mediaId,
       reason: outcome.code,
-      detail: { online: typeof navigator === "undefined" ? undefined : navigator.onLine },
+      detail: { online: !this.#environment.isOffline() },
     });
-    if (!outcome.failure.canRetry) this.#runs.delete(run.itemId);
+    if (!outcome.failure.canRetry) {
+      if (run.fingerprint) this.#startedFiles.finish(run.file.size, run.fingerprint);
+      this.#runs.delete(run.itemId);
+    }
   }
 
   /** Passing trouble: the file starts again by itself after a wait (offline, once back online), for about five minutes. */
   #retryLater(run: Run, outcome: Extract<Outcome, { kind: "retry" }>): void {
-    if (!isOffline() && run.autoRetries >= FILE_RETRY_DELAYS_MILLISECONDS.length) {
-      this.#failed(run, { kind: "failed", code: outcome.code, failure: { reason: UPLOAD_WORDS.connectionDropped, hint: null, canRetry: true } });
+    const delays = this.#timings.fileRetryDelays;
+    const offline = this.#environment.isOffline();
+    if (!offline && run.autoRetries >= delays.length) {
+      this.#failed(run, failedOutcome(outcome.code, { reason: UPLOAD_WORDS.connectionDropped, hint: null, canRetry: true }));
       return;
     }
-    const delay = FILE_RETRY_DELAYS_MILLISECONDS[Math.min(run.autoRetries, FILE_RETRY_DELAYS_MILLISECONDS.length - 1)];
-    if (!isOffline()) run.autoRetries += 1;
+    const delay = delays[Math.min(run.autoRetries, delays.length - 1)] ?? 0;
+    if (!offline) run.autoRetries += 1;
     run.retryAt = Date.now() + delay;
     this.#store.update(run.itemId, { status: "retrying" });
   }
 
+  // ---------- Cancel ----------
+
   /**
-   * The guest's Cancel, on the server: DELETE ends an unfinished upload. One that already arrived
-   * (a complete that won the race) answers 409 already-uploaded, so it is removed instead, as
-   * "Remove my upload" does: the guest's wish holds either way. Tried a few times if the phone is
-   * offline; it never shows.
+   * The guest's Cancel, on the server. It is kept in localStorage until the server answers, so a
+   * Cancel the phone couldn't send is sent again on the next visit; and should it go unanswered
+   * here, the file comes back to the card saying so, with Try again. Never dropped silently.
    */
   async #cancelOnServer(run: Run, mediaId: string): Promise<void> {
-    if (run.fingerprint) this.#sentFiles.forget(run.file.size, run.fingerprint);
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        const cancelled = await this.#api.request(`/api/uploads/${mediaId}`, { method: "DELETE", timeoutMs: TIMEOUTS.cancel });
-        const code = (cancelled.body as { error?: unknown } | null)?.error;
-        if (cancelled.status === 409 && code === "already-uploaded") {
-          const removed = await this.#api.request(`/api/media/${mediaId}/remove`, { method: "POST", timeoutMs: TIMEOUTS.cancel });
-          if (removed.status < 500) return;
-        } else if (cancelled.status < 500) {
-          return;
-        }
-      } catch {
-        // No answer: try again below.
-      }
-      if (attempt >= CANCEL_RETRY_DELAYS_MILLISECONDS.length) {
-        this.#events.report({ kind: "failed", mediaId, reason: "cancel-unanswered" });
-        return;
-      }
-      await sleep(CANCEL_RETRY_DELAYS_MILLISECONDS[attempt]);
+    if (run.cancelInFlight) return;
+    run.cancelInFlight = true;
+    this.#pendingCancels.add(mediaId, run.session?.uploadId ?? null);
+    if (run.fingerprint) {
+      this.#sentFiles.forget(run.file.size, run.fingerprint);
+      this.#startedFiles.finish(run.file.size, run.fingerprint);
     }
+    this.#startedFiles.forgetMedia(mediaId);
+    const done = await this.#sendCancel(mediaId);
+    run.cancelInFlight = false;
+    if (done) {
+      this.#pendingCancels.remove(mediaId);
+      this.#store.remove(run.itemId);
+      this.#runs.delete(run.itemId);
+      return;
+    }
+    this.#store.update(run.itemId, {
+      status: "failed",
+      failure: { reason: UPLOAD_WORDS.cancelUnanswered, hint: null, canRetry: true, cancelFailed: true },
+    });
+    this.#events.report({ kind: "failed", mediaId, reason: "cancel-unanswered" });
+  }
+
+  /** Sends a Cancel until it is answered, or its tries run out; offline, it waits to be back online, uncounted. */
+  async #sendCancel(mediaId: string): Promise<boolean> {
+    const delays = this.#timings.cancelRetryDelays;
+    for (let attempt = 0; ; ) {
+      await this.#whenOnline();
+      if (await this.#cancelOnce(mediaId)) return true;
+      if (this.#environment.isOffline()) continue;
+      if (attempt >= delays.length) return false;
+      await sleep(delays[attempt]);
+      attempt += 1;
+    }
+  }
+
+  /**
+   * One Cancel: done when DELETE answers 2xx, or 404 (gone already: an earlier Cancel went through),
+   * or 409 already-uploaded and then Remove answers 2xx or 404. Anything else, a 403 included, is
+   * not done.
+   */
+  async #cancelOnce(mediaId: string): Promise<boolean> {
+    try {
+      const cancelled = await this.#api.request(`/api/uploads/${mediaId}`, { method: "DELETE", timeoutMs: TIMEOUTS.cancel });
+      if (isSuccess(cancelled) || cancelled.status === 404) return true;
+      const code = (cancelled.body as { error?: unknown } | null)?.error;
+      if (cancelled.status !== 409 || code !== "already-uploaded") return false;
+      const removed = await this.#api.request(`/api/media/${mediaId}/remove`, { method: "POST", timeoutMs: TIMEOUTS.cancel });
+      return isSuccess(removed) || removed.status === 404;
+    } catch {
+      return false;
+    }
+  }
+
+  #whenOnline(): Promise<void> {
+    if (!this.#environment.isOffline()) return Promise.resolve();
+    return new Promise((resolve) => this.#onlineWaiters.push(resolve));
   }
 }
 
 /** The uploader for the album page's store. */
-export function startEngine(store: UploadStore, options: EngineOptions): Engine {
-  return new UploadEngine(store, options);
+export function startEngine(store: UploadStore, options: EngineOptions, dependencies: EngineDependencies = {}): Engine {
+  return new UploadEngine(store, options, dependencies);
 }

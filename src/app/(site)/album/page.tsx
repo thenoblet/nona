@@ -7,7 +7,7 @@ import { shareDefaults } from "@/lib/share";
 import { getSiteContent } from "@/lib/content/get";
 import { listMedia, SAMPLE_DEVICE } from "@/lib/data/media";
 import { describeError } from "@/lib/log-error";
-import { readUploadsSwitch } from "@/lib/media/uploads-switch";
+import { readUploadsSwitch, UPLOADS_GRACE_MILLISECONDS } from "@/lib/media/uploads-switch";
 import { resolveMode } from "@/lib/mode";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { PillLink, TextLink } from "@/components/ui/Button";
@@ -15,6 +15,7 @@ import { Icon } from "@/components/ui/Icon";
 import { AlbumBrowser } from "@/components/album/AlbumBrowser";
 import { SharingAs } from "@/components/album/SharingAs";
 import { ShareButtons, ShareButtonsSkeleton, UploadProgress, UploadProvider } from "@/components/album/Upload";
+import { SharingClosed } from "@/components/album/SharingClosed";
 import { UploadsClosed } from "@/components/album/UploadsClosed";
 
 export const metadata: Metadata = {
@@ -79,7 +80,8 @@ export default function AlbumPage({ searchParams }: PageProps<"/album">) {
 type Sharing =
   | { state: "pending" }
   | { state: "open"; cameraFirst: boolean }
-  | { state: "closed"; phase: "before" | "after" };
+  /** Closed; after a close, `graceUntil` while uploads started before it may still finish. */
+  | { state: "closed"; phase: "before" | "after"; graceUntil: string | null };
 
 /**
  * The header's words and the share buttons, by the uploads switch: camera first on the wedding
@@ -96,10 +98,14 @@ async function AlbumHead({ searchParams }: Pick<PageProps<"/album">, "searchPara
       return null;
     }),
   ]);
+  // Request time: connection() above.
+  const now = new Date();
   if (uploads && !uploads.open) {
-    return <AlbumHeadBody sharing={{ state: "closed", phase: uploads.closedAt ? "after" : "before" }} />;
+    const graceEnds = uploads.closedAt ? uploads.closedAt.getTime() + UPLOADS_GRACE_MILLISECONDS : 0;
+    const graceUntil = graceEnds > now.getTime() ? new Date(graceEnds).toISOString() : null;
+    return <AlbumHeadBody sharing={{ state: "closed", phase: uploads.closedAt ? "after" : "before", graceUntil }} />;
   }
-  return <AlbumHeadBody sharing={{ state: "open", cameraFirst: resolveMode(new Date(), mode) === "day" }} />;
+  return <AlbumHeadBody sharing={{ state: "open", cameraFirst: resolveMode(now, mode) === "day" }} />;
 }
 
 /**
@@ -119,7 +125,11 @@ function AlbumHeadBody({ sharing }: { sharing: Sharing }) {
         {open ? <SharingAs /> : sharing.state === "pending" ? <div aria-hidden className="h-5 w-44 rounded-full bg-white/10" /> : null}
       </div>
       {sharing.state === "closed" ? (
-        <UploadsClosed phase={sharing.phase} />
+        sharing.phase === "after" ? (
+          <SharingClosed graceUntil={sharing.graceUntil} />
+        ) : (
+          <UploadsClosed phase="before" />
+        )
       ) : open ? (
         <ShareButtons cameraFirst={sharing.cameraFirst} />
       ) : (

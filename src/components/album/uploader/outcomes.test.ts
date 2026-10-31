@@ -31,14 +31,17 @@ describe("what the server's answers mean for a file", () => {
     expect(completionOutcome({ status: 503, body: { error: "unavailable" } })).toEqual({ kind: "retry", code: "http-503" });
   });
 
-  it("fails an expired or mismatched upload in the server's words, with Try again", () => {
+  it("fails an expired upload in words that fit its Try again, and a changed file in the server's, with none", () => {
     expect(completionOutcome({ status: 409, body: { error: "upload-missing", message: "This upload has expired. Please choose the file again." } })).toEqual({
       kind: "failed",
       code: "upload-missing",
-      failure: { reason: "This upload has expired. Please choose the file again.", hint: null, canRetry: true },
+      failure: { reason: "This upload expired before it arrived", hint: null, canRetry: true },
     });
-    expect(completionOutcome({ status: 409, body: { error: "size-mismatch", message: "This file didn't match." } })).toMatchObject({
-      failure: { reason: "This file didn't match.", canRetry: true },
+    expect(completionOutcome({ status: 409, body: { error: "size-mismatch", message: "This file didn't match. Please choose it again." } })).toMatchObject({
+      failure: { reason: "This file didn't match. Please choose it again.", canRetry: false },
+    });
+    expect(completionOutcome({ status: 409, body: { error: "invalid-parts", message: "Please send it again." } })).toMatchObject({
+      failure: { reason: "Please send it again.", canRetry: true },
     });
     expect(completionOutcome({ status: 404, body: { error: "missing" } })).toMatchObject({
       code: "missing",
@@ -46,15 +49,22 @@ describe("what the server's answers mean for a file", () => {
     });
   });
 
-  it("fails with the plain closed message, and no Try again, once the couple close uploads", () => {
+  it("fails with a short title over the plain closed message, and nothing to try again, once the couple close uploads", () => {
     expect(completionOutcome({ status: 403, body: { error: "uploads-closed", message: CLOSED } })).toEqual({
       kind: "failed",
       code: "uploads-closed",
-      failure: { reason: CLOSED, hint: null, canRetry: false },
+      failure: { reason: "Sharing has closed", hint: CLOSED, canRetry: false, closed: true },
     });
     expect(startOutcome({ status: 403, body: { error: "uploads-closed", message: CLOSED } })).toMatchObject({
-      failure: { reason: CLOSED, canRetry: false },
+      failure: { reason: "Sharing has closed", hint: CLOSED, canRetry: false, closed: true },
     });
+  });
+
+  it("never adds a file the couple hid, picked again; one its guest removed starts afresh", () => {
+    const cantAdd = { kind: "failed", code: "hidden", failure: { reason: "This one can't be added to the album", hint: null, canRetry: false } };
+    expect(probeOutcome({ status: 409, body: { error: "hidden" } })).toEqual(cantAdd);
+    expect(completionOutcome({ status: 409, body: { error: "hidden" } })).toEqual(cantAdd);
+    expect(probeOutcome({ status: 409, body: { error: "removed" } })).toEqual({ kind: "forget" });
   });
 
   it("starts a session, refuses a file in the API's words, and redoes the guest when the browser has none", () => {

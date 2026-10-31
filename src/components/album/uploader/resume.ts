@@ -29,13 +29,17 @@ export async function fingerprintFile(file: Blob): Promise<string> {
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+import { browserStorage, createStartedFiles, type StorageLike } from "./local-records";
+
+export type { StorageLike } from "./local-records";
 
 export type SentFiles = {
   /** The upload this file went to, when this phone asked the server to complete it; else null. */
   find(size: number, fingerprint: string): string | null;
   remember(size: number, fingerprint: string, mediaId: string): void;
   forget(size: number, fingerprint: string): void;
+  /** Forgets the file that went to this upload (its guest removed it). */
+  forgetMedia(mediaId: string): void;
 };
 
 const SENT_FILES_KEY = "nona:sent-files";
@@ -84,5 +88,19 @@ export function createSentFiles(storage: StorageLike | null): SentFiles {
       delete entries[keyOf(size, fingerprint)];
       write(entries);
     },
+    forgetMedia(mediaId) {
+      const entries = read();
+      const kept = Object.fromEntries(Object.entries(entries).filter(([, entry]) => entry?.mediaId !== mediaId));
+      if (Object.keys(kept).length !== Object.keys(entries).length) write(kept);
+    },
   };
+}
+
+/**
+ * Forgets everything this phone remembers of an upload: for "Remove my upload" (Task 15), so the
+ * same file picked again is sent afresh rather than asked about.
+ */
+export function forgetMedia(mediaId: string, storage: StorageLike | null = browserStorage()): void {
+  createSentFiles(storage).forgetMedia(mediaId);
+  createStartedFiles(storage).forgetMedia(mediaId);
 }

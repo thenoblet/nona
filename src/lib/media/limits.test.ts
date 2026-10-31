@@ -228,17 +228,13 @@ describe("checkUpload", () => {
 });
 
 describe("the album's gallery picker", () => {
-  it("offers exactly the photo and video types the API takes for the album, by type and by name", () => {
-    const offered = ALBUM_PICKER_ACCEPT.split(",");
-    const types = offered.filter((entry) => !entry.startsWith("."));
-    const extensions = offered.filter((entry) => entry.startsWith("."));
-
-    for (const contentType of types) expect(check({ contentType }).ok, contentType).toBe(true);
-    expect(types).toEqual(expect.arrayContaining(["image/jpeg", "image/heic", "video/mp4", "video/quicktime"]));
-    expect(types.every((type) => type.startsWith("image/") || type.startsWith("video/"))).toBe(true);
-    expect(types).not.toContain("image/svg+xml");
-    expect(extensions).toEqual(expect.arrayContaining([".jpg", ".heic", ".mov", ".mp4"]));
-    expect(new Set(offered).size).toBe(offered.length);
+  it("offers photos and videos by family, and HEIC by name, so a picker honouring one entry hides none of them", () => {
+    expect(ALBUM_PICKER_ACCEPT.split(",")).toEqual(["image/*", "video/*", ".heic", ".heif"]);
+    // Everything the album takes falls inside what the picker offers.
+    for (const contentType of ["image/jpeg", "image/png", "image/heic", "image/webp", "video/mp4", "video/quicktime", "video/3gpp"]) {
+      expect(check({ contentType }).ok, contentType).toBe(true);
+      expect(contentType.startsWith("image/") || contentType.startsWith("video/")).toBe(true);
+    }
   });
 });
 

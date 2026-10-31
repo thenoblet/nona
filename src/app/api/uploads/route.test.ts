@@ -566,6 +566,26 @@ describe("completing", () => {
     expect(await again.json()).toEqual({ mediaId: session.mediaId, status: "failed", reason: "corrupt" });
   });
 
+  it("answers 409 removed for an upload its guest removed, and 409 hidden for one the couple hid, never as uploaded", async () => {
+    await signIn();
+    const removed = await uploadWhole(smallFile());
+    const hidden = await uploadWhole(smallFile());
+    await hideMedia(removed.mediaId, { guestIds: [(await mediaRow(removed.mediaId)).guestId as string] });
+    await hideMedia(hidden.mediaId, { admin: "couple@example.com" });
+
+    const removedAnswer = await complete(removed.mediaId, []);
+    expect(removedAnswer.status).toBe(409);
+    expect(removedAnswer.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await removedAnswer.json()).toEqual({ error: "removed" });
+    const hiddenAnswer = await complete(hidden.mediaId, []);
+    expect(hiddenAnswer.status).toBe(409);
+    expect(await hiddenAnswer.json()).toEqual({ error: "hidden" });
+    // A deleted one is the couple's doing too.
+    await getDb().update(media).set({ deletedAt: new Date() }).where(eq(media.id, removed.mediaId));
+    await getDb().update(media).set({ removedByUploader: false }).where(eq(media.id, removed.mediaId));
+    expect(await (await complete(removed.mediaId, [])).json()).toEqual({ error: "hidden" });
+  });
+
   it("counts NoSuchUpload after a real completion as success, when the original is there", async () => {
     await signIn();
     const body = photo();
@@ -769,7 +789,10 @@ describe("whose upload it is", () => {
       expect((await presign(id, [1])).status).toBe(403);
       expect((await listParts(id)).status).toBe(403);
       expect((await complete(id, [])).status).toBe(403);
-      expect((await cancel(id)).status).toBe(403);
+      // A cancel of an upload that isn't there is done already: 404, which a cancel sent again takes as done.
+      const cancelled = await cancel(id);
+      expect(cancelled.status).toBe(404);
+      expect(await cancelled.json()).toEqual({ error: "not-found" });
     }
     expect((await mediaRow(session.mediaId)).status).toBe("uploading");
   });
@@ -915,8 +938,8 @@ describe("cancelling", () => {
     // Its manifest goes with its row: a rebuild from R2 finds nothing of a cancelled upload.
     expect(await readManifest(session.mediaId)).toBeNull();
     await expect(listUploadedParts(session.key, session.uploadId)).rejects.toMatchObject({ name: "NoSuchUpload" });
-    // Cancelling again finds nothing of this browser's.
-    expect((await cancel(session.mediaId)).status).toBe(403);
+    // Cancelling again finds nothing there: done already.
+    expect((await cancel(session.mediaId)).status).toBe(404);
   });
 
   it("refuses to presign the parts of an upload the couple hid: every presign re-checks visibility (Review Focus 3)", async () => {

@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { Halo } from "@/components/ui/Halo";
 import { Icon } from "@/components/ui/Icon";
 import { MorphText } from "./UploadCards";
-import { hideLinkOffer, usePersonalLink } from "./uploader/personal-link";
+import { hideLinkOffer, markLinkOfferShown } from "./uploader/personal-link";
 
 /*
  * The guest's personal link (gate A): offered once, under their first upload, and kept in My
  * uploads as a slim row. Share opens the phone's own share sheet (so a guest can send it to
  * themselves on WhatsApp); where the browser can't share (often inside WhatsApp itself), Copy link
- * is the only button.
+ * is the only button. Its own chunk: it shows only once a file has been added.
  */
 
 const SHARE_TEXT = {
@@ -59,13 +59,29 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-/** Copy link, which says Copied for a moment. */
-function useCopy(link: string) {
+/** Selects the link's text on screen, so the guest can copy it by hand. */
+function selectText(element: HTMLElement | null): void {
+  if (!element) return;
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+/**
+ * Copy link, which says Copied for a moment only when the copy worked; where the browser refused,
+ * the link's text is selected instead, for the guest to copy by hand.
+ */
+function useCopy(link: string, shownLink?: RefObject<HTMLElement | null>) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   async function copy() {
-    await copyText(link);
+    if (!(await copyText(link))) {
+      selectText(shownLink?.current ?? null);
+      return;
+    }
     setCopied(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), COPIED_FOR_MILLISECONDS);
@@ -73,12 +89,19 @@ function useCopy(link: string) {
   return { copied, copy };
 }
 
-/** The card under the first completed upload, with Share, Copy link and × (Hide this). */
-export function PersonalLinkOffer({ link }: { link: string }) {
+/**
+ * The card under the first completed upload, with Share, Copy link and × (Hide this). `onHidden`
+ * runs once it has gone, to move focus somewhere sensible.
+ */
+export function PersonalLinkOffer({ link, onHidden }: { link: string; onHidden?: () => void }) {
   const titleId = useId();
   const canShare = useCanShare();
-  const { copied, copy } = useCopy(link);
+  const shownLink = useRef<HTMLSpanElement>(null);
+  const { copied, copy } = useCopy(link, shownLink);
   const [leaving, setLeaving] = useState(false);
+
+  // Shown once (gate A): later pages don't offer it again.
+  useEffect(() => markLinkOfferShown(), []);
 
   async function share() {
     try {
@@ -91,7 +114,13 @@ export function PersonalLinkOffer({ link }: { link: string }) {
   function hide() {
     setLeaving(true);
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    setTimeout(hideLinkOffer, reducedMotion ? 0 : 220);
+    setTimeout(
+      () => {
+        hideLinkOffer();
+        onHidden?.();
+      },
+      reducedMotion ? 0 : 220,
+    );
   }
 
   const copyLabel = (
@@ -134,7 +163,9 @@ export function PersonalLinkOffer({ link }: { link: string }) {
       </button>
       <p className="m-0 text-sm leading-normal">Save this to find your uploads on any phone.</p>
       <p className="m-0 flex h-11 min-w-0 items-center rounded-full border border-hairline bg-blush px-4 text-sm text-cocoa shadow-[var(--shadow-inset)]">
-        <span className="block min-w-0 truncate">{shortened(link)}</span>
+        <span ref={shownLink} className="block min-w-0 truncate">
+          {shortened(link)}
+        </span>
       </p>
       <div className={`grid gap-2 ${canShare ? "grid-cols-2" : "grid-cols-1"}`}>
         {canShare ? (
@@ -162,17 +193,11 @@ export function PersonalLinkOffer({ link }: { link: string }) {
 }
 
 /**
- * The slim row in My uploads: "Your link opens these on any phone." with Copy link. Shown once this
- * page knows the link (after an upload); Task 15's My uploads can pass the link from the server.
+ * The slim row in My uploads: "Your link opens these on any phone." with Copy link. The album shows
+ * it once the page knows the link (after an upload); Task 15's My uploads can pass the link from
+ * the server.
  */
-export function PersonalLinkStrip({ link: given }: { link?: string | null }) {
-  const known = usePersonalLink();
-  const link = given ?? known;
-  if (!link) return null;
-  return <PersonalLinkStripRow link={link} />;
-}
-
-function PersonalLinkStripRow({ link }: { link: string }) {
+export function PersonalLinkStrip({ link }: { link: string }) {
   const { copied, copy } = useCopy(link);
   return (
     <div className="mt-1 mb-2.5 flex items-center gap-2.5 rounded-full bg-white py-2 pr-3.5 pl-2 shadow-[0_0_0_1px_var(--color-hairline)]">

@@ -18,10 +18,21 @@ export type UploadSource = "photo" | "video" | "gallery";
  * - confirming: every byte sent, waiting for the server's answer ("Checking it arrived safely")
  * - added: the server has verified it ("Added to the album"); nothing else ever shows this
  * - failed: a plain reason, with Try again only where trying again can help
+ * - cancelling: the guest tapped Cancel and the server hasn't answered yet; not shown, and should
+ *   the server never answer, failed with "We couldn't remove this one yet" and Try again
  */
-export type UploadStatus = "queued" | "sending" | "retrying" | "confirming" | "added" | "failed";
+export type UploadStatus = "queued" | "sending" | "retrying" | "confirming" | "added" | "failed" | "cancelling";
 
-export type UploadFailure = { reason: string; hint: string | null; canRetry: boolean };
+export type UploadFailure = {
+  /** The plain words: a card's title, a row's label. */
+  reason: string;
+  hint: string | null;
+  canRetry: boolean;
+  /** Sharing closed: nothing to try again or take another of. */
+  closed?: boolean;
+  /** The guest's Cancel never got an answer: Try again sends the Cancel again. */
+  cancelFailed?: boolean;
+};
 
 export type UploadItem = {
   readonly id: string;
@@ -70,6 +81,16 @@ export const UPLOAD_WORDS = {
   notSent: "We couldn't send this file",
   /** A connection that kept dropping for minutes: the file waits for the guest's Try again. */
   connectionDropped: "The connection dropped",
+  /** A file the phone took over a minute to open (one kept in the cloud, still downloading). */
+  slowToOpen: "This file took too long to open",
+  /** The couple closed sharing: the card's short title, the server's words beneath it. */
+  sharingClosed: "Sharing has closed",
+  /** An upload R2 or the server let go of before it finished: Try again starts it afresh. */
+  expired: "This upload expired before it arrived",
+  /** A file the couple hid (or deleted): picking it again never brings it back. */
+  cantAdd: "This one can't be added to the album",
+  /** A Cancel the server never answered, kept and sent again on the next visit. */
+  cancelUnanswered: "We couldn't remove this one yet",
 } as const;
 
 const BUSY: ReadonlySet<UploadStatus> = new Set(["queued", "sending", "retrying", "confirming"]);
@@ -138,11 +159,16 @@ function refusal(file: File, contentType: string, kind: UploadItem["kind"]): Upl
   return { reason: checked.message, hint: null, canRetry: false };
 }
 
-function viewOf(items: readonly UploadItem[]): UploadView {
+function viewOf(allItems: readonly UploadItem[]): UploadView {
+  // A file being cancelled has left the card already.
+  const items = allItems.filter((item) => item.status !== "cancelling");
   if (items.length === 0) return { kind: "none" };
   if (items.length === 1 && items[0].source !== "gallery") return { kind: "camera", item: items[0] };
-  const totalBytes = items.reduce((total, item) => total + item.file.size, 0);
-  const sentBytes = items.reduce((total, item) => total + (item.file.size * item.percent) / 100, 0);
+  // The overall bar counts only what is still to arrive: a failed file (over its limit, or waiting
+  // for Try again) would hold it short of the end for ever. "N of M sent" still counts every file.
+  const sending = items.filter((item) => item.status !== "failed");
+  const totalBytes = sending.reduce((total, item) => total + item.file.size, 0);
+  const sentBytes = sending.reduce((total, item) => total + (item.file.size * item.percent) / 100, 0);
   return {
     kind: "batch",
     items,
@@ -198,7 +224,9 @@ export function createUploadStore(options: { previews?: PreviewUrls; newId?: () 
     add(files, source) {
       let kept = items;
       if (!items.some(isBusy)) {
-        const leaving = items.filter((item) => item.status === "added" || !item.failure?.canRetry);
+        const leaving = items.filter(
+          (item) => item.status !== "cancelling" && (item.status === "added" || !item.failure?.canRetry),
+        );
         leaving.forEach(forget);
         kept = items.filter((item) => !leaving.includes(item));
       }

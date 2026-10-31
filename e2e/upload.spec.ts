@@ -91,6 +91,15 @@ async function openAlbum(page: Page): Promise<void> {
  */
 const inMain = (page: Page) => page.getByRole("main");
 
+/** A share button's file input, in <main>: the one React has revealed and hydrated. */
+const picker = (page: Page, name: string) => inMain(page).getByLabel(name);
+
+/** Reloads, and waits until the share buttons are revealed and working again. */
+async function reloadAlbum(page: Page): Promise<void> {
+  await page.reload();
+  await expect(inMain(page).getByText("Choose photos & videos")).toBeVisible();
+}
+
 const addedSeen = (page: Page) => page.evaluate(() => (window as unknown as { addedSeen: boolean }).addedSeen);
 
 /** Every part PUT, by part number: sent on to storage, answered by it, or dropped on the way. */
@@ -169,7 +178,7 @@ test.describe("uploading from the phone", () => {
     try {
       const page = await context.newPage();
       await openAlbum(page);
-      await page.getByLabel("Take a photo").setInputFiles(await photoOnDisk("camera.jpg"));
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("camera.jpg"));
 
       const card = page.getByRole("region", { name: "Your photo" });
       await expect(card.getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
@@ -197,7 +206,7 @@ test.describe("uploading from the phone", () => {
       const puts = await watchPartPuts(page, (partNumber, attempt) => (partNumber === 2 && attempt === 1 ? "drop" : "send"));
       const video = await bytesOnDisk("dance.mp4", 30 * MEBIBYTE);
 
-      await page.getByLabel("Record video").setInputFiles(video);
+      await picker(page, "Record video").setInputFiles(video);
 
       const card = page.getByRole("region", { name: "Your video" });
       await expect(card.getByText("Added to the album")).toBeVisible({ timeout: 90_000 });
@@ -236,7 +245,7 @@ test.describe("uploading from the phone", () => {
         if (partNumber === 2 && attempt === 1) return "drop";
         return partNumber >= 3 ? "hold" : "send";
       });
-      await page.getByLabel("Record video").setInputFiles(video);
+      await picker(page, "Record video").setInputFiles(video);
       // Storage has parts 1 and 2 (part 2 on its second try) before the page goes.
       await expect.poll(() => ascending(puts.finished), { timeout: 30_000 }).toEqual([1, 2]);
       expect(await addedSeen(page)).toBe(false);
@@ -259,7 +268,7 @@ test.describe("uploading from the phone", () => {
         await route.fulfill({ response });
       });
 
-      await page.getByLabel("Record video").setInputFiles(renamed);
+      await picker(page, "Record video").setInputFiles(renamed);
       const card = page.getByRole("region", { name: "Your video" });
       await expect(card.getByText("Checking it arrived safely")).toBeVisible({ timeout: 60_000 });
       await expect.poll(() => completeAnswered, { timeout: 30_000 }).toBe(true);
@@ -290,7 +299,7 @@ test.describe("uploading from the phone", () => {
       const [{ count: guestsBefore }] = await sql<{ count: number }[]>`select count(*)::int as count from guests`;
       const files = await Promise.all(["one.jpg", "two.jpg", "three.jpg"].map((name) => photoOnDisk(name, 500, 400)));
 
-      await page.getByLabel("Choose photos & videos").setInputFiles(files);
+      await picker(page, "Choose photos & videos").setInputFiles(files);
 
       const batch = page.getByRole("region", { name: "Your photos and videos" });
       await expect(batch.getByText("3 of 3 sent")).toBeVisible({ timeout: 60_000 });
@@ -315,11 +324,11 @@ test.describe("uploading from the phone", () => {
       const photo = await photoOnDisk("fine.jpg", 400, 300);
       const longVideo = await sparseOnDisk("speeches.mp4", 2 * 1024 * MEBIBYTE + 1);
 
-      await page.getByLabel("Choose photos & videos").setInputFiles([photo, longVideo]);
+      await picker(page, "Choose photos & videos").setInputFiles([photo, longVideo]);
 
       const batch = page.getByRole("region", { name: "Your photos and videos" });
-      await expect(batch.getByText("This file is over 2 GB")).toBeVisible();
-      await expect(batch.getByText("Trim it in your gallery, then choose it again.")).toBeVisible();
+      await expect(batch.getByText("This file is over 2 GB", { exact: true })).toBeVisible();
+      await expect(batch.getByText("Trim it in your gallery, then choose it again.", { exact: true })).toBeVisible();
       await expect(batch.getByText("1 of 2 sent")).toBeVisible({ timeout: 60_000 });
       await expect(batch.getByText("Added to the album")).toBeVisible();
       await expect(batch.getByRole("button", { name: "Try again" })).toHaveCount(0);
@@ -340,7 +349,7 @@ test.describe("uploading from the phone", () => {
         await route.fulfill({ json: { mediaId, status: "failed", reason: "corrupt" } });
       });
 
-      await page.getByLabel("Take a photo").setInputFiles(await photoOnDisk("unreadable.jpg", 300, 200));
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("unreadable.jpg", 300, 200));
 
       const card = page.getByRole("region", { name: "Your photo" });
       await expect(card.getByText("We couldn't read this file")).toBeVisible({ timeout: 60_000 });
@@ -365,20 +374,19 @@ test.describe("uploading from the phone", () => {
         completed = true;
         await route.abort("connectionreset");
       });
-      await page.getByLabel("Take a photo").setInputFiles(photo);
+      await picker(page, "Take a photo").setInputFiles(photo);
       await expect.poll(() => completed, { timeout: 60_000 }).toBe(true);
       expect(await addedSeen(page)).toBe(false);
 
       await page.unrouteAll({ behavior: "ignoreErrors" });
-      await page.reload();
-      await expect(inMain(page).getByText("Choose photos & videos")).toBeVisible();
+      await reloadAlbum(page);
       const starts: string[] = [];
       page.on("request", (request) => {
         if (request.method() === "POST" && new URL(request.url()).pathname === "/api/uploads") starts.push(request.url());
       });
       const puts = await watchPartPuts(page);
 
-      await page.getByLabel("Take a photo").setInputFiles(photo);
+      await picker(page, "Take a photo").setInputFiles(photo);
 
       await expect(page.getByRole("region", { name: "Your photo" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
       expect(puts.sent).toEqual([]);
@@ -406,7 +414,7 @@ test.describe("uploading from the phone", () => {
         await route.fulfill({ response }).catch(() => {});
       });
 
-      await page.getByLabel("Take a photo").setInputFiles(await photoOnDisk("oops.jpg", 400, 300));
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("oops.jpg", 400, 300));
       const card = page.getByRole("region", { name: "Your photo" });
       await expect(card.getByText("Checking it arrived safely")).toBeVisible({ timeout: 60_000 });
       await expect.poll(() => completeAnswered, { timeout: 30_000 }).toBe(true);
@@ -435,7 +443,7 @@ test.describe("uploading from the phone", () => {
       const page = await context.newPage();
       await openAlbum(page);
 
-      await page.getByLabel("Take a photo").setInputFiles(await photoOnDisk("first.jpg", 300, 200));
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("first.jpg", 300, 200));
       const offer = page.getByRole("region", { name: "Your personal link" });
       await expect(offer).toBeVisible({ timeout: 60_000 });
       await expect(offer.getByText("Save this to find your uploads on any phone.")).toBeVisible();
@@ -449,10 +457,95 @@ test.describe("uploading from the phone", () => {
 
       await offer.getByRole("button", { name: "Hide this" }).click();
       await expect(offer).toHaveCount(0);
-      await page.reload();
-      await page.getByLabel("Take a photo").setInputFiles(await photoOnDisk("second.jpg", 300, 200));
+      // Focus goes back to the card above.
+      await expect(page.getByRole("region", { name: "Your photo" })).toBeFocused();
+      await reloadAlbum(page);
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("second.jpg", 300, 200));
       await expect(page.getByRole("region", { name: "Your photo" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
       await expect(page.getByRole("region", { name: "Your personal link" })).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("the personal link is offered once: a later visit's upload doesn't offer it again", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("once.jpg", 300, 200));
+      await expect(page.getByRole("region", { name: "Your personal link" })).toBeVisible({ timeout: 60_000 });
+
+      await reloadAlbum(page);
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("twice.jpg", 300, 200));
+      await expect(page.getByRole("region", { name: "Your photo" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
+      await page.waitForTimeout(500);
+      await expect(page.getByRole("region", { name: "Your personal link" })).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("a file the guest removed, picked again, is sent afresh; one the couple hid is never added again", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      const removed = await photoOnDisk("changed-my-mind.jpg", 300, 200);
+      const hidden = await photoOnDisk("hidden-by-the-couple.jpg", 300, 200);
+      await picker(page, "Choose photos & videos").setInputFiles([removed, hidden]);
+      const batch = page.getByRole("region", { name: "Your photos and videos" });
+      await expect(batch.getByText("2 of 2 sent")).toBeVisible({ timeout: 60_000 });
+      const guestId = await ownGuestId(context);
+      const [first, second] = await mediaOf(guestId);
+      // The guest removes the first; the couple hide the second.
+      expect((await page.request.post(`/api/media/${first.id}/remove`)).status()).toBe(200);
+      await sql`update media set hidden_at = now(), hidden_by = 'couple' where id = ${second.id}`;
+
+      await reloadAlbum(page);
+      await picker(page, "Choose photos & videos").setInputFiles([removed, hidden]);
+      await expect(batch.getByText("1 of 2 sent")).toBeVisible({ timeout: 60_000 });
+      await expect(batch.getByText("This one can't be added to the album", { exact: true })).toBeVisible();
+      await expect(batch.getByRole("button", { name: "Try again" })).toHaveCount(0);
+      const rows = await mediaOf(guestId);
+      // The removed one went up again as a new upload; the hidden one stayed as it was.
+      expect(rows).toHaveLength(3);
+      expect(rows.filter((row) => row.hidden_at === null)).toHaveLength(1);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("a failed row can be dismissed, and focus moves to the next row", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      await page
+        .getByLabel("Choose photos & videos")
+        .setInputFiles([await sparseOnDisk("too-long.mp4", 2 * 1024 * MEBIBYTE + 1), await sparseOnDisk("also-too-long.mp4", 2 * 1024 * MEBIBYTE + 1)]);
+      const batch = page.getByRole("region", { name: "Your photos and videos" });
+      await expect(batch.getByText("This file is over 2 GB", { exact: true })).toHaveCount(2);
+
+      await batch.getByRole("button", { name: "Dismiss video 1" }).click();
+      await expect(batch.getByText("This file is over 2 GB", { exact: true })).toHaveCount(1);
+      await expect(batch.getByRole("button", { name: "Dismiss video 1" })).toBeFocused();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("the album shows no placeholder in brackets to a guest who hasn't given a name", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      await expect(inMain(page).getByText("Sharing as a guest")).toBeVisible();
+      await inMain(page).getByRole("button", { name: "Add your name" }).click();
+      await inMain(page).getByLabel("Your name").fill("Ama");
+      await inMain(page).getByRole("button", { name: "Save" }).click();
+      await expect(inMain(page).getByText("Sharing as Ama")).toBeVisible();
+      expect(await inMain(page).innerText()).not.toMatch(/\[[^\]]*\]/);
     } finally {
       await context.close();
     }
@@ -481,6 +574,43 @@ test.describe("when sharing isn't open", () => {
     await expect(page.locator('input[type="file"]')).toHaveCount(0);
   });
 
+  test("after the close, a phone that hadn't finished an upload can finish it, for 24 hours; another phone sees the closed card", async ({ browser, baseURL }) => {
+    test.setTimeout(120_000);
+    const context = await phone(browser, baseURL);
+    const otherPhone = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      const video = await bytesOnDisk("unfinished.mp4", 20 * MEBIBYTE);
+      // Part 1 arrives; parts 2 and 3 get no answer before the page goes.
+      let closed = false;
+      const puts = await watchPartPuts(page, (partNumber) => (closed || partNumber === 1 ? "send" : "hold"));
+      await picker(page, "Record video").setInputFiles(video);
+      await expect.poll(() => puts.finished, { timeout: 30_000 }).toEqual([1]);
+
+      await saveSetting("uploads_open", false);
+      await saveSetting("uploads_closed_at", new Date().toISOString());
+      closed = true;
+      await page.reload();
+      await Promise.all(puts.held.splice(0).map((route) => route.abort().catch(() => {})));
+
+      const finish = inMain(page).getByText("Finish sending what you started");
+      await expect(finish).toBeVisible();
+      await expect(page.getByText(/Live album/)).toHaveCount(0);
+      await picker(page, "Finish sending what you started").setInputFiles(video);
+      await expect(page.getByRole("region", { name: "Your photos and videos" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
+      expect(ascending(puts.sent)).toEqual([1, 2, 3]);
+
+      const elsewhere = await otherPhone.newPage();
+      await elsewhere.goto("/album");
+      await expect(inMain(elsewhere).getByText("Sharing has closed")).toBeVisible();
+      await expect(elsewhere.locator('input[type="file"]')).toHaveCount(0);
+    } finally {
+      await context.close();
+      await otherPhone.close();
+    }
+  });
+
   test("a file picked after the couple close sharing gets the plain closed message, with no Try again", async ({ browser, baseURL }) => {
     const context = await phone(browser, baseURL);
     try {
@@ -489,11 +619,13 @@ test.describe("when sharing isn't open", () => {
       await saveSetting("uploads_open", false);
       await saveSetting("uploads_closed_at", new Date().toISOString());
 
-      await page.getByLabel("Take a photo").setInputFiles(await photoOnDisk("late.jpg", 300, 200));
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("late.jpg", 300, 200));
 
       const card = page.getByRole("region", { name: "Your photo" });
-      await expect(card.getByText(CLOSED_MESSAGE)).toBeVisible({ timeout: 30_000 });
+      await expect(card.getByText("Sharing has closed")).toBeVisible({ timeout: 30_000 });
+      await expect(card.getByText(CLOSED_MESSAGE)).toBeVisible();
       await expect(card.getByRole("button", { name: "Try again" })).toHaveCount(0);
+      await expect(card.getByRole("button", { name: "Take another" })).toHaveCount(0);
     } finally {
       await context.close();
     }

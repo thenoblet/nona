@@ -36,8 +36,9 @@ const eventsRequest = zod.object({ events: zod.array(uploadEvent).min(1).max(MAX
 /**
  * Stores what a phone saw while uploading (a part retried, an upload failed) for the admin's
  * status page. Body: `{ events: [{ kind: "part-retry" | "failed", mediaId?, reason?, detail? }] }`,
- * up to 20 at a time; answers `{ stored }`. Every event's upload must be one of this browser's
- * guests' (403 otherwise). Limited per browser by its own guest (100, then 2 a second).
+ * up to 20 at a time; answers `{ stored }`. An event about an upload that is gone (cancelled since,
+ * so its row was deleted) is dropped and the rest are kept; one about another guest's upload refuses
+ * the whole batch with 403. Limited per browser by its own guest (100, then 2 a second).
  */
 export async function POST(request: Request) {
   const guests = await browserGuests("events");
@@ -50,17 +51,18 @@ export async function POST(request: Request) {
 
   try {
     const mediaIds = [...new Set(events.flatMap((event) => (event.mediaId ? [event.mediaId] : [])))];
-    if (mediaIds.length > 0) {
-      const owners = await uploadOwners(mediaIds);
-      const owned = (mediaId: string) => {
-        const owner = owners.get(mediaId);
-        return owner !== undefined && owner !== null && guests.guestIds.includes(owner);
-      };
-      if (!mediaIds.every(owned)) return forbidden();
-    }
+    const owners = mediaIds.length > 0 ? await uploadOwners(mediaIds) : new Map<string, string | null>();
+    const gone = (mediaId: string) => !owners.has(mediaId);
+    const owned = (mediaId: string) => {
+      const owner = owners.get(mediaId);
+      return owner !== undefined && owner !== null && guests.guestIds.includes(owner);
+    };
+    if (!mediaIds.every((mediaId) => gone(mediaId) || owned(mediaId))) return forbidden();
+    const kept = events.filter((event) => !event.mediaId || !gone(event.mediaId));
+    if (kept.length === 0) return jsonResponse({ stored: 0 });
     const [ownId] = guests.guestIds;
     await recordUploadEvents(
-      events.map((event) => ({
+      kept.map((event) => ({
         guestId: ownId,
         mediaId: event.mediaId ?? null,
         kind: event.kind,
@@ -68,7 +70,7 @@ export async function POST(request: Request) {
         detail: event.detail ?? null,
       })),
     );
-    return jsonResponse({ stored: events.length });
+    return jsonResponse({ stored: kept.length });
   } catch (error) {
     console.error("[uploads] could not store upload events:", describeError(error));
     return unavailable();

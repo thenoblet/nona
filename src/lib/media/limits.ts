@@ -80,15 +80,12 @@ const VOICE_TYPES: Record<string, readonly string[]> = {
 
 /**
  * The album gallery picker's `accept` (layer 1 of the type checks: a convenience, not a check):
- * the album's photo and video types, with their extensions for pickers that go by name. The
- * camera's pickers keep image/* and video/*, which phones need to open the camera itself, and
- * which the camera can only answer with a photo or a video.
+ * photos and videos, by their families rather than one by one, so a phone's picker that honours
+ * only the first entry (some Android in-app browsers) still offers HEIC, PNG and videos; and HEIC
+ * by name, for pickers that don't count it as an image. A voice wish's picker is its own. The
+ * upload API is the real check; the album's page also turns away at once anything it won't take.
  */
-export const ALBUM_PICKER_ACCEPT = [
-  ...Object.keys(PHOTO_TYPES),
-  ...Object.keys(VIDEO_TYPES),
-  ...new Set([...Object.values(PHOTO_TYPES), ...Object.values(VIDEO_TYPES)].flat().map((extension) => `.${extension}`)),
-].join(",");
+export const ALBUM_PICKER_ACCEPT = "image/*,video/*,.heic,.heif";
 
 type Accepted = { kind: MediaFileKind; extensions: readonly string[]; maxBytes: number; tooLarge: string };
 

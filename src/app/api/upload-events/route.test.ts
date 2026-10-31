@@ -93,16 +93,40 @@ describe("POST /api/upload-events", () => {
     ]);
   });
 
-  it("refuses an event about another guest's upload, or one it can't find, with 403, storing nothing", async () => {
-    await signIn();
+  it("refuses a batch with an event about another guest's upload with 403, storing nothing", async () => {
+    const guest = await signIn();
     const stranger = await createGuest("Kofi");
     const theirs = await addUpload(stranger.id);
-    for (const mediaId of [theirs, randomUUID()]) {
-      const response = await post({ events: [{ kind: "failed", mediaId, reason: "timeout" }] });
-      expect(response.status).toBe(403);
-      expect(await response.json()).toEqual({ error: "forbidden" });
-    }
+    const own = await addUpload(guest.id);
+    const response = await post({
+      events: [
+        { kind: "part-retry", mediaId: own },
+        { kind: "failed", mediaId: theirs, reason: "timeout" },
+      ],
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden" });
     expect(await storedEvents()).toEqual([]);
+  });
+
+  it("drops only the events about an upload that is gone (cancelled since), keeping the rest of the batch", async () => {
+    const guest = await signIn();
+    const own = await addUpload(guest.id);
+    const response = await post({
+      events: [
+        { kind: "part-retry", mediaId: own, reason: "network-error" },
+        { kind: "failed", mediaId: randomUUID(), reason: "cancel-unanswered" },
+        { kind: "failed", reason: "unreadable" },
+      ],
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ stored: 2 });
+    expect(await storedEvents()).toEqual([
+      expect.objectContaining({ mediaId: own, kind: "part-retry", reason: "network-error" }),
+      expect.objectContaining({ mediaId: null, kind: "failed", reason: "unreadable" }),
+    ]);
+    // A batch of only gone uploads stores nothing, and says so.
+    expect(await (await post({ events: [{ kind: "failed", mediaId: randomUUID() }] })).json()).toEqual({ stored: 0 });
   });
 
   it("accepts events about an upload of a guest the browser remembers through a personal link", async () => {

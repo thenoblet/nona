@@ -48,6 +48,16 @@ function failed(code: string, reason: string, canRetry: boolean, hint: string | 
   return { kind: "failed", code, failure: { reason, hint, canRetry } };
 }
 
+/** Sharing closed: a short title, the server's own thank-you beneath it, and nothing to try again. */
+function closedOutcome(answer: ApiAnswer): Outcome {
+  const message = messageOf(answer, "");
+  return {
+    kind: "failed",
+    code: "uploads-closed",
+    failure: { reason: UPLOAD_WORDS.sharingClosed, hint: message || null, canRetry: false, closed: true },
+  };
+}
+
 /** The guest's words for a reason the worker failed a file with; trying the same bytes again can't help. */
 function processingFailure(reason: unknown): Outcome {
   const code = typeof reason === "string" && CODE.test(reason) ? reason : "unknown";
@@ -59,7 +69,13 @@ function refusalOutcome(answer: ApiAnswer): Outcome {
   if (answer.status === 429) return { kind: "retry", code: "rate-limited" };
   if (answer.status >= 500) return { kind: "retry", code: `http-${answer.status}` };
   const code = codeOf(answer);
-  if (code === "uploads-closed") return failed(code, messageOf(answer, UPLOAD_WORDS.notSent), false);
+  if (code === "uploads-closed") return closedOutcome(answer);
+  // The couple hid it (or deleted it): sending it again must never get round that.
+  if (code === "hidden") return failed(code, UPLOAD_WORDS.cantAdd, false);
+  // Try again starts the upload afresh, which is what the guest needs.
+  if (code === "upload-missing") return failed(code, UPLOAD_WORDS.expired, true);
+  // The file changed since it was picked: only picking it again helps, as the server's words say.
+  if (code === "size-mismatch") return failed(code, messageOf(answer, UPLOAD_WORDS.notSent), false);
   if (answer.status === 409) return failed(code, messageOf(answer, UPLOAD_WORDS.notSent), true);
   // 403 (the upload isn't this browser's: a cookie lost meanwhile), 404 (its row gone), anything else.
   return failed(code, UPLOAD_WORDS.notSent, true);
@@ -78,14 +94,18 @@ export function completionOutcome(answer: ApiAnswer): Outcome {
 }
 
 /**
- * A complete sent again for a file this phone already asked to complete (its answer lost):
- * `continue` when the upload is still unfinished (start resumes it), `forget` when it is gone or
- * no longer this browser's (start afresh).
+ * A complete sent again for a file this phone already asked to complete (its answer lost, or the
+ * file picked again later): `continue` when the upload is still unfinished (start resumes it);
+ * `forget` when it is gone, no longer this browser's, or removed by the guest (who, picking it
+ * again, wants it back: start afresh); the couple's hiding stands.
  */
 export function probeOutcome(answer: ApiAnswer): Outcome | { kind: "continue" } | { kind: "forget" } {
   if (answer.status === 200) return completionOutcome(answer);
-  if (answer.status === 409 && codeOf(answer) === "incomplete") return { kind: "continue" };
-  if (answer.status === 429 || answer.status >= 500 || codeOf(answer) === "uploads-closed") return refusalOutcome(answer);
+  const code = codeOf(answer);
+  if (answer.status === 409 && code === "incomplete") return { kind: "continue" };
+  if (answer.status === 429 || answer.status >= 500 || code === "uploads-closed" || code === "hidden") {
+    return refusalOutcome(answer);
+  }
   return { kind: "forget" };
 }
 

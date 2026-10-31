@@ -31,9 +31,10 @@ export class EventReporter {
   readonly #waiting: UploadEvent[] = [];
   #timer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(api: ApiClient) {
+  /** `onPageHide` registers what runs as the page goes, to send what is left. */
+  constructor(api: ApiClient, onPageHide: (listener: () => void) => void) {
     this.#api = api;
-    window.addEventListener("pagehide", () => this.#send(true));
+    onPageHide(() => this.#send(true));
   }
 
   report(event: UploadEvent): void {

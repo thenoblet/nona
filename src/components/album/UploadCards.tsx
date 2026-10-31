@@ -8,6 +8,10 @@ import { isBusy, UPLOAD_WORDS, type UploadItem, type UploadStatus, type UploadVi
  * The cards under the album's header while a guest shares (gate A): the camera card for one shot,
  * and the gallery batch, a row for each file. Every word and state comes from the uploader's
  * store; only the server's answer to a complete ever turns a file to Added.
+ *
+ * Every × names its file ("Cancel photo 3", "Dismiss video"): Cancel while a file is on its way,
+ * Dismiss once it has failed. Each carries data-item-action, and Try again data-item-retry, so the
+ * album can move focus to the next sensible place once one of them takes a row away.
  */
 
 const CAMERA_CAPTIONS: Partial<Record<UploadStatus, string>> = {
@@ -18,7 +22,7 @@ const CAMERA_CAPTIONS: Partial<Record<UploadStatus, string>> = {
   added: "Everyone will see it shortly",
 };
 
-const ROW_WORDS: Record<Exclude<UploadStatus, "failed">, string> = {
+const ROW_WORDS: Record<Exclude<UploadStatus, "failed" | "cancelling">, string> = {
   queued: UPLOAD_WORDS.waiting,
   sending: UPLOAD_WORDS.sending,
   confirming: UPLOAD_WORDS.sending,
@@ -144,16 +148,38 @@ function Thumb({ item, variant }: { item: UploadItem; variant: "camera" | "row" 
   );
 }
 
+/** The file as a screen reader names it: "photo", "video 3". */
+function nounOf(item: UploadItem, position?: number): string {
+  return `${item.kind === "video" ? "video" : "photo"}${position === undefined ? "" : ` ${position}`}`;
+}
+
 /**
- * Cancel: an × that stops the file, and removes it from the album if it had already arrived. Its
- * tap target is 44 px; in a row the × sits at the row's right edge, in line with Try again.
+ * An × for one file: Cancel while it is on its way (it stops, and comes out of the album if it had
+ * already arrived), Dismiss once it has failed (it leaves the card). A 44 px tap target; in a row,
+ * the × sits at the row's right edge.
  */
-function CancelButton({ onCancel, edge = false, className = "" }: { onCancel: () => void; edge?: boolean; className?: string }) {
+function ItemButton({
+  item,
+  action,
+  label,
+  onClick,
+  edge = false,
+  className = "",
+}: {
+  item: UploadItem;
+  action: "cancel" | "dismiss";
+  label: string;
+  onClick: () => void;
+  edge?: boolean;
+  className?: string;
+}) {
   return (
     <button
       type="button"
-      onClick={onCancel}
-      aria-label="Cancel"
+      onClick={onClick}
+      aria-label={label}
+      data-item-action={item.id}
+      data-action={action}
       className={`grid size-11 shrink-0 cursor-pointer items-center rounded-full border-0 bg-transparent p-0 text-mocha ${edge ? "justify-items-end" : "justify-items-center"} ${className}`}
     >
       <Icon name="close" size={16} />
@@ -166,29 +192,27 @@ const emberButton =
 const outlineButton =
   "press flex min-h-10 shrink-0 cursor-pointer items-center rounded-full border border-ember/55 bg-transparent px-3 text-[11px] font-medium uppercase tracking-[0.14em] text-cocoa";
 
+export type ItemActions = {
+  onRetry: (itemId: string) => void;
+  onCancel: (itemId: string) => void;
+  onDismiss: (itemId: string) => void;
+};
+
 /** One shot from the camera: "Sending to the album" with the guest's own picture, then "Added". */
-export function CameraCard({
-  item,
-  onRetry,
-  onCancel,
-  onTakeAnother,
-}: {
-  item: UploadItem;
-  onRetry: () => void;
-  onCancel: () => void;
-  onTakeAnother: () => void;
-}) {
+export function CameraCard({ item, onRetry, onCancel, onDismiss, onTakeAnother }: { item: UploadItem; onTakeAnother: () => void } & ItemActions) {
   const { status, failure, kind, percent } = item;
   const added = status === "added";
-  const cancellable = isBusy(item);
+  const busy = isBusy(item);
   const caption = failure ? failure.hint : CAMERA_CAPTIONS[status];
-  const noun = kind === "video" ? "video" : "photo";
+  const noun = nounOf(item);
   return (
     <section
       aria-label={`Your ${noun}`}
-      className="relative flex animate-rise flex-col gap-3 rounded-[var(--radius-paper)] bg-white p-3 shadow-[var(--shadow-paper)]"
+      data-upload-card
+      tabIndex={-1}
+      className="relative flex animate-rise flex-col gap-3 rounded-[var(--radius-paper)] bg-white p-3 shadow-[var(--shadow-paper)] outline-none"
     >
-      <div className={`flex items-center gap-2 ${cancellable ? "pr-9" : ""}`}>
+      <div className={`flex items-center gap-2 ${busy || failure ? "pr-9" : ""}`}>
         <Thumb item={item} variant="camera" />
         <div className="flex min-w-0 flex-col gap-0.5" aria-live="polite">
           <p className="m-0 font-serif text-xl leading-[1.2] italic">
@@ -203,53 +227,51 @@ export function CameraCard({
           {caption ? <p className="m-0 text-xs leading-[1.45] text-mocha">{caption}</p> : null}
         </div>
       </div>
-      <div className="flex min-h-11 items-center gap-3">
-        {failure ? null : (
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <Track
-              percent={percent}
-              waiting={status === "retrying"}
-              label={added ? undefined : `Sending your ${noun}`}
-              className="flex-1"
-            />
-            <span className={`min-w-[4ch] text-right text-xs font-medium tabular-nums transition-colors duration-300 ${added ? "text-ember-ink" : "text-mocha"}`}>
-              <MorphText text={added ? "Sent" : `${percent}%`} animate={added} />
-            </span>
-          </div>
-        )}
-        {failure?.canRetry ? (
-          <button type="button" onClick={onRetry} className={`${emberButton} ml-auto`}>
-            Try again
-          </button>
-        ) : (
-          <button type="button" onClick={onTakeAnother} className={`${emberButton} ml-auto`}>
-            {kind === "video" ? "Record another" : "Take another"}
-          </button>
-        )}
-      </div>
-      {cancellable ? <CancelButton onCancel={onCancel} className="absolute top-1.5 right-1.5" /> : null}
+      {/* Sharing closed: nothing to try again or take another of. */}
+      {failure?.closed ? null : (
+        <div className="flex min-h-11 items-center gap-3">
+          {failure ? null : (
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Track
+                percent={percent}
+                waiting={status === "retrying"}
+                label={added ? undefined : `Sending your ${noun}`}
+                className="flex-1"
+              />
+              <span className={`min-w-[4ch] text-right text-xs font-medium tabular-nums transition-colors duration-300 ${added ? "text-ember-ink" : "text-mocha"}`}>
+                <MorphText text={added ? "Sent" : `${percent}%`} animate={added} />
+              </span>
+            </div>
+          )}
+          {failure?.canRetry ? (
+            <button type="button" onClick={() => onRetry(item.id)} data-item-retry={item.id} className={`${emberButton} ml-auto`}>
+              Try again
+            </button>
+          ) : (
+            <button type="button" onClick={onTakeAnother} className={`${emberButton} ml-auto`}>
+              {kind === "video" ? "Record another" : "Take another"}
+            </button>
+          )}
+        </div>
+      )}
+      {busy ? (
+        <ItemButton item={item} action="cancel" label={`Cancel ${noun}`} onClick={() => onCancel(item.id)} className="absolute top-1.5 right-1.5" />
+      ) : failure ? (
+        <ItemButton item={item} action="dismiss" label={`Dismiss ${noun}`} onClick={() => onDismiss(item.id)} className="absolute top-1.5 right-1.5" />
+      ) : null}
     </section>
   );
 }
 
-function BatchRow({
-  item,
-  position,
-  onRetry,
-  onCancel,
-}: {
-  item: UploadItem;
-  position: number;
-  onRetry: () => void;
-  onCancel: () => void;
-}) {
-  const { status, failure, kind, percent } = item;
-  const label = failure ? failure.reason : ROW_WORDS[status as Exclude<UploadStatus, "failed">];
+function BatchRow({ item, position, onRetry, onCancel, onDismiss }: { item: UploadItem; position: number } & ItemActions) {
+  const { status, failure, percent } = item;
+  const label = failure ? failure.reason : ROW_WORDS[status as keyof typeof ROW_WORDS];
   const sending = status === "sending" || status === "confirming";
   const labelColour = failure ? "text-ember-ink" : status === "queued" || status === "retrying" ? "text-mocha" : "text-cocoa";
+  const noun = nounOf(item, position);
   return (
     <li
-      aria-label={`${kind === "video" ? "Video" : "Photo"} ${position}`}
+      aria-label={`${noun.charAt(0).toUpperCase()}${noun.slice(1)}`}
       className="grid grid-cols-[49px_minmax(0,1fr)_auto] items-center gap-x-3 border-t border-hairline py-2.5"
     >
       <Thumb item={item} variant="row" />
@@ -262,13 +284,16 @@ function BatchRow({
           <Track percent={percent} thin waiting={status === "retrying"} className="mt-[7px]" />
         </Fold>
         {failure?.hint ? <p className="m-0 mt-0.5 text-xs leading-[1.45] text-mocha">{failure.hint}</p> : null}
+        {failure?.canRetry ? (
+          <button type="button" onClick={() => onRetry(item.id)} data-item-retry={item.id} className={`${outlineButton} mt-1.5 self-start`}>
+            Try again
+          </button>
+        ) : null}
       </div>
-      {failure?.canRetry ? (
-        <button type="button" onClick={onRetry} className={outlineButton}>
-          Try again
-        </button>
-      ) : isBusy(item) ? (
-        <CancelButton onCancel={onCancel} edge className="-my-2" />
+      {isBusy(item) ? (
+        <ItemButton item={item} action="cancel" label={`Cancel ${noun}`} onClick={() => onCancel(item.id)} edge className="-my-2" />
+      ) : failure ? (
+        <ItemButton item={item} action="dismiss" label={`Dismiss ${noun}`} onClick={() => onDismiss(item.id)} edge className="-my-2" />
       ) : (
         <span />
       )}
@@ -277,21 +302,15 @@ function BatchRow({
 }
 
 /** Several files from the gallery: "Sending to the album · N of M sent", a row for each file. */
-export function BatchCard({
-  view,
-  onRetry,
-  onCancel,
-}: {
-  view: Extract<UploadView, { kind: "batch" }>;
-  onRetry: (itemId: string) => void;
-  onCancel: (itemId: string) => void;
-}) {
+export function BatchCard({ view, ...actions }: { view: Extract<UploadView, { kind: "batch" }> } & ItemActions) {
   const { items, sent, total, busy, percent } = view;
   const verb = busy ? "Sending" : sent > 0 ? "Added" : "Not added";
   return (
     <section
       aria-label="Your photos and videos"
-      className="flex animate-rise flex-col rounded-[var(--radius-paper)] bg-white p-4 shadow-[var(--shadow-paper)]"
+      data-upload-card
+      tabIndex={-1}
+      className="flex animate-rise flex-col rounded-[var(--radius-paper)] bg-white p-4 shadow-[var(--shadow-paper)] outline-none"
     >
       <div className="flex items-center gap-3.5">
         <span
@@ -324,18 +343,22 @@ export function BatchCard({
       </Fold>
       <ul className="m-0 mt-3.5 list-none p-0">
         {items.map((item, index) => (
-          <BatchRow
-            key={item.id}
-            item={item}
-            position={index + 1}
-            onRetry={() => onRetry(item.id)}
-            onCancel={() => onCancel(item.id)}
-          />
+          <BatchRow key={item.id} item={item} position={index + 1} {...actions} />
         ))}
       </ul>
       <Fold open={busy}>
         <p className="m-0 border-t border-hairline pt-3 text-xs leading-[1.45] text-mocha">Keep this page open while they send.</p>
       </Fold>
+      {/* Each row's failure, told politely as it happens. */}
+      <div className="sr-only" aria-live="polite">
+        {items.map((item, index) =>
+          item.failure ? (
+            <p key={item.id}>
+              {nounOf(item, index + 1)}: {item.failure.reason}
+            </p>
+          ) : null,
+        )}
+      </div>
     </section>
   );
 }

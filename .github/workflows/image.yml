@@ -99,7 +99,8 @@ jobs:
       # The e2e run uploads real files and waits for the media worker to make them ready, so it
       # runs the worker's production image beside the site (e2e/worker.ts), as Dokploy runs it, with
       # its ffmpeg 7 and libheif: the runner's own tools are neither. Built from this commit with
-      # main's worker-image layer cache, so a run usually rebuilds only the bundle.
+      # main's layer caches, so a run usually rebuilds only the bundle. Only main writes its cache:
+      # a branch's own would fill GitHub's 10 GB of cache for nothing.
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Build the worker image for the e2e run
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -112,7 +113,7 @@ jobs:
           cache-from: |
             type=gha,scope=worker-e2e
             type=gha,scope=worker-run
-          cache-to: type=gha,scope=worker-e2e,mode=max
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=worker-e2e,mode=max' || '' }}
 
       # Builds the site and runs it against the test database and MinIO, with the worker image
       # above; the config blanks the email key.
