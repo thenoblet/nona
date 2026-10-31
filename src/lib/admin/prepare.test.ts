@@ -68,11 +68,7 @@ describe("prepareSection", () => {
     });
   });
 
-  it("trims the directions and maps links", () => {
-    const [ceremony] = prepareSection("celebrations", [
-      { ...contentDefaults.celebrations[0], directionsUrl: "  https://maps.example.com/church\n" },
-    ]) as Record<string, unknown>[];
-    expect(ceremony.directionsUrl).toBe("https://maps.example.com/church");
+  it("trims the maps links", () => {
     const venues = prepareSection("venues", {
       ...contentDefaults.venues,
       hotel: { ...contentDefaults.venues.hotel, mapsUrl: " https://maps.example.com/hotel " },

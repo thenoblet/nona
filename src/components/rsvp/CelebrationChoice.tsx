@@ -1,6 +1,7 @@
 "use client";
 
-import type { Celebration } from "@/lib/content/schema";
+import { celebrationPlace } from "@/lib/content/place";
+import type { Celebration, SiteContent } from "@/lib/content/schema";
 import type { Answer } from "@/lib/data/types";
 import { Icon } from "@/components/ui/Icon";
 import { answerField } from "./options";
@@ -20,8 +21,8 @@ const lead = (text: string, separator: string) => text.split(separator)[0].trim(
 const withoutTown = (place: string) => (place.includes(",") ? place.slice(0, place.lastIndexOf(",")).trim() : place);
 
 /** "[Start time] · Assemblies of God, Victory Worship Centre": a short time and place for the card. */
-export function whenLine(celebration: Celebration) {
-  return `${lead(celebration.time, " · ")} · ${withoutTown(celebration.place)}`;
+export function whenLine(celebration: Celebration, venues: SiteContent["venues"]) {
+  return `${lead(celebration.time, " · ")} · ${withoutTown(celebrationPlace(celebration, venues).place)}`;
 }
 
 /**
@@ -30,10 +31,12 @@ export function whenLine(celebration: Celebration) {
  */
 export function CelebrationChoice({
   celebration,
+  venues,
   value,
   onChange,
 }: {
   celebration: Celebration;
+  venues: SiteContent["venues"];
   value: Answer | undefined;
   onChange: (value: Answer) => void;
 }) {
@@ -51,7 +54,7 @@ export function CelebrationChoice({
         </span>
         <div className="flex min-w-0 flex-col gap-[3px]">
           <span className="font-serif text-[25px] leading-[1.1] italic">{celebration.name}</span>
-          <span className="text-[13px] text-mocha">{whenLine(celebration)}</span>
+          <span className="text-[13px] text-mocha">{whenLine(celebration, venues)}</span>
         </div>
       </div>
       <div role="radiogroup" aria-label={`Will you join us for the ${celebration.name.toLowerCase()}?`} className="grid gap-2 sm:grid-cols-2">

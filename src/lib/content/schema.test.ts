@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { celebrationsSavedBeforeVenues } from "../../../test/fixtures/saved-celebrations";
 import { contentDefaults } from "./defaults";
 import { formatIssues, sectionKeys, sectionSchemas, type SectionKey } from "./schema";
 
@@ -20,12 +21,12 @@ describe("one-line fields", () => {
     const value = celebrations();
     value[0].name = "White\nwedding";
     value[0].time = "10:00\nplease be seated early";
-    value[0].place = "Victory Worship Centre\nTepa";
+    value[0].placeDetail = "Main hall\nupstairs";
     value[0].dress = "Formal\r\nblack tie optional";
     expect(problems("celebrations", value)).toEqual([
       "celebrations[0].name: Use one line",
       "celebrations[0].time: Use one line",
-      "celebrations[0].place: Use one line",
+      "celebrations[0].placeDetail: Use one line",
       "celebrations[0].dress: Use one line",
     ]);
 
@@ -59,10 +60,6 @@ describe("one-line fields", () => {
 
 describe("links", () => {
   it("say to remove a space rather than asking for https", () => {
-    const value = celebrations();
-    value[0].directionsUrl = "https://maps.example.com/a b";
-    expect(problems("celebrations", value)).toEqual(["celebrations[0].directionsUrl: Remove the space from the link"]);
-
     const venues = structuredClone(contentDefaults.venues);
     venues.church.mapsUrl = "https://maps.example.com/\nchurch";
     expect(problems("venues", venues)).toEqual(["venues.church.mapsUrl: Remove the space from the link"]);
@@ -73,14 +70,84 @@ describe("links", () => {
   });
 
   it("still ask for https when there is no space", () => {
-    const value = celebrations();
-    value[0].directionsUrl = "http://maps.example.com";
-    expect(problems("celebrations", value)).toEqual([
-      "celebrations[0].directionsUrl: Use an https:// link or an in-page anchor starting with #",
+    const venues = structuredClone(contentDefaults.venues);
+    venues.reception.mapsUrl = "http://maps.example.com";
+    expect(problems("venues", venues)).toEqual([
+      "venues.reception.mapsUrl: Use an https:// link or an in-page anchor starting with #",
     ]);
     expect(problems("liveStream", { url: "http://live.example.com" })).toEqual([
       "liveStream.url: Use an https:// link, or leave it empty",
     ]);
+  });
+});
+
+describe("celebration venues", () => {
+  it("put the white wedding and the thanksgiving at the church and the reception at the reception venue", () => {
+    expect(contentDefaults.celebrations.map((celebration) => [celebration.id, celebration.venue])).toEqual([
+      ["ceremony", "church"],
+      ["reception", "reception"],
+      ["thanks", "church"],
+    ]);
+  });
+
+  it("keep the venue a celebration names, and refuse one that holds no celebration", () => {
+    const value = celebrations();
+    value[2].venue = "reception";
+    expect(sectionSchemas.celebrations.parse(value)[2].venue).toBe("reception");
+
+    (value[0] as { venue: string }).venue = "hotel";
+    expect(problems("celebrations", value)).toEqual(["celebrations[0].venue: Choose the church or the reception venue"]);
+  });
+
+  it("give the reception venue the GhanaPost GPS Noblet entered, as the built-in text", () => {
+    expect(contentDefaults.venues.reception.gps).toBe("AX-0084-3317");
+  });
+});
+
+describe("celebrations saved before each named its venue", () => {
+  const savedBeforeVenues = () => structuredClone(celebrationsSavedBeforeVenues);
+
+  it("still parse, each at the venue its id implies", () => {
+    const parsed = sectionSchemas.celebrations.safeParse(savedBeforeVenues());
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.data?.map((celebration) => [celebration.id, celebration.venue])).toEqual([
+      ["ceremony", "church"],
+      ["reception", "reception"],
+      ["thanks", "church"],
+    ]);
+  });
+
+  it("lose their own place and directions link, and a place detail that is only the GhanaPost GPS", () => {
+    const parsed = sectionSchemas.celebrations.parse(savedBeforeVenues());
+    for (const celebration of parsed) {
+      expect(celebration).not.toHaveProperty("place");
+      expect(celebration).not.toHaveProperty("directionsUrl");
+      expect(celebration).not.toHaveProperty("placeDetail");
+    }
+    // Everything else is read as it was saved.
+    expect(parsed[1]).toEqual({
+      id: "reception",
+      venue: "reception",
+      name: "Reception",
+      weekday: "Saturday",
+      weekdayShort: "Sat",
+      day: "05",
+      month: "December",
+      time: "Right after the white wedding · dinner & dancing",
+      dress: "Evening glamour",
+      date: "2026-12-05",
+      startTime: null,
+      endTime: null,
+    });
+  });
+
+  it("drop a GhanaPost GPS detail however it is written, and keep any other note", () => {
+    const value = savedBeforeVenues();
+    Object.assign(value[0], { placeDetail: "  ghanapost gps: AS-0000-0001" });
+    Object.assign(value[2], { placeDetail: "Main hall, upstairs" });
+    const parsed = sectionSchemas.celebrations.parse(value);
+    expect(parsed[0]).not.toHaveProperty("placeDetail");
+    expect(parsed[2].placeDetail).toBe("Main hall, upstairs");
   });
 });
 

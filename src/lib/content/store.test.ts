@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDb } from "../../../test/db";
+import { celebrationsSavedBeforeVenues } from "../../../test/fixtures/saved-celebrations";
 import { dbConfig } from "@/lib/env";
 import { contentDefaults } from "./defaults";
 import { sectionKeys, sectionSchemas } from "./schema";
@@ -41,6 +42,24 @@ describe("readSiteContent", () => {
     expect(content.faq).toEqual(faqA);
     expect(content.travel).toEqual(contentDefaults.travel);
     expect(content.celebrations).toEqual(contentDefaults.celebrations);
+  });
+
+  it("reads celebrations saved before each named its venue, rather than falling back to the built-in text", async () => {
+    // As production saved them, with a dress code the built-in text doesn't have, to tell the two apart.
+    const saved = structuredClone(celebrationsSavedBeforeVenues);
+    saved[1].dress = "Evening glamour, as saved";
+    await sql`insert into site_content (key, version, value, saved_by) values ('celebrations', 3, ${sql.json(saved)}, 'test')`;
+    const { celebrations } = await readSiteContent();
+    expect(console.error).not.toHaveBeenCalled();
+    expect(celebrations.map((celebration) => [celebration.id, celebration.venue, celebration.placeDetail])).toEqual([
+      ["ceremony", "church", undefined],
+      ["reception", "reception", undefined],
+      ["thanks", "church", undefined],
+    ]);
+    expect(celebrations[1].dress).toBe("Evening glamour, as saved");
+    const section = await readSection("celebrations");
+    expect(section.version).toBe(3);
+    expect(section.value).toEqual(celebrations);
   });
 
   it("falls back to the default for a stored row with a bad shape", async () => {

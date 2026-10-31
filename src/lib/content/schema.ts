@@ -1,10 +1,14 @@
 import * as zod from "zod";
-import { wedding } from "@/content/wedding";
+import { celebrations as builtInCelebrations, wedding } from "@/content/wedding";
 import { TIME_PATTERN } from "./times";
 
 /** The celebrations are fixed: their wording is editable, but exactly these three exist. */
 export const EVENT_IDS = ["ceremony", "reception", "thanks"] as const;
 export type EventId = (typeof EVENT_IDS)[number];
+
+/** The venues a celebration can be held at. The hotel is only where guests stay. */
+export const CELEBRATION_VENUES = ["church", "reception"] as const;
+export type CelebrationVenue = (typeof CELEBRATION_VENUES)[number];
 
 /** Text that may run over several lines: answers, story texts, card texts. */
 const text = zod.string().trim().min(1, "Cannot be empty");
@@ -25,31 +29,53 @@ const date = zod
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-05")
   .refine(isRealDate, "Not a real date");
 
-const celebration = zod
-  .object({
-    id: zod.enum(EVENT_IDS),
-    name: line,
-    weekday: line,
-    weekdayShort: line,
-    day: line,
-    month: line,
-    time: line,
-    place: line,
-    placeDetail: line.optional(),
-    dress: line,
-    directionsUrl: link,
-    date,
-    startTime: time.nullable(),
-    endTime: time.nullable(),
-  })
-  .superRefine((value, context) => {
-    // An end before the start is after midnight (see endsNextDay); only the same time is refused.
-    // Compared only when both are real times; a malformed one already has its own message.
-    const { startTime, endTime } = value;
-    if (startTime && endTime && TIME_PATTERN.test(startTime) && TIME_PATTERN.test(endTime) && endTime === startTime) {
-      context.addIssue({ code: "custom", path: ["endTime"], message: "Ends must be after Starts" });
-    }
-  });
+/** A place detail that only gives the GhanaPost GPS, from before the GPS came from the venue. */
+const GPS_ONLY_DETAIL = /^\s*GhanaPost GPS\b/i;
+
+/**
+ * Keeps celebrations saved before each named its venue (every version saved before 31 Oct 2026)
+ * readable: one without a venue is held where the built-in text holds it, and a place detail that
+ * only gives the GhanaPost GPS is dropped, as the GPS now comes from the venue. An old place and
+ * directions link are left out, like any key the schema doesn't know.
+ */
+function withVenue(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const saved = value as Record<string, unknown>;
+  const builtIn = builtInCelebrations.find((entry) => entry.id === saved.id);
+  const read: Record<string, unknown> = { ...saved, venue: saved.venue ?? builtIn?.venue };
+  if (typeof saved.placeDetail === "string" && GPS_ONLY_DETAIL.test(saved.placeDetail)) delete read.placeDetail;
+  return read;
+}
+
+const celebration = zod.preprocess(
+  withVenue,
+  zod
+    .object({
+      id: zod.enum(EVENT_IDS),
+      /** Where it is held: its place, GhanaPost GPS and directions all come from this venue. */
+      venue: zod.enum(CELEBRATION_VENUES, { error: "Choose the church or the reception venue" }),
+      name: line,
+      weekday: line,
+      weekdayShort: line,
+      day: line,
+      month: line,
+      time: line,
+      /** An extra note shown under the venue's GPS, such as "Main hall, upstairs". */
+      placeDetail: line.optional(),
+      dress: line,
+      date,
+      startTime: time.nullable(),
+      endTime: time.nullable(),
+    })
+    .superRefine((value, context) => {
+      // An end before the start is after midnight (see endsNextDay); only the same time is refused.
+      // Compared only when both are real times; a malformed one already has its own message.
+      const { startTime, endTime } = value;
+      if (startTime && endTime && TIME_PATTERN.test(startTime) && TIME_PATTERN.test(endTime) && endTime === startTime) {
+        context.addIssue({ code: "custom", path: ["endTime"], message: "Ends must be after Starts" });
+      }
+    }),
+);
 
 const scheduleItem = zod.object({
   time: line,

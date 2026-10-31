@@ -60,7 +60,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <HeroBefore />
             <InvitationLetter rsvp={rsvp} />
             <Story story={story} />
-            <Celebrations celebrations={celebrations} />
+            <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Colours />
             <Party party={party} />
@@ -84,7 +84,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
               reception={venues.reception}
               liveUrl={live.show ? live.url : null}
             />
-            <Celebrations celebrations={celebrations} />
+            <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Story story={story} />
             <Party party={party} />

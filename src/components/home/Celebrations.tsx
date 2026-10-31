@@ -1,4 +1,6 @@
-import type { Celebration } from "@/lib/content/schema";
+import { Fragment } from "react";
+import { celebrationPlace } from "@/lib/content/place";
+import type { Celebration, SiteContent } from "@/lib/content/schema";
 import { PillAnchor, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { Reveal } from "@/components/ui/Reveal";
@@ -15,7 +17,18 @@ function Detail({ icon, children }: { icon: "clock" | "pin" | "dress"; children:
   );
 }
 
-function CelebrationCard({ celebration, index }: { celebration: Celebration; index: number }) {
+function CelebrationCard({
+  celebration,
+  venues,
+  index,
+}: {
+  celebration: Celebration;
+  venues: SiteContent["venues"];
+  index: number;
+}) {
+  const { place, gpsLine, directionsUrl } = celebrationPlace(celebration, venues);
+  // Under the place: the venue's GhanaPost GPS, then any extra note.
+  const placeNotes = [gpsLine, celebration.placeDetail].filter((note): note is string => Boolean(note));
   return (
     <Reveal
       as="article"
@@ -33,13 +46,13 @@ function CelebrationCard({ celebration, index }: { celebration: Celebration; ind
       <div className="flex flex-col gap-3 self-stretch text-left font-serif text-[19px]">
         <Detail icon="clock">{celebration.time}</Detail>
         <Detail icon="pin">
-          {celebration.place}
-          {celebration.placeDetail ? (
-            <>
+          {place}
+          {placeNotes.map((note) => (
+            <Fragment key={note}>
               <br />
-              <span className="font-sans text-xs tracking-[0.08em] text-mocha">{celebration.placeDetail}</span>
-            </>
-          ) : null}
+              <span className="font-sans text-xs tracking-[0.08em] text-mocha">{note}</span>
+            </Fragment>
+          ))}
         </Detail>
         <Detail icon="dress">{celebration.dress}</Detail>
       </div>
@@ -47,13 +60,13 @@ function CelebrationCard({ celebration, index }: { celebration: Celebration; ind
         <PillAnchor href={`/calendar?events=${celebration.id}`} download variant="cocoa">
           Add to calendar
         </PillAnchor>
-        <TextLink href={celebration.directionsUrl}>Directions</TextLink>
+        <TextLink href={directionsUrl}>Directions</TextLink>
       </div>
     </Reveal>
   );
 }
 
-export function Celebrations({ celebrations }: { celebrations: Celebration[] }) {
+export function Celebrations({ celebrations, venues }: { celebrations: Celebration[]; venues: SiteContent["venues"] }) {
   return (
     <section id="celebrations" className="bg-tray px-5 pt-20 pb-24 sm:px-6 sm:pt-28 sm:pb-30">
       <div className="mx-auto flex max-w-[1160px] flex-col gap-14 sm:gap-16">
@@ -62,7 +75,7 @@ export function Celebrations({ celebrations }: { celebrations: Celebration[] }) 
         </Reveal>
         <div className="grid grid-cols-1 items-stretch gap-x-8 gap-y-10 md:grid-cols-2 lg:grid-cols-3">
           {celebrations.map((celebration, index) => (
-            <CelebrationCard key={celebration.id} celebration={celebration} index={index} />
+            <CelebrationCard key={celebration.id} celebration={celebration} venues={venues} index={index} />
           ))}
         </div>
       </div>

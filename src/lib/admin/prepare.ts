@@ -48,7 +48,7 @@ function prepareCelebration(item: unknown): unknown {
   if (!isObject(item)) return item;
   const described = typeof item.date === "string" ? describeDate(item.date) : null;
   const prepared: JsonObject = {
-    ...trimmedLink(withOptional(item, "placeDetail"), "directionsUrl"),
+    ...withOptional(item, "placeDetail"),
     startTime: optionalTime(item.startTime),
     endTime: optionalTime(item.endTime),
   };

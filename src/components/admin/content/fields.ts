@@ -1,5 +1,7 @@
 import { describeDate } from "@/lib/admin/content";
 import type { ContentSectionKey } from "@/lib/admin/content";
+import { celebrationPlace } from "@/lib/content/place";
+import type { CelebrationVenue, SiteContent } from "@/lib/content/schema";
 import { endsNextDay } from "@/lib/content/times";
 import { getAt } from "./editing";
 
@@ -8,6 +10,9 @@ import { getAt } from "./editing";
 
 type Item = unknown;
 
+/** What a hint may show besides its own item: the saved venues, where each celebration's place comes from. */
+export type EditorContext = { venues: SiteContent["venues"] };
+
 export type FieldSpec = {
   /** Where the value sits in an item (or in a group), e.g. ["coords", "lat"]; [] for a list of plain text. */
   path: readonly string[];
@@ -15,7 +20,7 @@ export type FieldSpec = {
   kind: "text" | "textarea" | "link" | "time" | "date" | "decimal" | "select" | "checkbox";
   /** Columns out of six on wide screens. Phones use two columns: span 1 is half, the rest full. */
   span: 1 | 2 | 3 | 4 | 6;
-  hint?: string | ((item: Item) => string | undefined);
+  hint?: string | ((item: Item, context: EditorContext) => string | undefined);
   placeholder?: string;
   options?: readonly { value: string; label: string }[];
   /** A one-line text that often runs long starts two lines tall, as in the approved design. */
@@ -82,6 +87,19 @@ const venueFields: readonly FieldSpec[] = [
   { path: ["coords", "lng"], label: "Longitude", kind: "decimal", span: 3, placeholder: OPTIONAL },
 ];
 
+const venueOptions = [
+  { value: "church", label: "Church" },
+  { value: "reception", label: "Reception venue" },
+] as const satisfies readonly { value: CelebrationVenue; label: string }[];
+
+/** "Place, GPS and directions come from Venues → Church: Assemblies of God, Victory Worship Centre, Tepa (no GPS yet)". */
+function venueHint(item: Item, { venues }: EditorContext): string | undefined {
+  const option = venueOptions.find((choice) => choice.value === getAt(item, ["venue"]));
+  if (!option) return undefined;
+  const { place, gpsLine } = celebrationPlace({ venue: option.value }, venues);
+  return `Place, GPS and directions come from Venues → ${option.label}: ${place}${gpsLine ? ` · ${gpsLine}` : " (no GPS yet)"}`;
+}
+
 const chapterFields = (body: "text" | "quote"): readonly FieldSpec[] => [
   { path: ["when"], label: "When", kind: "text", span: 2 },
   { path: ["title"], label: "Title", kind: "text", span: 4 },
@@ -114,10 +132,16 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
         span: 4,
         hint: "Shown on the site. Calendars use the start and end times.",
       },
-      { path: ["place"], label: "Place", kind: "text", rows: 2, span: 3 },
-      { path: ["placeDetail"], label: "Place detail", kind: "text", rows: 2, span: 3, placeholder: OPTIONAL },
-      { path: ["dress"], label: "Dress code", kind: "text", span: 3 },
-      { path: ["directionsUrl"], label: "Directions link", kind: "link", span: 3, hint: LINK_HINT },
+      { path: ["venue"], label: "Venue", kind: "select", span: 3, options: venueOptions, hint: venueHint },
+      {
+        path: ["placeDetail"],
+        label: "Extra place note",
+        kind: "text",
+        span: 3,
+        placeholder: OPTIONAL,
+        hint: "Shown under the place and GPS, e.g. “Main hall, upstairs”.",
+      },
+      { path: ["dress"], label: "Dress code", kind: "text", span: 6 },
     ],
   },
   schedule: {

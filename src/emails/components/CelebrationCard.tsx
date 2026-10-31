@@ -12,7 +12,11 @@ export type ConfirmationCelebration = {
   stub: { weekday: string; day: string; month: string };
   /** The time as guests see it, e.g. "Right after the white wedding · dinner & dancing". */
   time: string;
+  /** "BN 111 Katakyie St, Tepa". */
   place: string;
+  /** "GhanaPost GPS · AX-0084-3317", or null while the venue's GPS is still to confirm. */
+  gpsLine: string | null;
+  /** An extra note under the GPS line, such as "Main hall, upstairs". */
   placeDetail?: string;
   attending: boolean;
   /** Set for a celebration the guest is coming to, null otherwise. */
@@ -99,10 +103,16 @@ export function CelebrationCard({ celebration }: { celebration: ConfirmationCele
             {celebration.time}
             <br />
             {celebration.place}
+            {celebration.gpsLine ? (
+              <>
+                <br />
+                <span style={{ whiteSpace: "nowrap" }}>{celebration.gpsLine}</span>
+              </>
+            ) : null}
             {celebration.placeDetail ? (
               <>
                 <br />
-                <span style={{ whiteSpace: "nowrap" }}>{celebration.placeDetail}</span>
+                {celebration.placeDetail}
               </>
             ) : null}
           </Text>

@@ -22,7 +22,7 @@ import {
   type SaveState,
 } from "@/lib/admin/content";
 import { getAt, insertAt, moveItem, pathKey, removeAt, setAt, type Path } from "./editing";
-import { fieldsInOrder, sectionSpecs, type FieldSpec, type ListSpec, type SectionSpec } from "./fields";
+import { fieldsInOrder, sectionSpecs, type EditorContext, type FieldSpec, type ListSpec, type SectionSpec } from "./fields";
 import { setUnsavedChanges } from "./unsaved";
 import { VersionHistory, type RestoreNotice, type VersionEntry } from "./VersionHistory";
 
@@ -69,12 +69,14 @@ export function ContentEditor({
   value,
   version,
   versions,
+  context,
 }: {
   sectionKey: ContentSectionKey;
   label: string;
   value: unknown;
   version: number;
   versions: VersionEntry[];
+  context: EditorContext;
 }) {
   const spec = sectionSpecs[sectionKey];
   const formId = useId();
@@ -240,6 +242,7 @@ export function ContentEditor({
     path,
     id: `${idBase}-${field.path.join("-") || "value"}`,
     error: problems.fields.get(pathKey(path)),
+    context,
     onChange: change,
   });
 
@@ -434,6 +437,7 @@ function Field({
   path,
   id,
   error,
+  context,
   onChange,
 }: {
   field: FieldSpec;
@@ -441,12 +445,13 @@ function Field({
   path: Path;
   id: string;
   error: string | undefined;
+  context: EditorContext;
   onChange: (path: Path, value: unknown) => void;
 }) {
   const value = getAt(item, field.path);
   const text = typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
   const { box, keepCaretAt } = useTextBox(text);
-  const hint = typeof field.hint === "function" ? field.hint(item) : field.hint;
+  const hint = typeof field.hint === "function" ? field.hint(item, context) : field.hint;
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const control = {

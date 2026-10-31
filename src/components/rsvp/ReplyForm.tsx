@@ -2,7 +2,7 @@
 
 import { startTransition, useEffect, useRef, type FormEvent } from "react";
 import type { EventId } from "@/content/wedding";
-import type { Celebration } from "@/lib/content/schema";
+import type { Celebration, SiteContent } from "@/lib/content/schema";
 import type { Answer } from "@/lib/data/types";
 import { Field, Select, TextInput } from "@/components/ui/Field";
 import { PillButton } from "@/components/ui/Button";
@@ -24,6 +24,7 @@ function ErrorText({ id, children }: { id: string; children?: string }) {
 /** The reply form. Fields keep what was typed; the celebration answers live in the parent. */
 export function ReplyForm({
   celebrations,
+  venues,
   state,
   pending,
   dispatch,
@@ -31,6 +32,7 @@ export function ReplyForm({
   onAnswer,
 }: {
   celebrations: Celebration[];
+  venues: SiteContent["venues"];
   state: RsvpState;
   pending: boolean;
   dispatch: (form: FormData) => void;
@@ -137,6 +139,7 @@ export function ReplyForm({
             <CelebrationChoice
               key={celebration.id}
               celebration={celebration}
+              venues={venues}
               value={answers[celebration.id]}
               onChange={(answer) => onAnswer(celebration.id, answer)}
             />

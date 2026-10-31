@@ -1,4 +1,5 @@
-import type { Celebration } from "@/lib/content/schema";
+import { celebrationPlace } from "@/lib/content/place";
+import type { Celebration, SiteContent } from "@/lib/content/schema";
 import { endsNextDay } from "@/lib/content/times";
 
 export type CalendarEvent = {
@@ -18,14 +19,15 @@ const DEFAULT_LENGTH_MS = 3 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const utf8 = new TextEncoder();
 
-export function celebrationEvent(celebration: Celebration, siteUrl: string): CalendarEvent {
+/** A celebration as a calendar event, at the place its venue gives it. */
+export function celebrationEvent(celebration: Celebration, venues: SiteContent["venues"], siteUrl: string): CalendarEvent {
   return {
     uid: `${celebration.id}@nobletxnancy.com`,
     title: `${celebration.name} · Noblet & Nancy`,
     date: celebration.date,
     startTime: celebration.startTime,
     endTime: celebration.endTime,
-    location: celebration.place,
+    location: celebrationPlace(celebration, venues).place,
     description: `${celebration.time}\n${siteUrl}`,
   };
 }
