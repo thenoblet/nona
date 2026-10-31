@@ -260,10 +260,19 @@ export async function markConversionFailed(mediaId: string, reason: string): Pro
  * Whether a processing job has work to do for the item (Ruling AG): it is `uploaded`, and no one
  * has hidden it (removing one's own upload hides it too) or deleted it. pg-boss can deliver a job
  * twice and the sweeper can queue one again, so a job checks this when it starts and again in the
- * update that finishes it; a hidden item waits, uploaded, for the unhide that queues it again.
+ * update that finishes it; a hidden item waits, uploaded, for the unhide that queues it again. The
+ * finishing update also checks the generation the job made its files for: after an unhide raised
+ * it, a job that read the item before would otherwise mark it ready naming files of the old
+ * generation, which the hide deleted.
  */
-function awaitsProcessing(mediaId: string) {
-  return and(eq(media.id, mediaId), sql`${media.status} = 'uploaded'`, isNull(media.hiddenAt), isNull(media.deletedAt));
+function awaitsProcessing(mediaId: string, derivedGeneration?: number) {
+  return and(
+    eq(media.id, mediaId),
+    sql`${media.status} = 'uploaded'`,
+    isNull(media.hiddenAt),
+    isNull(media.deletedAt),
+    derivedGeneration === undefined ? undefined : eq(media.derivedGeneration, derivedGeneration),
+  );
 }
 
 /** What a processing job reads of its item before it starts. */
@@ -298,6 +307,8 @@ export async function findItemToProcess(mediaId: string): Promise<ItemToProcess 
 export type ProcessedPhoto = {
   /** The derived files' keys in the public bucket: the thumbnail and the viewing size. */
   derived: Partial<Record<DerivedVariant, string>>;
+  /** The generation they were made for, as findItemToProcess read it: the mark needs it current. */
+  derivedGeneration: number;
   /** The upright photo's size in pixels. */
   width: number;
   height: number;
@@ -351,7 +362,7 @@ export async function manifestFacts(mediaId: string): Promise<MediaManifest | nu
  * before), with what processing made, in the celebration its capture time falls in unless the
  * couple moved it.
  */
-function readyColumns(item: ProcessedPhoto) {
+function readyColumns(item: Omit<ProcessedPhoto, "derivedGeneration">) {
   return {
     status: "ready" as const,
     failureReason: null,
@@ -368,8 +379,9 @@ function readyColumns(item: ProcessedPhoto) {
 
 /**
  * Marks a processed photo `ready` with what its processing made, in one statement and only while a
- * job still has work to do for it (awaitsProcessing): a second delivery that finished first, or a
- * hide while this one worked, leaves it as it is. It is listed now, or keeps its place if it was
+ * job still has work to do for it (awaitsProcessing), in the generation its files were made for: a
+ * second delivery that finished first, a hide while this one worked, or an unhide since it read the
+ * item, leaves it as it is. It is listed now, or keeps its place if it was
  * listed before; its celebration is the one its capture time falls in, unless the couple moved it.
  * Returns the facts its manifest holds as this left them, or null when it changed nothing.
  */
@@ -378,7 +390,7 @@ export async function markPhotoReady(mediaId: string, photo: ProcessedPhoto): Pr
   const [row] = await getDb()
     .update(media)
     .set(readyColumns(photo))
-    .where(awaitsProcessing(mediaId))
+    .where(awaitsProcessing(mediaId, photo.derivedGeneration))
     .returning(manifestColumns);
   return row ?? null;
 }
@@ -425,7 +437,7 @@ export async function markVideoReady(mediaId: string, video: ProcessedVideo): Pr
       browserPlayable: video.browserPlayable,
       ...conversionColumns,
     })
-    .where(awaitsProcessing(mediaId))
+    .where(awaitsProcessing(mediaId, video.derivedGeneration))
     .returning({
       ...manifestColumns,
       conversion: media.conversion,
@@ -609,31 +621,77 @@ export async function markConversionDone(mediaId: string, leaseId: string, video
 
 /*
  * Withdrawing an item's public files (Task 12): once an item is hidden or deleted, the media worker's
- * visibility job deletes the derived files its row names (and any other under its folder), purges
- * their URLs from Cloudflare, and only then clears the keys. Keys left on a hidden or deleted item
- * mean files that may still be public: the sweeper sends a job for any no job is withdrawing.
+ * visibility job records every key it will withdraw (withdrawing_keys: the files its row names, any
+ * other under its folder, and a permanently deleted item's original), deletes them, purges the
+ * public ones' URLs from Cloudflare, and only then clears them and the row's derived keys. Derived
+ * keys left on a hidden or deleted item, or any withdrawing key, mean files that may still be
+ * public: the sweeper sends a job for any no job is withdrawing.
  */
 
-/** What the visibility job reads of an item. */
+/** What the visibility job (and a processing job whose mark changed nothing) reads of an item. */
 export type ItemToWithdraw = {
   /** isVisible's condition: not hidden, removed or deleted. */
   visible: boolean;
+  deleted: boolean;
   /** The derived files its row names. */
   derived: Partial<Record<DerivedVariant, string>>;
+  /** Its files' current generation. */
+  derivedGeneration: number;
+  /** Keys an earlier attempt began to withdraw (withdrawing_keys), still to finish. */
+  withdrawingKeys: string[];
+  originalKey: string;
+  uploadedAt: Date | null;
 };
 
-/** The item's visibility and the files its row names, or null when there is no such row. One read on the primary key. */
+/** What withdrawing an item needs to know of it, or null when there is no such row. One read on the primary key. */
 export async function findItemToWithdraw(mediaId: string): Promise<ItemToWithdraw | null> {
   if (!isUuid(mediaId)) return null;
   const [row] = await getDb()
     .select({
       visible: sql<boolean>`${media.hiddenAt} is null and ${media.deletedAt} is null and not ${media.removedByUploader}`,
+      deleted: sql<boolean>`${media.deletedAt} is not null`,
       derived: media.derived,
+      derivedGeneration: media.derivedGeneration,
+      withdrawingKeys: media.withdrawingKeys,
+      originalKey: media.originalKey,
+      uploadedAt: media.uploadedAt,
     })
     .from(media)
     .where(eq(media.id, mediaId))
     .limit(1);
-  return row ?? null;
+  return row ? { ...row, withdrawingKeys: row.withdrawingKeys ?? [] } : null;
+}
+
+/**
+ * Adds keys to the item's withdrawing_keys, before any of them is deleted, so every attempt after
+ * this one deletes and purges them all. A union in one statement: two jobs at once lose neither's.
+ */
+export async function addWithdrawingKeys(mediaId: string, keys: string[]): Promise<void> {
+  if (!isUuid(mediaId) || keys.length === 0) return;
+  await getDb()
+    .update(media)
+    .set({
+      // The keys go as one JSON array: drizzle would send a JavaScript array as a row of values.
+      withdrawingKeys: sql`array(select distinct pending.key from (
+        select unnest(coalesce(${media.withdrawingKeys}, '{}'::text[]))
+        union select jsonb_array_elements_text(${JSON.stringify(keys)}::jsonb)) as pending(key))`,
+    })
+    .where(eq(media.id, mediaId));
+}
+
+/**
+ * Takes keys whose objects are deleted and purged off the item's withdrawing_keys, in one
+ * statement, leaving any another job added meanwhile; null once none is left.
+ */
+export async function finishWithdrawing(mediaId: string, keys: string[]): Promise<void> {
+  if (!isUuid(mediaId) || keys.length === 0) return;
+  await getDb()
+    .update(media)
+    .set({
+      withdrawingKeys: sql`nullif(array(select unnest(${media.withdrawingKeys})
+        except select jsonb_array_elements_text(${JSON.stringify(keys)}::jsonb)), '{}'::text[])`,
+    })
+    .where(eq(media.id, mediaId));
 }
 
 /**

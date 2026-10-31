@@ -288,6 +288,7 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
 
   const marked = await markVideoReady(mediaId, {
     derived: keys,
+    derivedGeneration: item.derivedGeneration,
     width: facts.width,
     height: facts.height,
     thumbhash: stills.placeholder.thumbhash,
@@ -304,6 +305,7 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
     await withdrawIfHidden(job.queue, mediaId, [keys["poster-thumb"], keys["poster-view"]], {
       signal: job.signal,
       jobQueue: options.jobQueue,
+      derivedGeneration: item.derivedGeneration,
     });
     return;
   }

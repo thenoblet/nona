@@ -972,9 +972,23 @@ describe.skipIf(!ffmpegSeven)("a job delivered twice, or for an item that has mo
     expect((await conversionJobs(backlog)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.backlog]);
     expect((await conversionJobs(highlight)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.onDemand]);
     expect((await conversionJobs(asked)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.onDemand]);
-    // A new generation's poster has keys of its own, never a hidden one's.
-    const [first, second] = [await readItem(backlog), await readItem(highlight)];
-    expect(Object.values(first.derived)[0].split("/")[2]).not.toBe(Object.values(second.derived)[0].split("/")[2]);
+  });
+
+  it("makes the same upload's poster under keys of each generation's own, the same again for the same generation", async () => {
+    const mediaId = await uploadedVideo(await rotatedClip(), "mov");
+    const madeIn = async (derivedGeneration: number) => {
+      await getDb().update(media).set({ status: "uploaded", derived: {}, derivedGeneration }).where(eq(media.id, mediaId));
+      await processVideo(videoJob(mediaId), posterOptions());
+      return Object.values((await readItem(mediaId)).derived).sort();
+    };
+
+    const first = await madeIn(0);
+    const unhidden = await madeIn(1);
+    const again = await madeIn(1);
+
+    expect(first).toHaveLength(2);
+    for (const key of unhidden) expect(first).not.toContain(key);
+    expect(again).toEqual(unhidden);
   });
 
   it("leaves alone an item another delivery finished while this one worked, and sends no conversion of its own", async () => {

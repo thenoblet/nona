@@ -15,6 +15,7 @@ import { manifestKey, originalKey } from "@/lib/storage/keys";
 import { readManifest } from "@/lib/storage/manifest";
 import { abortMultipart, completeMultipart, headOriginal, listUploadedParts } from "@/lib/storage/objects";
 import { resetDb } from "../../../../test/db";
+import { hideMedia } from "../../../../test/moderation";
 import { asBrowser, browserCookies, newCookieJar, type CookieJar } from "../../../../test/next-cookies";
 import {
   dropBossSchema,
@@ -70,7 +71,6 @@ vi.mock("@/lib/jobs/boss", async (importOriginal) => {
 });
 
 import { guestCookieName, readGuestIds, signGuestIds } from "@/lib/guests/cookie";
-import { hideMedia } from "@/lib/media/moderation";
 import { POST as completeRoute } from "./[id]/complete/route";
 import { GET as listPartsRoute, POST as presignRoute } from "./[id]/parts/route";
 import { DELETE as cancelRoute } from "./[id]/route";

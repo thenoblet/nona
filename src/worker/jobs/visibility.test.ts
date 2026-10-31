@@ -13,12 +13,13 @@ import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
 import { storageConfig } from "@/lib/env";
 import { MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
-import { deleteMediaPermanently, hideMedia, moveMedia, unhideMedia } from "@/lib/media/moderation";
 import { isVisible } from "@/lib/media/rows";
 import { storageClient } from "@/lib/storage/client";
 import { derivedKey, manifestKey, originalKey, publicUrl } from "@/lib/storage/keys";
 import { readManifest } from "@/lib/storage/manifest";
+import { headOriginal } from "@/lib/storage/objects";
 import { resetDb } from "../../../test/db";
+import { deleteMediaPermanently, hideMedia, moveMedia, unhideMedia } from "../../../test/moderation";
 import { dropBossSchema, startTestBoss } from "../../../test/uploads";
 import { workerConfig } from "../config";
 import { PermanentJobError, type MediaJob } from "../queues";
@@ -65,9 +66,11 @@ vi.mock("@/lib/storage/manifest", async (importOriginal) => {
 
 // A test can act just before the job lists the item's folder, or between its reading what to
 // withdraw and its deleting it.
+// It can also make deleting an original fail, as R2 (or its bucket lock) might.
 const deletes = vi.hoisted(() => ({
   beforeNext: null as null | (() => Promise<void>),
   beforeNextListing: null as null | (() => Promise<void>),
+  originalFailuresLeft: 0,
 }));
 vi.mock("@/lib/storage/objects", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/storage/objects")>();
@@ -78,6 +81,13 @@ vi.mock("@/lib/storage/objects", async (importOriginal) => {
       deletes.beforeNextListing = null;
       await beforeListing?.();
       return real.listDerivedKeys(...args);
+    },
+    deleteOriginal: async (...args: Parameters<typeof real.deleteOriginal>) => {
+      if (deletes.originalFailuresLeft > 0) {
+        deletes.originalFailuresLeft -= 1;
+        throw Object.assign(new Error("Access Denied: the object is locked"), { name: "AccessDenied" });
+      }
+      return real.deleteOriginal(...args);
     },
     deletePublicObjects: async (...args: Parameters<typeof real.deletePublicObjects>) => {
       const beforeDelete = deletes.beforeNext;
@@ -172,6 +182,7 @@ beforeEach(async () => {
   manifests.failuresLeft = 0;
   deletes.beforeNext = null;
   deletes.beforeNextListing = null;
+  deletes.originalFailuresLeft = 0;
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
@@ -342,6 +353,45 @@ describe("a purge that can't be made", () => {
     await runVisibilityJob({ ...job, retryCount: 1 }, options);
     expect(purge.calls.flatMap((call) => call.files)).toEqual(keys.map((key) => publicUrl(key)));
     expect(await readItem(mediaId)).toMatchObject({ derived: {} });
+  });
+
+  it("purges on the retry a file the folder no longer lists and the row never named: recorded before it was deleted", async () => {
+    const mediaId = await readyPhoto();
+    const named = Object.values((await readItem(mediaId)).derived);
+    // Left from an earlier generation, or a conversion that finished after the hide.
+    const unnamed = derivedKey(mediaId, "1111222233334444", "video", "mp4");
+    await putPublic(unnamed);
+    await hideMedia(mediaId, { admin: ADMIN });
+    const job = jobFor(MEDIA_QUEUES.visibility, { mediaId, action: "hide" });
+    purge.refuseNext = 1;
+
+    await expect(runVisibility(job)).rejects.toThrow(/500/);
+    // Deleted already, so a listing finds nothing now; the row keeps what is owed.
+    expect(await publicKeysOf(mediaId)).toEqual([]);
+    expect([...((await readItem(mediaId)).withdrawingKeys ?? [])].sort()).toEqual([...named, unnamed].sort());
+
+    await runVisibility({ ...job, retryCount: 1 });
+
+    expect(purge.calls.flatMap((call) => call.files).sort()).toEqual([...named, unnamed].map((key) => publicUrl(key)).sort());
+    expect(await readItem(mediaId)).toMatchObject({ derived: {}, withdrawingKeys: null });
+  });
+
+  it("still purges what an attempt recorded when the item is unhidden before the retry, and never its new files", async () => {
+    const mediaId = await readyPhoto();
+    const old = Object.values((await readItem(mediaId)).derived);
+    await hideMedia(mediaId, { admin: ADMIN });
+    const job = jobFor(MEDIA_QUEUES.visibility, { mediaId, action: "hide" });
+    purge.refuseNext = 1;
+    await expect(runVisibility(job)).rejects.toThrow(/500/);
+    await unhideMedia(mediaId, ADMIN);
+    await runQueued(MEDIA_QUEUES.photo, mediaId, runPhoto);
+    const remade = Object.values((await readItem(mediaId)).derived);
+
+    await runVisibility({ ...job, retryCount: 1 });
+
+    expect(purge.calls.flatMap((call) => call.files).sort()).toEqual(old.map((key) => publicUrl(key)).sort());
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", withdrawingKeys: null });
+    expect(await publicKeysOf(mediaId)).toEqual([...remade].sort());
   });
 
   it("is retried when Cloudflare refuses, and purges on the retry", async () => {
@@ -534,6 +584,39 @@ describe("the manifest, when a processing job and a hide write it at once", () =
 });
 
 describe("deleting permanently", () => {
+  it("is finished by the job when the admin's own attempt at the original fails: recorded first, so nothing is lost", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const mediaId = await readyPhoto({ uploadedAt: new Date(Date.now() - 31 * DAY) });
+    const { originalKey: key, derived } = await readItem(mediaId);
+    deletes.originalFailuresLeft = 1;
+
+    expect(await deleteMediaPermanently(mediaId, ADMIN)).toEqual({ ok: true });
+    expect(await headOriginal(key)).not.toBeNull();
+    expect((await readItem(mediaId)).withdrawingKeys).toEqual(expect.arrayContaining([key, ...Object.values(derived)]));
+
+    expect(await runQueued(MEDIA_QUEUES.visibility, mediaId, runVisibility)).toBe(1);
+
+    expect(await headOriginal(key)).toBeNull();
+    expect(await readItem(mediaId)).toMatchObject({ derived: {}, withdrawingKeys: null });
+    expect(await readManifest(mediaId)).toBeNull();
+  });
+
+  it("is retried by the job while R2 still refuses the original, and finishes once it doesn't", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const mediaId = await readyPhoto({ uploadedAt: new Date(Date.now() - 31 * DAY) });
+    const key = (await readItem(mediaId)).originalKey;
+    deletes.originalFailuresLeft = 2;
+    await deleteMediaPermanently(mediaId, ADMIN);
+    const job = jobFor(MEDIA_QUEUES.visibility, { mediaId, action: "hide" });
+
+    await expect(runVisibility(job)).rejects.toThrow(/locked/);
+    expect((await readItem(mediaId)).withdrawingKeys).toContain(key);
+    await runVisibility({ ...job, retryCount: 1 });
+
+    expect(await headOriginal(key)).toBeNull();
+    expect(await readItem(mediaId)).toMatchObject({ withdrawingKeys: null });
+  });
+
   it("leaves the job to purge the deleted item's URLs, then clears the tombstone's keys", async () => {
     const mediaId = await readyPhoto({ uploadedAt: new Date(Date.now() - 31 * DAY) });
     const keys = Object.values((await readItem(mediaId)).derived).sort();

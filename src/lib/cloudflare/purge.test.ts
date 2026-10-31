@@ -62,7 +62,7 @@ beforeEach(() => {
 });
 
 function urls(count: number): string[] {
-  return Array.from({ length: count }, (_, index) => `https://media.example.com/derived/item/hash/file-${index}.webp`);
+  return Array.from({ length: count }, (_empty, index) => `https://media.example.com/derived/item/hash/file-${index}.webp`);
 }
 
 const configured = { CF_PURGE_TOKEN: TOKEN, CF_ZONE_ID: ZONE_ID, NODE_ENV: "production" };

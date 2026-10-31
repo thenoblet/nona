@@ -70,6 +70,11 @@ const DERIVED_KEY = new RegExp(
   `^derived/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/(${DERIVED_VARIANTS.join("|")})\\.[A-Za-z0-9]+$`,
 );
 
+/** Whether originalKey could have made the key. */
+export function isOriginalKey(key: string): boolean {
+  return ORIGINAL_KEY.test(key);
+}
+
 /** The key, if originalKey could have made it; throws otherwise. */
 export function assertOriginalKey(key: string): string {
   if (!ORIGINAL_KEY.test(key)) throw new Error(`Refusing ${JSON.stringify(key)}: not an originals/ key`);

@@ -50,6 +50,13 @@
       "when": 1793442429814,
       "tag": "0006_misty_calypso",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793445468524,
+      "tag": "0007_naive_turbo",
+      "breakpoints": true
     }
   ]
 }

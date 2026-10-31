@@ -26,8 +26,9 @@ import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch
  *    the complete route checks: once uploads close, an album upload is finished only if it began
  *    before the close and the 24 hours after it haven't passed. Wishes always are;
  * 4. (Task 12) queues media.visibility `hide` for items hidden, removed or deleted more than 5
- *    minutes ago whose row still names public files, with no job to withdraw them (the app couldn't
- *    queue one, or it failed for good): a hidden item's files never stay public for want of a job.
+ *    minutes ago whose row still names public files, and for items with a withdrawal under way
+ *    (withdrawing_keys), when no job is withdrawing them (the app couldn't queue one, or it failed
+ *    for good): a hidden item's files never stay public, or cached, for want of a job.
  * Each step handles a bounded batch, so a sweep is never unbounded; a backlog clears over a few.
  */
 
@@ -160,7 +161,8 @@ export function convertingConversionsQuery(limit: number, reader: Reader = getDb
 
 /**
  * Up to `limit` items hidden (or removed by their uploader) or deleted more than 5 minutes ago whose
- * row still names public files, on the partial index of such items: a handful at most, so no order.
+ * row still names public files, or with a withdrawal under way (withdrawing_keys: only a job sets
+ * them, so they need no wait), on the partial index of such items: a handful at most, so no order.
  * Exported for its plan's test.
  */
 export function withdrawalsQuery(limit: number, reader: Reader = getDb()) {
@@ -168,12 +170,11 @@ export function withdrawalsQuery(limit: number, reader: Reader = getDb()) {
     .select({ id: media.id })
     .from(media)
     .where(
-      and(
-        // The partial index's own condition, word for word, so Postgres proves it applies.
-        sql`(${media.hiddenAt} is not null or ${media.deletedAt} is not null) and ${media.derived} <> '{}'::jsonb`,
-        // greatest() passes over a null: whichever of the two happened.
-        sql`greatest(${media.hiddenAt}, ${media.deletedAt}) < ${minutesAgo(STUCK_AFTER_MINUTES)}`,
-      ),
+      // Each arm implies the partial index's own condition, so Postgres proves it applies. greatest()
+      // passes over a null: whichever of the two happened.
+      sql`((${media.hiddenAt} is not null or ${media.deletedAt} is not null) and ${media.derived} <> '{}'::jsonb
+          and greatest(${media.hiddenAt}, ${media.deletedAt}) < ${minutesAgo(STUCK_AFTER_MINUTES)})
+        or ${media.withdrawingKeys} is not null`,
     )
     .limit(limit);
 }
@@ -329,8 +330,8 @@ export function createSweeper(options: SweeperOptions) {
   }
 
   /**
-   * Step 4: hidden or deleted items still naming public files with no visibility job (or a dead
-   * letter on its way), each sent media.visibility `hide`.
+   * Step 4: hidden or deleted items still naming public files, and items with a withdrawal under
+   * way, with no visibility job (or a dead letter on its way), each sent media.visibility `hide`.
    */
   async function requeueWithdrawals(): Promise<number> {
     const stuck = await stuckAmong(bossSchema, WITHDRAWAL_QUEUES, (reader) => withdrawalsQuery(CANDIDATE_BATCH_SIZE, reader));

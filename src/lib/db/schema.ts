@@ -170,6 +170,13 @@ export const media = pgTable(
      * a URL a cache remembers as gone.
      */
     derivedGeneration: integer("derived_generation").notNull().default(0),
+    /**
+     * Storage keys being withdrawn: public files to delete and purge from Cloudflare, and, for
+     * "Delete permanently", the original. Recorded before anything is deleted and cleared once all
+     * is done, so a retry (or the sweeper) finishes what an attempt started, even for files no
+     * listing shows any more. Null when nothing is pending.
+     */
+    withdrawingKeys: text("withdrawing_keys").array(),
     width: integer("width"),
     height: integer("height"),
     durationSeconds: real("duration_seconds"),
@@ -225,11 +232,13 @@ export const media = pgTable(
     index("media_unfinished_upload_idx")
       .on(table.startedAt, table.id)
       .where(sql`${table.status} = 'uploading' and ${table.multipartUploadId} is not null`),
-    // Hidden or deleted items whose public files no visibility job has withdrawn yet (Task 12),
-    // which the sweeper sends a job for: a handful at most.
+    // Hidden or deleted items whose public files no visibility job has withdrawn yet, and items with
+    // a withdrawal under way (Task 12), which the sweeper sends a job for: a handful at most.
     index("media_withdrawal_idx")
       .on(table.id)
-      .where(sql`(${table.hiddenAt} is not null or ${table.deletedAt} is not null) and ${table.derived} <> '{}'::jsonb`),
+      .where(
+        sql`((${table.hiddenAt} is not null or ${table.deletedAt} is not null) and ${table.derived} <> '{}'::jsonb) or ${table.withdrawingKeys} is not null`,
+      ),
     check("media_purpose_check", oneOf(table.purpose, MEDIA_PURPOSES)),
     check("media_kind_check", oneOf(table.kind, MEDIA_FILE_KINDS)),
     check("media_status_check", oneOf(table.status, MEDIA_STATUSES)),

@@ -288,6 +288,7 @@ export async function processPhoto(job: MediaJob, options: PhotoOptions): Promis
 
   const manifest = await markPhotoReady(mediaId, {
     derived: keys,
+    derivedGeneration: item.derivedGeneration,
     width: derived.width,
     height: derived.height,
     thumbhash: derived.placeholder.thumbhash,
@@ -296,7 +297,11 @@ export async function processPhoto(job: MediaJob, options: PhotoOptions): Promis
     celebration: assignCelebration(capturedAt, item.startedAt, celebrations),
   });
   if (!manifest) {
-    await withdrawIfHidden(job.queue, mediaId, [keys.thumb, keys.view], { signal: job.signal, jobQueue: options.jobQueue });
+    await withdrawIfHidden(job.queue, mediaId, [keys.thumb, keys.view], {
+      signal: job.signal,
+      jobQueue: options.jobQueue,
+      derivedGeneration: item.derivedGeneration,
+    });
     return;
   }
   await rewriteManifest(job.queue, mediaId, manifest, job.signal);

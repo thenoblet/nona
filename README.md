@@ -210,8 +210,10 @@ that fails for good marks its item `failed`, with the reason its uploader sees.
 - **Hiding** (`media.visibility`): an item the couple hide (or its uploader removes, or the couple
   delete for good) leaves every list at once; then the worker deletes every public file under its
   folder and purges their exact URLs from Cloudflare's cache (`CF_PURGE_TOKEN`, `CF_ZONE_ID`, 30 URLs
-  a call), retrying until both are done. An unhide processes the item again, its files under new
-  keys, and it keeps its place in the album.
+  a call), retrying until both are done. What it withdraws is recorded on the row first, so a retry
+  purges every one; a permanent delete's original is deleted the same way, once its 30-day lock
+  allows. An unhide processes the item again, its files under new keys, and it keeps its place in
+  the album.
 - **Conversions** (`media.convert`) make a version of a video every phone plays: H.264 High in MP4,
   within 1920 × 1080 either way up, HDR tone-mapped to SDR, at most 30 fps, AAC stereo, no
   metadata but its capture time, `moov` first. A phone that can't play an original asks

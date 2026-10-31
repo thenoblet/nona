@@ -22,15 +22,16 @@ import { syncManifest } from "./manifest-sync";
  *
  * Each action changes the row first, in one conditional statement, so it takes effect at once and
  * doing it twice changes nothing more (Ruling AG). Then come its follow-ups, never inside a
- * transaction: the manifest (an R2 PUT, bounded by its 15 s deadline and the caller's signal) and
- * jobs for the worker; a route passes `defer` (Next's after()) to run them after its response. A
- * follow-up that fails never fails the action: each is recovered
- * - a hide's withdrawal: the sweeper sends it for any hidden item that still names public files;
+ * transaction and always through the caller's `defer` (Next's after() in a route or an action), so
+ * no request waits on R2 or the queue: the manifest (an R2 PUT, bounded by its 15 s deadline and the
+ * caller's signal), a permanent delete's first attempt at its objects, and jobs for the worker. A
+ * follow-up never throws, and each one that fails is recovered:
+ * - a withdrawal: the sweeper sends it for any hidden item that still names public files, or any
+ *   item with a withdrawal under way (which a permanent delete records before anything else);
  * - processing and conversions: the sweeper sends them from the row (`uploaded`, `queued`);
  * - a manifest: the visibility job writes it (a hide's job does anyway; otherwise a `sync` job).
- * Only "Delete permanently" fails on R2's refusal, since its point is the deletion; it is safe to
- * repeat. Slow and third-party work (deleting a hidden item's files, Cloudflare's purge, processing)
- * is the worker's.
+ * Slow and third-party work (deleting a hidden item's files, Cloudflare's purge, processing) is the
+ * worker's. Logs carry ids only (Ruling AT): who acted is in the row (hidden_by), not the log.
  */
 
 /** The cache tag of the album's and the slideshow's data (Task 20 tags slides.json with it). */
@@ -45,17 +46,22 @@ export type HiddenBy = { admin: string } | { guestIds: string[] };
 
 /** hidden_by for an item its uploader removed (the owner is its guest_id). */
 const REMOVED_BY_UPLOADER = "guest";
+/**
+ * What a permanent delete leaves in a column that can't be empty (an original's filename, a wish's
+ * signature): the tombstone keeps no personal data (Ruling AU).
+ */
+const DELETED_PLACEHOLDER = "deleted";
 
 export type ModerationOptions = {
+  /**
+   * Runs the follow-ups (the manifest, R2 deletions, the jobs) after the response: a route or a
+   * server action passes Next's after(). They never throw.
+   */
+  defer: Defer;
   /** Ends the R2 calls early: a request's signal (each has its own 15 s deadline besides). */
   signal?: AbortSignal;
-  /** The queue the follow-up jobs go to: the app's own unless a caller (the worker) passes its own. */
+  /** The queue the follow-up jobs go to: the app's own unless a caller passes its own. */
   jobQueue?: () => Promise<Pick<PgBoss, "send">>;
-  /**
-   * Runs the follow-ups (the manifest, the jobs) after the response: a route passes Next's after().
-   * Without it they are awaited. They never throw either way.
-   */
-  defer?: Defer;
 };
 
 export type ModerationResult = { ok: true } | { ok: false; reason: "not-found" | "not-owner" };
@@ -90,10 +96,17 @@ function jobQueueOf(options: ModerationOptions): () => Promise<Pick<PgBoss, "sen
   return options.jobQueue ?? (() => getBoss());
 }
 
-/** Runs an action's follow-ups now, or after the response when the caller defers them. They never throw. */
-async function followUp(options: ModerationOptions, followUps: () => Promise<void>): Promise<void> {
-  if (options.defer) options.defer(followUps);
-  else await followUps();
+/** Hands an action's follow-ups to the caller's defer, to run after its response. They never throw. */
+function followUp(options: ModerationOptions, followUps: () => Promise<void>): void {
+  options.defer(followUps);
+}
+
+/**
+ * An admin action names the signed-in admin (requireAdmin's email): an empty one is a caller's
+ * mistake, refused before anything changes, so no change is made unattributed.
+ */
+function assertAdmin(admin: string): void {
+  if (typeof admin !== "string" || admin.trim() === "") throw new TypeError("An admin action needs the signed-in admin");
 }
 
 /** Sends a media.visibility job. Throws when the queue refuses. */
@@ -176,15 +189,16 @@ async function existsUndeleted(mediaId: string): Promise<boolean> {
  * hidden item keeps its first hide's time and author, and queues the withdrawal again (harmless).
  * The caller invalidates ALBUM_SLIDES_TAG.
  */
-export async function hideMedia(mediaId: string, by: HiddenBy, options: ModerationOptions = {}): Promise<ModerationResult> {
+export async function hideMedia(mediaId: string, by: HiddenBy, options: ModerationOptions): Promise<ModerationResult> {
+  if ("admin" in by) assertAdmin(by.admin);
   if (!isUuid(mediaId)) return NOT_FOUND;
   const hidden = "admin" in by ? await hideForAdmin(mediaId, by.admin) : await removeForUploader(mediaId, by.guestIds);
   if (!hidden) return (await existsUndeleted(mediaId)) && !("admin" in by) ? { ok: false, reason: "not-owner" } : NOT_FOUND;
-  await followUp(options, async () => {
+  followUp(options, async () => {
     await writeManifestAfter("hide", mediaId, options);
     await sendOrLog(MEDIA_QUEUES.visibility, { mediaId, action: "hide" } satisfies VisibilityJobData, options, "the sweeper sends it");
   });
-  console.log(`[moderation] media=${mediaId} hidden by ${"admin" in by ? by.admin : "its uploader"}`);
+  console.log(`[moderation] media=${mediaId} hidden by ${"admin" in by ? "an admin" : "its uploader"}`);
   return OK;
 }
 
@@ -198,7 +212,8 @@ export async function hideMedia(mediaId: string, by: HiddenBy, options: Moderati
  * hidden before it was processed is queued for processing; a failed one stays failed. The caller
  * invalidates ALBUM_SLIDES_TAG.
  */
-export async function unhideMedia(mediaId: string, admin: string, options: ModerationOptions = {}): Promise<ModerationResult> {
+export async function unhideMedia(mediaId: string, admin: string, options: ModerationOptions): Promise<ModerationResult> {
+  assertAdmin(admin);
   if (!isUuid(mediaId)) return NOT_FOUND;
   const [row] = await getDb()
     .update(media)
@@ -216,11 +231,11 @@ export async function unhideMedia(mediaId: string, admin: string, options: Moder
     .returning({ purpose: media.purpose, kind: media.kind, status: media.status });
   // Visible already (an unhide done before), or not there.
   if (!row) return (await existsUndeleted(mediaId)) ? OK : NOT_FOUND;
-  await followUp(options, async () => {
+  followUp(options, async () => {
     await writeManifestAfter("change", mediaId, options);
     if (row.status === "uploaded") await sendOrLog(processingQueue(row), { mediaId }, options, "the sweeper queues it");
   });
-  console.log(`[moderation] media=${mediaId} unhidden by ${admin}`);
+  console.log(`[moderation] media=${mediaId} unhidden by an admin`);
   return OK;
 }
 
@@ -233,8 +248,9 @@ export async function moveMedia(
   mediaId: string,
   celebration: EventId | "more",
   admin: string,
-  options: ModerationOptions = {},
+  options: ModerationOptions,
 ): Promise<ModerationResult> {
+  assertAdmin(admin);
   if (!CELEBRATIONS.includes(celebration)) throw new RangeError(`Refusing ${JSON.stringify(celebration)} as a celebration`);
   if (!isUuid(mediaId)) return NOT_FOUND;
   const rows = await getDb()
@@ -243,8 +259,8 @@ export async function moveMedia(
     .where(and(eq(media.id, mediaId), isNull(media.deletedAt)))
     .returning({ id: media.id });
   if (rows.length === 0) return NOT_FOUND;
-  await followUp(options, () => writeManifestAfter("change", mediaId, options));
-  console.log(`[moderation] media=${mediaId} moved to ${celebration} by ${admin}`);
+  followUp(options, () => writeManifestAfter("change", mediaId, options));
+  console.log(`[moderation] media=${mediaId} moved to ${celebration} by an admin`);
   return OK;
 }
 
@@ -259,8 +275,9 @@ export async function setHighlight(
   mediaId: string,
   on: boolean,
   admin: string,
-  options: ModerationOptions = {},
+  options: ModerationOptions,
 ): Promise<ModerationResult> {
+  assertAdmin(admin);
   if (!isUuid(mediaId)) return NOT_FOUND;
   const [row] = await getDb()
     .update(media)
@@ -272,7 +289,7 @@ export async function setHighlight(
     });
   if (!row) return NOT_FOUND;
   if (on && row.conversionWaiting) {
-    await followUp(options, async () => {
+    followUp(options, async () => {
       try {
         await requestConversion(mediaId, CONVERT_PRIORITY.onDemand, jobQueueOf(options));
       } catch (error) {
@@ -280,18 +297,20 @@ export async function setHighlight(
       }
     });
   }
-  console.log(`[moderation] media=${mediaId} ${on ? "made a highlight" : "no longer a highlight"} by ${admin}`);
+  console.log(`[moderation] media=${mediaId} ${on ? "made a highlight" : "no longer a highlight"} by an admin`);
   return OK;
 }
 
 /**
  * Tries again what failed for good: a failed item's processing (back to `uploaded`, its reason
  * cleared, its job queued), or a ready video's failed conversion (its reason and lease cleared,
- * `queued`, and sent: at priority 20 when a guest is waiting for it, a highlight or a phone's ask,
- * else to the backlog). Once retried, there is nothing to retry until it fails again (Ruling AG).
- * The sweeper sends what the queue refused.
+ * `queued`, and sent at priority 20, the couple waiting for it as a phone would: Ruling AT). The
+ * conversion is marked on demand in the same statement (conversion_requested_at), so the sweeper,
+ * if the send fails, sends it at 20 too, not to a backlog its switch may be holding. Once retried,
+ * there is nothing to retry until it fails again (Ruling AG).
  */
-export async function retryProcessing(mediaId: string, admin: string, options: ModerationOptions = {}): Promise<RetryResult> {
+export async function retryProcessing(mediaId: string, admin: string, options: ModerationOptions): Promise<RetryResult> {
+  assertAdmin(admin);
   if (!isUuid(mediaId)) return NOT_FOUND;
   const [failed] = await getDb()
     .update(media)
@@ -299,13 +318,18 @@ export async function retryProcessing(mediaId: string, admin: string, options: M
     .where(and(eq(media.id, mediaId), sql`${media.status} = 'failed'`, isNull(media.deletedAt)))
     .returning({ purpose: media.purpose, kind: media.kind });
   if (failed) {
-    await followUp(options, () => sendOrLog(processingQueue(failed), { mediaId }, options, "the sweeper queues it"));
-    console.log(`[moderation] media=${mediaId}'s processing retried by ${admin}`);
+    followUp(options, () => sendOrLog(processingQueue(failed), { mediaId }, options, "the sweeper queues it"));
+    console.log(`[moderation] media=${mediaId}'s processing retried by an admin`);
     return { ok: true, retried: "processing" };
   }
   const [conversion] = await getDb()
     .update(media)
-    .set({ conversion: "queued", conversionFailureReason: null, conversionJobId: null })
+    .set({
+      conversion: "queued",
+      conversionFailureReason: null,
+      conversionJobId: null,
+      conversionRequestedAt: sql`coalesce(${media.conversionRequestedAt}, now())`,
+    })
     .where(
       and(
         eq(media.id, mediaId),
@@ -315,23 +339,19 @@ export async function retryProcessing(mediaId: string, admin: string, options: M
         isNull(media.deletedAt),
       ),
     )
-    .returning({
-      onDemand: sql<boolean>`${media.highlight} or ${media.conversionRequestedAt} is not null`,
-      visible: sql<boolean>`${media.hiddenAt} is null and not ${media.removedByUploader}`,
-    });
+    .returning({ visible: sql<boolean>`${media.hiddenAt} is null and not ${media.removedByUploader}` });
   if (conversion) {
     // A hidden video's conversion waits, queued, for its unhide.
     if (conversion.visible) {
-      const priority = conversion.onDemand ? CONVERT_PRIORITY.onDemand : CONVERT_PRIORITY.backlog;
-      await followUp(options, async () => {
+      followUp(options, async () => {
         try {
-          await requestConversion(mediaId, priority, jobQueueOf(options));
+          await requestConversion(mediaId, CONVERT_PRIORITY.onDemand, jobQueueOf(options));
         } catch (error) {
           console.error(`[moderation] could not send media=${mediaId}'s conversion again; the sweeper will:`, describeError(error));
         }
       });
     }
-    console.log(`[moderation] media=${mediaId}'s conversion retried by ${admin}`);
+    console.log(`[moderation] media=${mediaId}'s conversion retried by an admin`);
     return { ok: true, retried: "conversion" };
   }
   return (await existsUndeleted(mediaId)) ? { ok: false, reason: "nothing-to-retry" } : NOT_FOUND;
@@ -339,14 +359,18 @@ export async function retryProcessing(mediaId: string, admin: string, options: M
 
 /**
  * Deletes an item for good, from 30 days and an hour after its upload (deletableFrom); earlier, it
- * returns when it may, and changes nothing. It leaves every list at once (deleted_at, its preview
- * data cleared: a tombstone), then its original, its public files and its manifest are deleted, and
- * media.visibility `hide` is queued to purge its URLs from Cloudflare and clear the tombstone's
- * keys (only that job's send is deferred). Throws when R2 refuses a deletion; the item is gone from
- * view already, and repeating this finishes it. An upload that never finished has nothing to delete here: its guest cancels it. The
- * caller invalidates ALBUM_SLIDES_TAG.
+ * returns when it may, and changes nothing. One statement makes it a tombstone at once: out of every
+ * list (deleted_at), its personal data and preview cleared (Ruling AU: its uploader's name, its
+ * filename, its fingerprint, its ThumbHash and colour), and every object to delete recorded in
+ * withdrawing_keys (its original and its public files). Its visibility job then deletes them, purges
+ * the public ones from Cloudflare, removes its manifest and clears the keys, retried until done (the
+ * sweeper sends it again if its send is lost). After the response, this also tries the deletions
+ * itself, best effort, so they don't wait on the worker. It keeps ids, times, guest_id and
+ * original_key (which can't be null, and records what was deleted). An upload that never finished
+ * has nothing to delete here: its guest cancels it. The caller invalidates ALBUM_SLIDES_TAG.
  */
-export async function deleteMediaPermanently(mediaId: string, admin: string, options: ModerationOptions = {}): Promise<DeleteResult> {
+export async function deleteMediaPermanently(mediaId: string, admin: string, options: ModerationOptions): Promise<DeleteResult> {
+  assertAdmin(admin);
   if (!isUuid(mediaId)) return NOT_FOUND;
   const [item] = await getDb()
     .select({ originalKey: media.originalKey, uploadedAt: media.uploadedAt, derived: media.derived })
@@ -358,22 +382,40 @@ export async function deleteMediaPermanently(mediaId: string, admin: string, opt
   const allowedFrom = deletableFrom(item.uploadedAt);
   if (Date.now() < allowedFrom.getTime()) return { ok: false, reason: "locked", allowedFrom };
 
-  // The tombstone keeps its derived keys until the visibility job has purged them.
   await getDb()
     .update(media)
-    .set({ deletedAt: sql`coalesce(${media.deletedAt}, now())`, thumbhash: null, averageColor: null })
+    .set({
+      deletedAt: sql`coalesce(${media.deletedAt}, now())`,
+      uploaderName: null,
+      originalFilename: DELETED_PLACEHOLDER,
+      fileFingerprint: null,
+      thumbhash: null,
+      averageColor: null,
+      // The row's own keys as they are now, beside any already recorded.
+      withdrawingKeys: sql`array(select distinct pending.key from unnest(
+        coalesce(${media.withdrawingKeys}, '{}'::text[])
+        || array(select named.value from jsonb_each_text(${media.derived}) as named)
+        || array[${media.originalKey}]) as pending(key))`,
+    })
     .where(eq(media.id, mediaId));
-  await deleteOriginal(item.originalKey, { signal: options.signal });
-  await deletePublicObjects(Object.values(item.derived), { signal: options.signal });
-  // The row is deleted, so this removes the manifest (and any a racing write put back).
-  await syncManifest(mediaId, { signal: options.signal });
-  await followUp(options, () => sendOrLog(MEDIA_QUEUES.visibility, { mediaId, action: "hide" } satisfies VisibilityJobData, options, "the sweeper sends it"));
-  console.log(`[moderation] media=${mediaId} deleted permanently by ${admin}`);
+  followUp(options, async () => {
+    try {
+      await deleteOriginal(item.originalKey, { signal: options.signal });
+      await deletePublicObjects(Object.values(item.derived), { signal: options.signal });
+      // The row is deleted, so this removes the manifest (and any a racing write put back).
+      await syncManifest(mediaId, { signal: options.signal });
+    } catch (error) {
+      console.error(`[moderation] media=${mediaId}'s deletion didn't finish here; its visibility job finishes it:`, describeError(error));
+    }
+    await sendOrLog(MEDIA_QUEUES.visibility, { mediaId, action: "hide" } satisfies VisibilityJobData, options, "the sweeper sends it");
+  });
+  console.log(`[moderation] media=${mediaId} deleted permanently by an admin`);
   return OK;
 }
 
 /** Hides a wish from the wall, and its recording with it (a voice or video wish's media). */
-export async function hideWish(wishId: string, admin: string, options: ModerationOptions = {}): Promise<ModerationResult> {
+export async function hideWish(wishId: string, admin: string, options: ModerationOptions): Promise<ModerationResult> {
+  assertAdmin(admin);
   if (!isUuid(wishId)) return NOT_FOUND;
   const [wish] = await getDb()
     .update(wishes)
@@ -389,7 +431,8 @@ export async function hideWish(wishId: string, admin: string, options: Moderatio
 }
 
 /** Puts a hidden wish back on the wall, and its recording with it. */
-export async function unhideWish(wishId: string, admin: string, options: ModerationOptions = {}): Promise<ModerationResult> {
+export async function unhideWish(wishId: string, admin: string, options: ModerationOptions): Promise<ModerationResult> {
+  assertAdmin(admin);
   if (!isUuid(wishId)) return NOT_FOUND;
   const [wish] = await getDb()
     .update(wishes)
@@ -402,11 +445,14 @@ export async function unhideWish(wishId: string, admin: string, options: Moderat
 }
 
 /**
- * Deletes a wish for good, leaving a tombstone (deleted_at, its words removed). A voice or video
- * wish's recording is deleted with it, under the same lock: until it may be, this returns when, and
- * leaves the wish as it is (hide it meanwhile). A written wish has no lock.
+ * Deletes a wish for good, leaving a tombstone with no personal data (Ruling AU): deleted_at, its
+ * signature replaced by "deleted" (it can't be null), and its words removed (a written wish's message
+ * emptied, as it can't be null either). A voice or video wish's recording is deleted with it, under
+ * the same lock: until it may be, this returns when, and leaves the wish as it is (hide it
+ * meanwhile). A written wish has no lock.
  */
-export async function deleteWishPermanently(wishId: string, admin: string, options: ModerationOptions = {}): Promise<DeleteResult> {
+export async function deleteWishPermanently(wishId: string, admin: string, options: ModerationOptions): Promise<DeleteResult> {
+  assertAdmin(admin);
   if (!isUuid(wishId)) return NOT_FOUND;
   const [wish] = await getDb().select({ mediaId: wishes.mediaId }).from(wishes).where(eq(wishes.id, wishId)).limit(1);
   if (!wish) return NOT_FOUND;
@@ -414,15 +460,15 @@ export async function deleteWishPermanently(wishId: string, admin: string, optio
     const recording = await deleteMediaPermanently(wish.mediaId, admin, options);
     if (!recording.ok) return recording;
   }
-  // A written wish keeps an empty message, which the table requires of one.
   await getDb()
     .update(wishes)
     .set({
       deletedAt: sql`coalesce(${wishes.deletedAt}, now())`,
+      signedAs: DELETED_PLACEHOLDER,
       message: sql`case when ${wishes.kind} = 'text' then '' else null end`,
     })
     .where(eq(wishes.id, wishId));
-  console.log(`[moderation] wish=${wishId} deleted permanently by ${admin}`);
+  console.log(`[moderation] wish=${wishId} deleted permanently by an admin`);
   return OK;
 }
 
@@ -434,6 +480,7 @@ export async function deleteWishPermanently(wishId: string, admin: string, optio
  * open rather than closed with no grace.
  */
 export async function setUploadsOpen(open: boolean, admin: string): Promise<void> {
+  assertAdmin(admin);
   if (open) {
     await setSetting("uploads_open", true);
   } else {
@@ -441,11 +488,12 @@ export async function setUploadsOpen(open: boolean, admin: string): Promise<void
     await setSetting("uploads_closed_at", new Date().toISOString());
     await setSetting("uploads_open", false);
   }
-  console.log(`[moderation] uploads ${open ? "opened" : "closed"} by ${admin}`);
+  console.log(`[moderation] uploads ${open ? "opened" : "closed"} by an admin`);
 }
 
 /** Switches the backlog conversions on or off; the worker follows within its 30 s heartbeat, and before each job. */
 export async function setConvertBacklog(on: boolean, admin: string): Promise<void> {
+  assertAdmin(admin);
   await setSetting("convert_backlog", on);
-  console.log(`[moderation] backlog conversions switched ${on ? "on" : "off"} by ${admin}`);
+  console.log(`[moderation] backlog conversions switched ${on ? "on" : "off"} by an admin`);
 }

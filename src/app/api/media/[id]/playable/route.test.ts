@@ -11,6 +11,7 @@ import { RATE_LIMITS } from "@/lib/guests/rate-limit";
 import { originalKey } from "@/lib/storage/keys";
 import { resetDb } from "../../../../../../test/db";
 import { browserCookies } from "../../../../../../test/next-cookies";
+import { hideMedia } from "../../../../../../test/moderation";
 import { dropBossSchema, jsonRequest, routeContext, startTestBoss } from "../../../../../../test/uploads";
 
 // These run against the test database: docker compose up -d db.
@@ -54,7 +55,6 @@ vi.mock("@/lib/jobs/boss", async (importOriginal) => {
 });
 
 import { guestCookieName, signGuestIds } from "@/lib/guests/cookie";
-import { hideMedia } from "@/lib/media/moderation";
 import { deleteManifest } from "@/lib/storage/manifest";
 import { POST } from "./route";
 

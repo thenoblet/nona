@@ -141,6 +141,7 @@ describe("markPhotoReady", () => {
 
   const processed: ProcessedPhoto = {
     derived: { thumb: "derived/a/b/thumb.webp", view: "derived/a/b/view.webp" },
+    derivedGeneration: 0,
     width: 4032,
     height: 3024,
     thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI",
@@ -196,6 +197,15 @@ describe("markPhotoReady", () => {
     }
     expect(await markPhotoReady(randomUUID(), processed)).toBeNull();
   });
+
+  it("changes nothing for files made for an older generation: an unhide since the job read the item", async () => {
+    const id = await addPhoto({ status: "uploaded", listedAt: null, derivedGeneration: 1 });
+    const before = await readRow(id);
+
+    expect(await markPhotoReady(id, processed)).toBeNull();
+    expect(await readRow(id)).toEqual(before);
+    expect(await markPhotoReady(id, { ...processed, derivedGeneration: 1 })).not.toBeNull();
+  });
 });
 
 describe("markVideoReady", () => {
@@ -203,6 +213,7 @@ describe("markVideoReady", () => {
 
   const processed: ProcessedVideo = {
     derived: { "poster-thumb": "derived/a/b/poster-thumb.webp", "poster-view": "derived/a/b/poster-view.webp" },
+    derivedGeneration: 0,
     width: 1080,
     height: 1920,
     thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI",
@@ -317,6 +328,8 @@ describe("markVideoReady", () => {
       await addVideo({ hiddenAt: new Date(), hiddenBy: "admin" }),
       await addVideo({ hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true }),
       await addVideo({ deletedAt: new Date() }),
+      // Unhidden since the job read it: its files are of the old generation.
+      await addVideo({ derivedGeneration: 1 }),
     ];
     for (const id of ids) {
       const before = await readRow(id);

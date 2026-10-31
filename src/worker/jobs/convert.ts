@@ -399,7 +399,11 @@ export async function convertVideo(job: MediaJob, options: ConvertOptions): Prom
     } catch (error) {
       console.error(`[worker] media.convert media=${mediaId} couldn't be put back to queued:`, describeError(error));
     }
-    await withdrawIfHidden(job.queue, mediaId, [videoKey], { signal: job.signal, jobQueue: options.jobQueue });
+    await withdrawIfHidden(job.queue, mediaId, [videoKey], {
+      signal: job.signal,
+      jobQueue: options.jobQueue,
+      derivedGeneration: item.derivedGeneration,
+    });
     return;
   }
   await rewriteManifest(job.queue, mediaId, manifest, job.signal);

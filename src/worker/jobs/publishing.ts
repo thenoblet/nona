@@ -4,7 +4,7 @@ import type { PgBoss } from "pg-boss";
 import { describeError } from "@/lib/log-error";
 import { syncManifest } from "@/lib/media/manifest-sync";
 import { sendVisibilityJob } from "@/lib/media/moderation";
-import { isVisible } from "@/lib/media/rows";
+import { addWithdrawingKeys, findItemToWithdraw } from "@/lib/media/rows";
 import type { MediaManifest } from "@/lib/storage/manifest";
 import { deletePublicObjects } from "@/lib/storage/objects";
 import type { WorkQueueName } from "../queues";
@@ -37,19 +37,27 @@ export function contentHashOf(etag: string, settings: string, generation = 0): s
 export type JobQueue = () => Promise<Pick<PgBoss, "send">>;
 
 /**
- * After a ready mark that changed nothing: an item hidden, deleted or gone while the job worked
- * must have no public files. The ones it put up come down at once, and media.visibility `hide` is
- * queued whatever that did: it deletes anything left under the item's folder and purges the URLs
- * from Cloudflare, retried until done. A visible item was finished by another delivery, under these
- * same keys, so they stay.
+ * After a ready mark that changed nothing. An item still visible in the generation the job made
+ * its files for was finished by another delivery, under these same keys, so they stay. Otherwise
+ * the files are no one's: the item was hidden, deleted or gone while the job worked, or unhidden
+ * into a new generation since it read the item (and a hide may have purged these very URLs before
+ * the job put them back). So they are recorded as withdrawing (withdrawing_keys) and come down at
+ * once, and media.visibility `hide` is queued whatever that did: it deletes them and anything left
+ * under a hidden item's folder, and purges the URLs from Cloudflare, retried until done.
  */
 export async function withdrawIfHidden(
   queue: WorkQueueName,
   mediaId: string,
   keys: string[],
-  options: { signal: AbortSignal; jobQueue: JobQueue },
+  options: { signal: AbortSignal; jobQueue: JobQueue; derivedGeneration: number },
 ): Promise<void> {
-  if (await isVisible(mediaId)) return;
+  const item = await findItemToWithdraw(mediaId);
+  if (item?.visible && item.derivedGeneration === options.derivedGeneration) return;
+  try {
+    if (item) await addWithdrawingKeys(mediaId, keys);
+  } catch (error) {
+    console.error(`[worker] ${queue} media=${mediaId}'s withdrawal couldn't be recorded; the visibility job lists the folder:`, describeError(error));
+  }
   try {
     await deletePublicObjects(keys, { signal: options.signal });
     console.log(`[worker] ${queue} media=${mediaId} was hidden while it was processed: its files were removed`);

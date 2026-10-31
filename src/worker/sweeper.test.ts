@@ -628,6 +628,18 @@ describe("the sweeper's withdrawals: hidden or deleted items whose public files 
     expect(await liveJobs(MEDIA_QUEUES.visibility, withJob)).toHaveLength(1);
   });
 
+  it("queues the rest of a withdrawal under way whose job is gone, without waiting: only a job records one", async () => {
+    const id = randomUUID();
+    const unnamed = `derived/${id}/0123456789abcdef/thumb.webp`;
+    // Unhidden since its first attempt deleted the files: the purge of what it recorded is still owed.
+    await readyItem({ id, withdrawingKeys: [unnamed] });
+
+    const result = await sweeper().sweep();
+
+    expect(result.requeuedWithdrawals).toBe(1);
+    expect((await liveJobs(MEDIA_QUEUES.visibility, id)).map((job) => job.data)).toEqual([{ mediaId: id, action: "hide" }]);
+  });
+
   it("queues none twice: the next sweep finds the job it queued", async () => {
     await readyItem({ hiddenAt: minutesAgo(10), hiddenBy: "admin" });
 

@@ -983,6 +983,29 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
     expect(sentJobs).toEqual([{ name: MEDIA_QUEUES.visibility, data: { mediaId, action: "hide" } }]);
   });
 
+  it("marks nothing when an unhide raised the generation while it worked: its files are no one's, withdrawn and recorded", async () => {
+    const mediaId = await uploadedPhoto(await png(), "png");
+    publishing.afterPut = async () => {
+      // Hidden and unhidden while this job worked: a new generation, whose own job makes new files.
+      await getDb().update(media).set({ derivedGeneration: 1 }).where(eq(media.id, mediaId));
+    };
+
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+    const item = await readItem(mediaId);
+    expect(item).toMatchObject({ status: "uploaded", listedAt: null, derived: {}, derivedGeneration: 1 });
+    // Its keys are of generation 0, which a hide may already have purged: deleted, and recorded for the purge.
+    expect(await publicKeysOf(mediaId)).toEqual([]);
+    expect(item.withdrawingKeys).toHaveLength(2);
+    expect(sentJobs).toEqual([{ name: MEDIA_QUEUES.visibility, data: { mediaId, action: "hide" } }]);
+
+    // The new generation's job makes the item ready, under keys of its own.
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+    const ready = await readItem(mediaId);
+    expect(ready.status).toBe("ready");
+    for (const key of Object.values(ready.derived)) expect(item.withdrawingKeys).not.toContain(key);
+  });
+
   it("queues the withdrawal though its own delete of what it published fails, so the files still come down", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const mediaId = await uploadedPhoto(await png(), "png");

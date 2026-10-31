@@ -18,22 +18,20 @@ import { readManifest } from "@/lib/storage/manifest";
 import { headOriginal } from "@/lib/storage/objects";
 import { resetDb } from "../../../test/db";
 import { dropBossSchema, startTestBoss } from "../../../test/uploads";
-import { syncManifest } from "./manifest-sync";
 import {
-  ALBUM_SLIDES_TAG,
-  deletableFrom,
   deleteMediaPermanently,
   deleteWishPermanently,
   hideMedia,
   hideWish,
   moveMedia,
   retryProcessing,
-  setConvertBacklog,
   setHighlight,
-  setUploadsOpen,
   unhideMedia,
   unhideWish,
-} from "./moderation";
+} from "../../../test/moderation";
+import { syncManifest } from "./manifest-sync";
+import * as moderation from "./moderation";
+import { ALBUM_SLIDES_TAG, deletableFrom, setConvertBacklog, setUploadsOpen } from "./moderation";
 import { findPlayableVideo, findUpload, isVisible } from "./rows";
 import { isVisibleUpload, readUploadsSwitch } from "./uploads";
 
@@ -201,6 +199,40 @@ async function addGuest(name = "Ama Owusu"): Promise<string> {
   return (await createGuest(name)).id;
 }
 
+describe("what the actions log (Ruling AT)", () => {
+  it("is ids only: never the admin's email, and refuses an action with no admin", async () => {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const photo = await addItem({ uploadedAt: new Date(Date.now() - 31 * DAY) });
+    const video = await addItem({ kind: "video", conversion: "failed", conversionFailureReason: "corrupt" });
+    const wish = await addWish({ kind: "text", message: "Hello", signedAs: "Ama" });
+    queue.sendFails = true;
+
+    await hideMedia(photo, { admin: ADMIN });
+    await unhideMedia(photo, ADMIN);
+    await moveMedia(photo, "thanks", ADMIN);
+    await setHighlight(video, true, ADMIN);
+    await retryProcessing(video, ADMIN);
+    await deleteMediaPermanently(photo, ADMIN);
+    await hideWish(wish.id, ADMIN);
+    await unhideWish(wish.id, ADMIN);
+    await deleteWishPermanently(wish.id, ADMIN);
+    await setUploadsOpen(true, ADMIN);
+    await setUploadsOpen(false, ADMIN);
+    await setConvertBacklog(false, ADMIN);
+
+    const logged = [...logs.mock.calls, ...errors.mock.calls].flat().map(String).join("\n");
+    expect(logged).toContain(photo);
+    expect(logged).not.toContain(ADMIN);
+    expect(logged).not.toContain("couple@");
+
+    for (const admin of ["", "  "]) {
+      await expect(hideMedia(photo, { admin })).rejects.toThrow(/admin/);
+      await expect(setUploadsOpen(true, admin)).rejects.toThrow(/admin/);
+    }
+  });
+});
+
 describe("ALBUM_SLIDES_TAG", () => {
   it("is the album's and the slideshow's cache tag, which callers invalidate in their own context (Ruling A)", () => {
     expect(ALBUM_SLIDES_TAG).toBe("album-slides");
@@ -291,7 +323,7 @@ describe("hideMedia by an admin (Review Focus 3)", () => {
     await syncManifest(mediaId);
     const deferred: (() => Promise<void>)[] = [];
 
-    expect(await hideMedia(mediaId, { admin: ADMIN }, { defer: (task) => deferred.push(task) })).toEqual({ ok: true });
+    expect(await moderation.hideMedia(mediaId, { admin: ADMIN }, { defer: (task) => deferred.push(task) })).toEqual({ ok: true });
 
     // Hidden at once; the rest waits for the response.
     expect(await isVisible(mediaId)).toBe(false);
@@ -612,21 +644,28 @@ describe("retryProcessing", () => {
     expect(await jobsOf(MEDIA_QUEUES.poster, video)).toHaveLength(1);
   });
 
-  it("re-queues a failed conversion: its reason and lease cleared, queued, and sent", async () => {
-    const backlog = await addItem({
+  it("re-queues a failed conversion at priority 20, marked on demand: its reason and lease cleared (Ruling AT)", async () => {
+    const ordinary = await addItem({
       kind: "video",
       conversion: "failed",
       conversionFailureReason: "processing-failed",
       conversionJobId: randomUUID(),
     });
-    const highlight = await addItem({ kind: "video", conversion: "failed", conversionFailureReason: "corrupt", highlight: true });
+    const askedAt = new Date("2026-12-06T10:00:00Z");
+    const asked = await addItem({ kind: "video", conversion: "failed", conversionFailureReason: "corrupt", conversionRequestedAt: askedAt });
+    const before = Date.now();
 
-    expect(await retryProcessing(backlog, ADMIN)).toEqual({ ok: true, retried: "conversion" });
-    expect(await retryProcessing(highlight, ADMIN)).toEqual({ ok: true, retried: "conversion" });
+    expect(await retryProcessing(ordinary, ADMIN)).toEqual({ ok: true, retried: "conversion" });
+    expect(await retryProcessing(asked, ADMIN)).toEqual({ ok: true, retried: "conversion" });
 
-    expect(await readItem(backlog)).toMatchObject({ conversion: "queued", conversionFailureReason: null, conversionJobId: null });
-    expect((await jobsOf(MEDIA_QUEUES.convert, backlog)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.backlog]);
-    expect((await jobsOf(MEDIA_QUEUES.convert, highlight)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.onDemand]);
+    const retried = await readItem(ordinary);
+    expect(retried).toMatchObject({ conversion: "queued", conversionFailureReason: null, conversionJobId: null });
+    // On demand, so a send that fails is sent at 20 by the sweeper too, never to a held backlog.
+    expect(retried.conversionRequestedAt?.getTime()).toBeGreaterThanOrEqual(before - 5_000);
+    expect((await readItem(asked)).conversionRequestedAt).toEqual(askedAt);
+    for (const mediaId of [ordinary, asked]) {
+      expect((await jobsOf(MEDIA_QUEUES.convert, mediaId)).map((job) => job.priority), mediaId).toEqual([CONVERT_PRIORITY.onDemand]);
+    }
   });
 
   it("finds nothing to retry the second time (Ruling AG), nor for a ready item, and nothing for an unknown one", async () => {
@@ -684,11 +723,39 @@ describe("deleteMediaPermanently", () => {
     expect(await readManifest(mediaId)).toBeNull();
     const tombstone = await readItem(mediaId);
     expect(tombstone.deletedAt).toBeInstanceOf(Date);
-    expect(tombstone).toMatchObject({ thumbhash: null, averageColor: null });
     expect(await isVisible(mediaId)).toBe(false);
-    // The visibility job purges these URLs from Cloudflare, then clears the keys.
+    // The visibility job purges these URLs from Cloudflare, then clears the keys it recorded.
     expect(tombstone.derived).toEqual(before.derived);
+    expect([...(tombstone.withdrawingKeys ?? [])].sort()).toEqual([before.originalKey, ...Object.values(before.derived)].sort());
     expect((await jobsOf(MEDIA_QUEUES.visibility, mediaId)).map((job) => job.data)).toEqual([{ mediaId, action: "hide" }]);
+  });
+
+  it("leaves a tombstone with no personal data: ids, times, guest and keys only (Ruling AU)", async () => {
+    const guestId = await addGuest();
+    const mediaId = await addItem({
+      guestId,
+      uploadedAt: new Date(Date.now() - 31 * DAY),
+      uploaderName: "Ama Owusu",
+      originalFilename: "Ama at the reception.JPG",
+      fileFingerprint: "f".repeat(64),
+      capturedAt: new Date("2026-12-05T20:00:00Z"),
+    });
+    const before = await readItem(mediaId);
+
+    await deleteMediaPermanently(mediaId, ADMIN);
+
+    expect(await readItem(mediaId)).toMatchObject({
+      id: mediaId,
+      guestId,
+      originalKey: before.originalKey,
+      uploadedAt: before.uploadedAt,
+      // Null where it may be; a fixed placeholder where it can't.
+      uploaderName: null,
+      originalFilename: "deleted",
+      fileFingerprint: null,
+      thumbhash: null,
+      averageColor: null,
+    });
   });
 
   it("is safe twice (Ruling AG): the second finds the tombstone and finishes the same way", async () => {
@@ -773,7 +840,7 @@ describe("wishes", () => {
     expect(await jobsOf(MEDIA_QUEUES.wish, mediaId)).toHaveLength(1);
   });
 
-  it("deleteWishPermanently removes a text wish's words at once, leaving a tombstone", async () => {
+  it("deleteWishPermanently removes a text wish's words and signature at once, leaving a tombstone (Ruling AU)", async () => {
     const wish = await addWish({ kind: "text", message: "Congratulations!", signedAs: "Ama" });
 
     expect(await deleteWishPermanently(wish.id, ADMIN)).toEqual({ ok: true });
@@ -781,7 +848,8 @@ describe("wishes", () => {
     expect(await listWishes()).toEqual([]);
     const [row] = await getDb().select().from(wishes).where(eq(wishes.id, wish.id));
     expect(row.deletedAt).toBeInstanceOf(Date);
-    expect(row.message).toBe("");
+    // Neither may be null: a fixed placeholder, and an empty message.
+    expect(row).toMatchObject({ signedAs: "deleted", message: "" });
   });
 
   it("deleteWishPermanently waits for a recording's lock, and deletes both once it allows", async () => {
