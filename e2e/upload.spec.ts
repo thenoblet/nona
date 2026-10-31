@@ -568,8 +568,10 @@ test.describe("uploading from the phone", () => {
     try {
       const page = await context.newPage();
       await openAlbum(page);
+      // Visible only: until the streamed album swaps in, a hidden copy of the picker can sit beside it.
       await page
         .getByLabel("Choose photos & videos")
+        .filter({ visible: true })
         .setInputFiles([await sparseOnDisk("too-long.mp4", 2 * 1024 * MEBIBYTE + 1), await sparseOnDisk("also-too-long.mp4", 2 * 1024 * MEBIBYTE + 1)]);
       const batch = page.getByRole("region", { name: "Your photos and videos" });
       await expect(batch.getByText("This file is over 2 GB", { exact: true })).toHaveCount(2);
@@ -688,7 +690,8 @@ test.describe("the share buttons on small phones", () => {
         await page.goto("/album?mode=day");
         await page.evaluate(() => document.fonts.ready);
         for (const name of ["Record video", "From your phone"]) {
-          const pill = page.locator("label", { hasText: name });
+          // Visible only: a hidden streamed copy of the buttons can sit beside them until the swap.
+          const pill = page.locator("label", { hasText: name }).filter({ visible: true });
           await expect(pill).toBeVisible();
           const { scrollWidth, clientWidth } = await pill.evaluate((element) => ({
             scrollWidth: element.scrollWidth,
@@ -697,7 +700,11 @@ test.describe("the share buttons on small phones", () => {
           expect(scrollWidth, `"${name}" needs ${scrollWidth}px in ${clientWidth}px`).toBeLessThanOrEqual(clientWidth);
         }
         // At 340 px and under the icons make way for the words.
-        const iconsShown = await page.locator("label", { hasText: "From your phone" }).locator("svg").isVisible();
+        const iconsShown = await page
+          .locator("label", { hasText: "From your phone" })
+          .filter({ visible: true })
+          .locator("svg")
+          .isVisible();
         expect(iconsShown).toBe(width > 340);
       } finally {
         await context.close();

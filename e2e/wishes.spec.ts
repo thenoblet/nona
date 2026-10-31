@@ -18,7 +18,8 @@ function testDb() {
 test("the home page's wall invites the first wish, then shows it", async ({ page }) => {
   await page.goto("/home?mode=after");
   const homeWall = page.locator("section#wishes");
-  await expect(homeWall.getByText("Be the first to leave a wish.")).toBeVisible();
+  // Visible only: until the streamed wall swaps in, a hidden copy of it can sit beside it.
+  await expect(homeWall.getByText("Be the first to leave a wish.").filter({ visible: true })).toBeVisible();
   await homeWall.getByRole("link", { name: "Leave a wish" }).first().click();
   await expect(page).toHaveURL(/\/wishes$/);
 
