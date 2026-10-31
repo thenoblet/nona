@@ -40,7 +40,9 @@ import {
  * listed, in the celebration its capture time falls in (unless the couple moved it), with whether
  * every phone can play it as it is. A video that can't be played everywhere, or is long, is queued
  * for a backlog conversion (media.convert, Task 11), sent once; one longer than the worker converts
- * (WORKER_CONVERT_MAX_SECONDS) has its conversion failed, `too-long`, at once, and none is sent.
+ * (WORKER_CONVERT_MAX_SECONDS) has its conversion failed, `too-long`, at once, and none is sent. A
+ * conversion an unhide left queued is sent too (Task 12), at priority 20 when a guest is waiting
+ * for it (a highlight, or a phone's ask).
  *
  * Both tools run under a memory cap (WORKER_FFMPEG_MEMORY_BYTES) on WORKER_POSTER_THREADS and
  * WORKER_FFMPEG_FILTER_THREADS threads, and read through bounded reconnects. Over the network a
@@ -224,12 +226,14 @@ async function posterOf(run: PosterRun): Promise<Poster> {
 }
 
 /**
- * Sends the video's backlog conversion (media.convert, below the on-demand priority). Never throws:
- * the row says `queued`, so if this fails the sweeper sends it within its next sweep.
+ * Sends the video's conversion (media.convert): to the backlog, or at priority 20 when a guest is
+ * waiting for it (a phone asked, or the couple made it a highlight, before it was ready or before an
+ * unhide made its poster again). Never throws: the row says `queued`, so if this fails the sweeper
+ * sends it within its next sweep, at the same priority.
  */
-async function sendConversion(mediaId: string, options: PosterOptions): Promise<void> {
+async function sendConversion(mediaId: string, onDemand: boolean, options: PosterOptions): Promise<void> {
   try {
-    await requestConversion(mediaId, CONVERT_PRIORITY.backlog, options.jobQueue);
+    await requestConversion(mediaId, onDemand ? CONVERT_PRIORITY.onDemand : CONVERT_PRIORITY.backlog, options.jobQueue);
   } catch (error) {
     console.error(
       `[worker] media.poster media=${mediaId} is ready, but its conversion wasn't sent; the sweeper will send it:`,
@@ -272,7 +276,7 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
   const capturedAt =
     plausibleCaptureTime(facts.capturedAt, item.startedAt) ?? plausibleCaptureTime(item.capturedAt, item.startedAt);
   const { value: celebrations } = await readSection("celebrations");
-  const contentHash = contentHashOf(original.etag, `poster-settings-${POSTER_SETTINGS_VERSION}`);
+  const contentHash = contentHashOf(original.etag, `poster-settings-${POSTER_SETTINGS_VERSION}`, item.derivedGeneration);
   const keys = {
     "poster-thumb": derivedKey(mediaId, contentHash, "poster-thumb", "webp"),
     "poster-view": derivedKey(mediaId, contentHash, "poster-view", "webp"),
@@ -297,10 +301,13 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
     tooLongToConvert: (facts.durationSeconds ?? 0) > options.convertMaxSeconds,
   });
   if (!marked) {
-    await withdrawIfHidden(job.queue, mediaId, [keys["poster-thumb"], keys["poster-view"]], job.signal);
+    await withdrawIfHidden(job.queue, mediaId, [keys["poster-thumb"], keys["poster-view"]], {
+      signal: job.signal,
+      jobQueue: options.jobQueue,
+    });
     return;
   }
-  if (marked.conversionQueued) await sendConversion(mediaId, options);
+  if (marked.conversionQueued) await sendConversion(mediaId, marked.conversionOnDemand, options);
   await rewriteManifest(job.queue, mediaId, marked.manifest, job.signal);
   return { sizeBytes: original.size, kind: `video/${facts.codec}${facts.hdr ? "-hdr" : ""}` };
 }

@@ -10,7 +10,7 @@ import { headOriginal, putPublicObject } from "@/lib/storage/objects";
 import type { X264Preset } from "../config";
 import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
 import { saveOriginal, withScratch } from "../scratch";
-import { contentHashOf, rewriteManifest, withdrawIfHidden } from "./publishing";
+import { contentHashOf, rewriteManifest, withdrawIfHidden, type JobQueue } from "./publishing";
 import { convertedPictureFilters } from "./video-filters";
 import type { VideoFacts } from "./video-probe";
 import {
@@ -43,7 +43,8 @@ import {
  *    and writes the item's manifest again.
  * Scratch is removed however the job ends. A conversion that fails and will be retried goes back to
  * `queued`; one that fails for good is marked `failed` by media.dead (markConversionFailed), and
- * the video keeps its poster. A video hidden while it converts publishes nothing.
+ * the video keeps its poster. A video hidden while it converts publishes nothing: its file comes
+ * down, and media.visibility is queued to purge it (withdrawIfHidden).
  */
 
 /**
@@ -104,6 +105,8 @@ export type ConvertOptions = {
   x264Preset: X264Preset;
   /** The longest video converted, in seconds: WORKER_CONVERT_MAX_SECONDS. */
   convertMaxSeconds: number;
+  /** The job queue a withdrawal is sent to, for a video hidden while it converted. */
+  jobQueue: JobQueue;
 };
 
 /** What a conversion in the scratch folder made. */
@@ -371,7 +374,7 @@ export async function convertVideo(job: MediaJob, options: ConvertOptions): Prom
   if (refusal) throw refusal;
   const original = await headOriginal(item.originalKey, { signal: job.signal });
   if (!original) throw new Error(`The original ${item.originalKey} isn't in the private bucket`);
-  const contentHash = contentHashOf(original.etag, `convert-settings-${CONVERT_SETTINGS_VERSION}`);
+  const contentHash = contentHashOf(original.etag, `convert-settings-${CONVERT_SETTINGS_VERSION}`, item.derivedGeneration);
   const videoKey = derivedKey(mediaId, contentHash, "video", "mp4");
 
   const conversion = await withScratch(2 * original.size + SCRATCH_MARGIN_BYTES, (folder) =>
@@ -396,7 +399,7 @@ export async function convertVideo(job: MediaJob, options: ConvertOptions): Prom
     } catch (error) {
       console.error(`[worker] media.convert media=${mediaId} couldn't be put back to queued:`, describeError(error));
     }
-    await withdrawIfHidden(job.queue, mediaId, [videoKey], job.signal);
+    await withdrawIfHidden(job.queue, mediaId, [videoKey], { signal: job.signal, jobQueue: options.jobQueue });
     return;
   }
   await rewriteManifest(job.queue, mediaId, manifest, job.signal);

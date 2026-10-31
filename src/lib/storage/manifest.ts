@@ -1,5 +1,5 @@
 import "server-only";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import * as zod from "zod";
 import { EVENT_IDS, type EventId } from "@/lib/content/schema";
 import { storageConfig } from "@/lib/env";
@@ -65,6 +65,17 @@ export async function writeManifest(
       Body: JSON.stringify(stored),
       ContentType: "application/json",
     }),
+    withDeadline(options),
+  );
+}
+
+/**
+ * Deletes the item's manifest: its upload was cancelled, or it was deleted permanently. One that is
+ * already gone is not an error.
+ */
+export async function deleteManifest(mediaId: string, options?: CallOptions): Promise<void> {
+  await storageClient().send(
+    new DeleteObjectCommand({ Bucket: storageConfig().privateBucket, Key: manifestKey(mediaId) }),
     withDeadline(options),
   );
 }

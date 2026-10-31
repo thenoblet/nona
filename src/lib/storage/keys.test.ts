@@ -3,6 +3,7 @@ import {
   assertDerivedKey,
   assertOriginalKey,
   DERIVED_VARIANTS,
+  derivedFolder,
   derivedKey,
   manifestKey,
   originalKey,
@@ -50,6 +51,15 @@ describe("derivedKey", () => {
     // A value read from the database is only a string at run time.
     const unknown = "original" as (typeof DERIVED_VARIANTS)[number];
     expect(() => derivedKey(mediaId, contentHash, unknown, "webp")).toThrow("variant");
+  });
+});
+
+describe("derivedFolder", () => {
+  it("is the folder of every derived file of the item, whatever its content hash", () => {
+    expect(derivedFolder("abc-123")).toBe("derived/abc-123/");
+    expect(derivedKey("abc-123", "hash", "thumb", "webp").startsWith(derivedFolder("abc-123"))).toBe(true);
+    expect(() => derivedFolder("../x")).toThrow("mediaId");
+    expect(() => derivedFolder("")).toThrow("mediaId");
   });
 });
 

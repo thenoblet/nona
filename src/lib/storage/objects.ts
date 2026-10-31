@@ -5,9 +5,11 @@ import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   ListPartsCommand,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
@@ -15,7 +17,7 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { storageConfig } from "@/lib/env";
 import { cutOffWhenIdle, storageClient, withDeadline, type CallOptions } from "./client";
-import { assertDerivedKey, assertOriginalKey } from "./keys";
+import { assertDerivedKey, assertOriginalKey, derivedFolder } from "./keys";
 import { decodeOriginalMetadata, encodeOriginalMetadata, type OriginalMetadata } from "./metadata";
 
 // Originals live in the private bucket and are reached only through presigned links. Derived files
@@ -328,6 +330,39 @@ export async function deletePublicObjects(keys: string[], options?: CallOptions)
       );
     }
   }
+}
+
+/**
+ * The keys of every derived file of an item in the public bucket, whatever its content hash: the
+ * files its row names, and any a job put up that the row never came to name.
+ */
+export async function listDerivedKeys(mediaId: string, options?: CallOptions): Promise<string[]> {
+  const prefix = derivedFolder(mediaId);
+  // One deadline for every page.
+  const deadline = withDeadline(options);
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+  do {
+    const page = await storageClient().send(
+      new ListObjectsV2Command({ Bucket: publicBucket(), Prefix: prefix, ContinuationToken: continuationToken }),
+      deadline,
+    );
+    for (const object of page.Contents ?? []) if (object.Key) keys.push(assertDerivedKey(object.Key));
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return keys;
+}
+
+/**
+ * Deletes an original from the private bucket, for "Delete permanently" only. R2's bucket lock
+ * refuses this for 30 days after the upload, so check the item's deletableFrom first. An original
+ * that is already gone is not an error.
+ */
+export async function deleteOriginal(key: string, options?: CallOptions): Promise<void> {
+  await storageClient().send(
+    new DeleteObjectCommand({ Bucket: privateBucket(), Key: assertOriginalKey(key) }),
+    withDeadline(options),
+  );
 }
 
 /**

@@ -3,6 +3,7 @@ import type { UPLOAD_EVENT_KINDS } from "@/lib/db/schema";
 import { getBoss } from "@/lib/jobs/boss";
 import { MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
 import { describeError } from "@/lib/log-error";
+import { deleteManifest } from "@/lib/storage/manifest";
 import {
   abortMultipart,
   completeMultipart,
@@ -36,6 +37,21 @@ export function bytesHeld(parts: UploadedPart[]): number {
 }
 
 /**
+ * Deletes an unfinished upload's row, then its manifest, so a rebuild from R2 finds nothing of it.
+ * A manifest R2 won't delete is logged and left: it names no original, so a rebuild ignores it.
+ * True when the row was deleted (false when it had finished meanwhile, or was gone).
+ */
+export async function deleteUnfinished(mediaId: string, signal: AbortSignal | undefined): Promise<boolean> {
+  if (!(await deleteUnfinishedUpload(mediaId))) return false;
+  try {
+    await deleteManifest(mediaId, { signal });
+  } catch (error) {
+    console.error(`[uploads] ${mediaId}'s row is deleted, but its manifest wasn't:`, describeError(error));
+  }
+  return true;
+}
+
+/**
  * Aborts an unfinished upload and deletes its row, unless it turns out to have finished: no
  * original may ever exist without its row (Ruling Y), or a rebuild from R2 would bring back a file
  * the guest cancelled, and nothing could delete it. Once the abort returns, no complete of it can
@@ -51,7 +67,7 @@ export async function abortAndDelete(
 ): Promise<boolean> {
   await abortMultipart(upload.originalKey, uploadId, { signal });
   if (await headOriginal(upload.originalKey, { signal })) return false;
-  return deleteUnfinishedUpload(upload.id);
+  return deleteUnfinished(upload.id, signal);
 }
 
 /**

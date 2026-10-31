@@ -54,6 +54,8 @@ vi.mock("@/lib/jobs/boss", async (importOriginal) => {
 });
 
 import { guestCookieName, signGuestIds } from "@/lib/guests/cookie";
+import { hideMedia } from "@/lib/media/moderation";
+import { deleteManifest } from "@/lib/storage/manifest";
 import { POST } from "./route";
 
 const BOSS_SCHEMA = "pgboss_playable_test";
@@ -255,6 +257,29 @@ describe("POST /api/media/[id]/playable", () => {
     for (const mediaId of items) {
       expect(await conversionJobs(mediaId)).toEqual([]);
       expect((await readItem(mediaId)).conversionRequestedAt).toBeNull();
+    }
+  });
+
+  it("refuses with 404 a video hidden through hideMedia or its uploader's Remove my upload, after the phone had its link (Review Focus 3)", async () => {
+    const guest = await signIn();
+    const byAdmin = await addVideo({ conversion: "done", derived: { video: `derived/${randomUUID()}/0123456789abcdef/video.mp4` } });
+    const byUploader = await addVideo({ guestId: guest.id });
+    expect((await askFor(byAdmin)).status).toBe(200);
+
+    try {
+      expect(await hideMedia(byAdmin, { admin: "couple@example.com" })).toEqual({ ok: true });
+      expect(await hideMedia(byUploader, { guestIds: [guest.id] })).toEqual({ ok: true });
+
+      for (const mediaId of [byAdmin, byUploader]) {
+        const response = await askFor(mediaId);
+        expect(response.status, mediaId).toBe(404);
+        expect(await response.json()).toEqual({ error: "not-found" });
+      }
+      await afterResponse();
+      expect(await conversionJobs(byUploader)).toEqual([]);
+    } finally {
+      await deleteManifest(byAdmin);
+      await deleteManifest(byUploader);
     }
   });
 

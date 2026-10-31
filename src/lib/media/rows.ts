@@ -273,6 +273,8 @@ export type ItemToProcess = {
   startedAt: Date;
   /** The time the phone sent, if any: the fallback when the file has none of its own. */
   capturedAt: Date | null;
+  /** Which making of its derived files this is, part of their keys (a new one after every unhide). */
+  derivedGeneration: number;
 };
 
 /** The item, if a processing job has work to do for it (awaitsProcessing); otherwise null. One read on the primary key. */
@@ -284,6 +286,7 @@ export async function findItemToProcess(mediaId: string): Promise<ItemToProcess 
       originalKey: media.originalKey,
       startedAt: media.startedAt,
       capturedAt: media.capturedAt,
+      derivedGeneration: media.derivedGeneration,
     })
     .from(media)
     .where(awaitsProcessing(mediaId))
@@ -334,6 +337,16 @@ const manifestColumns = {
 };
 
 /**
+ * The facts the item's manifest holds, as its row has them now, or null when there is no such row.
+ * One read on the primary key. syncManifest writes them, and reads them again to check.
+ */
+export async function manifestFacts(mediaId: string): Promise<MediaManifest | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb().select(manifestColumns).from(media).where(eq(media.id, mediaId)).limit(1);
+  return row ?? null;
+}
+
+/**
  * The columns every ready mark sets: `ready` and listed now (or keeping its place if it was listed
  * before), with what processing made, in the celebration its capture time falls in unless the
  * couple moved it.
@@ -375,22 +388,27 @@ export type VideoReadyMark = {
   /** The facts the item's manifest holds as the mark left them. */
   manifest: MediaManifest;
   /**
-   * Whether this mark queued the video's conversion (from `none`): only then is its job to be sent,
-   * so no conversion is ever sent twice. The sweeper sends it if that send fails.
+   * Whether the video's conversion is `queued` now: this mark queued it (from `none`), or an unhide
+   * left it queued for the poster made again (a conversion done or under way before the hide). Its
+   * job is to be sent then, once for each ready mark, which happens once each time the item is
+   * processed; a job sent twice is harmless anyway (Rulings AG, AQ). The sweeper sends it if that
+   * send fails.
    */
   conversionQueued: boolean;
+  /** Whether a guest is waiting for it (a phone asked, or the couple made it a highlight): sent at priority 20 then. */
+  conversionOnDemand: boolean;
 };
 
 /**
  * Marks a probed video `ready` with its poster and probe, as markPhotoReady does a photo, in one
  * statement under the same condition. A video that needs a conversion has it `queued` in the same
  * statement, and one too long to convert has it `failed` (`too-long`), unless its conversion is past
- * `none` already. Null when it changed nothing.
+ * `none` already: one an unhide left `queued` stays queued, to be sent. Null when it changed nothing.
  */
 export async function markVideoReady(mediaId: string, video: ProcessedVideo): Promise<VideoReadyMark | null> {
   if (!isUuid(mediaId)) return null;
   const fromNone = (state: string) => sql`case when ${media.conversion} = 'none' then ${state} else ${media.conversion} end`;
-  const conversion = video.tooLongToConvert
+  const conversionColumns = video.tooLongToConvert
     ? {
         conversion: fromNone("failed"),
         conversionFailureReason: sql`case when ${media.conversion} = 'none' then 'too-long' else ${media.conversionFailureReason} end`,
@@ -405,25 +423,17 @@ export async function markVideoReady(mediaId: string, video: ProcessedVideo): Pr
       durationSeconds: video.durationSeconds,
       videoCodec: video.videoCodec,
       browserPlayable: video.browserPlayable,
-      ...conversion,
+      ...conversionColumns,
     })
     .where(awaitsProcessing(mediaId))
     .returning({
       ...manifestColumns,
       conversion: media.conversion,
-      // The conversion this statement changed it from. A subquery in RETURNING doesn't see the
-      // statement's own update: it reads the rows as of the statement's snapshot. That can be older
-      // than the row the update locked when another transaction changed it meanwhile, but nothing
-      // else sets the conversion of an `uploaded` item, and a second ready mark waits on the row's
-      // lock and then fails the re-checked `uploaded` condition, so only one statement gets here.
-      conversionBefore: sql<string>`(select previous.conversion from ${media} as previous where previous.id = ${mediaId})`,
+      conversionOnDemand: sql<boolean>`${media.highlight} or ${media.conversionRequestedAt} is not null`,
     });
   if (!row) return null;
-  const { conversion: conversionAfter, conversionBefore, ...manifest } = row;
-  return {
-    manifest,
-    conversionQueued: conversionBefore === "none" && conversionAfter === "queued",
-  };
+  const { conversion, conversionOnDemand, ...manifest } = row;
+  return { manifest, conversionQueued: conversion === "queued", conversionOnDemand };
 }
 
 /*
@@ -518,6 +528,8 @@ export type ConversionToRun = {
   capturedAt: Date | null;
   /** The poster job's probe of its length, null when the container didn't say. */
   durationSeconds: number | null;
+  /** Which making of its derived files this is, part of the converted file's key. */
+  derivedGeneration: number;
 };
 
 /**
@@ -545,7 +557,12 @@ export async function claimConversion(mediaId: string, leaseId: string): Promise
         ),
       ),
     )
-    .returning({ originalKey: media.originalKey, capturedAt: media.capturedAt, durationSeconds: media.durationSeconds });
+    .returning({
+      originalKey: media.originalKey,
+      capturedAt: media.capturedAt,
+      durationSeconds: media.durationSeconds,
+      derivedGeneration: media.derivedGeneration,
+    });
   return row ?? null;
 }
 
@@ -588,6 +605,60 @@ export async function markConversionDone(mediaId: string, leaseId: string, video
     )
     .returning(manifestColumns);
   return row ?? null;
+}
+
+/*
+ * Withdrawing an item's public files (Task 12): once an item is hidden or deleted, the media worker's
+ * visibility job deletes the derived files its row names (and any other under its folder), purges
+ * their URLs from Cloudflare, and only then clears the keys. Keys left on a hidden or deleted item
+ * mean files that may still be public: the sweeper sends a job for any no job is withdrawing.
+ */
+
+/** What the visibility job reads of an item. */
+export type ItemToWithdraw = {
+  /** isVisible's condition: not hidden, removed or deleted. */
+  visible: boolean;
+  /** The derived files its row names. */
+  derived: Partial<Record<DerivedVariant, string>>;
+};
+
+/** The item's visibility and the files its row names, or null when there is no such row. One read on the primary key. */
+export async function findItemToWithdraw(mediaId: string): Promise<ItemToWithdraw | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .select({
+      visible: sql<boolean>`${media.hiddenAt} is null and ${media.deletedAt} is null and not ${media.removedByUploader}`,
+      derived: media.derived,
+    })
+    .from(media)
+    .where(eq(media.id, mediaId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Clears a hidden or deleted item's derived keys once the files they name are deleted and purged,
+ * in one statement, only while the item is still hidden or deleted and its keys are still the ones
+ * withdrawn: an unhide since, and the files it made under keys of their own, are left as they are.
+ * True if it cleared them.
+ */
+export async function clearWithdrawnFiles(
+  mediaId: string,
+  withdrawn: Partial<Record<DerivedVariant, string>>,
+): Promise<boolean> {
+  if (!isUuid(mediaId)) return false;
+  const rows = await getDb()
+    .update(media)
+    .set({ derived: {} })
+    .where(
+      and(
+        eq(media.id, mediaId),
+        or(isNotNull(media.hiddenAt), isNotNull(media.deletedAt)),
+        sql`${media.derived} = ${JSON.stringify(withdrawn)}::jsonb`,
+      ),
+    )
+    .returning({ id: media.id });
+  return rows.length > 0;
 }
 
 /** Where a sweep through unfinished uploads stopped: the last row it looked at. */

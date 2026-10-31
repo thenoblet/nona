@@ -22,6 +22,7 @@ import {
   liveJobsQuery,
   queuedConversionsQuery,
   uploadedItemsQuery,
+  withdrawalsQuery,
   type SweepResult,
 } from "./sweeper";
 
@@ -587,6 +588,54 @@ describe("the sweeper's third step (Ruling W): uploads whose phone dropped at th
   });
 });
 
+describe("the sweeper's withdrawals: hidden or deleted items whose public files no job is taking down", () => {
+  /** A ready item with its two public files named in its row, plus whatever the test sets. */
+  function readyItem(values: Partial<typeof media.$inferInsert> = {}): Promise<string> {
+    const id = values.id ?? randomUUID();
+    return insertItem({
+      id,
+      status: "ready",
+      listedAt: minutesAgo(60),
+      derived: { thumb: `derived/${id}/0123456789abcdef/thumb.webp`, view: `derived/${id}/0123456789abcdef/view.webp` },
+      ...values,
+    });
+  }
+
+  it("queues the withdrawal of an item hidden, removed or deleted over 5 minutes ago that still holds files and has no job", async () => {
+    const hidden = await readyItem({ hiddenAt: minutesAgo(10), hiddenBy: "admin" });
+    const removed = await readyItem({ hiddenAt: minutesAgo(10), hiddenBy: "guest", removedByUploader: true });
+    const deleted = await readyItem({ deletedAt: minutesAgo(10) });
+
+    const result = await sweeper().sweep();
+
+    expect(result.requeuedWithdrawals).toBe(3);
+    for (const id of [hidden, removed, deleted]) {
+      expect((await liveJobs(MEDIA_QUEUES.visibility, id)).map((job) => job.data), id).toEqual([{ mediaId: id, action: "hide" }]);
+    }
+  });
+
+  it("leaves alone an item whose files are withdrawn, one hidden just now, one with a live job, and a visible one", async () => {
+    const withdrawn = await readyItem({ hiddenAt: minutesAgo(10), hiddenBy: "admin", derived: {} });
+    const justNow = await readyItem({ hiddenAt: minutesAgo(1), hiddenBy: "admin" });
+    const withJob = await readyItem({ hiddenAt: minutesAgo(10), hiddenBy: "admin" });
+    await boss.send(MEDIA_QUEUES.visibility, { mediaId: withJob, action: "hide" });
+    const visible = await readyItem();
+
+    const result = await sweeper().sweep();
+
+    expect(result.requeuedWithdrawals).toBe(0);
+    for (const id of [withdrawn, justNow, visible]) expect(await liveJobs(MEDIA_QUEUES.visibility, id), id).toEqual([]);
+    expect(await liveJobs(MEDIA_QUEUES.visibility, withJob)).toHaveLength(1);
+  });
+
+  it("queues none twice: the next sweep finds the job it queued", async () => {
+    await readyItem({ hiddenAt: minutesAgo(10), hiddenBy: "admin" });
+
+    expect((await sweeper().sweep()).requeuedWithdrawals).toBe(1);
+    expect((await sweeper().sweep()).requeuedWithdrawals).toBe(0);
+  });
+});
+
 describe("the sweeper's queries", () => {
   const client = postgres({ ...dbConfig(), max: 1, onnotice: () => {} });
   afterAll(() => client.end());
@@ -669,6 +718,12 @@ describe("the sweeper's queries", () => {
     );
     const plan = await genericPlan(query);
     expect(plan).toMatch(/job_common_i14|job_i14/);
+    expect(plan).not.toContain("Seq Scan");
+  });
+
+  it("find hidden or deleted items still holding public files on their partial index", async () => {
+    const plan = await genericPlan(withdrawalsQuery(1_000).toSQL());
+    expect(plan).toContain("media_withdrawal_idx");
     expect(plan).not.toContain("Seq Scan");
   });
 

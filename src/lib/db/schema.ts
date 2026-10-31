@@ -158,8 +158,18 @@ export const media = pgTable(
 
     status: text("status").$type<(typeof MEDIA_STATUSES)[number]>().notNull().default("uploading"),
     failureReason: text("failure_reason"),
-    /** The derived files' keys in the public bucket, by variant. */
+    /**
+     * The derived files' keys in the public bucket, by variant. Not empty only while those files may
+     * be public: a hidden or deleted item keeps them until the visibility job has deleted and purged
+     * them (the sweeper looks for any it hasn't), then they are cleared.
+     */
     derived: jsonb("derived").$type<Partial<Record<DerivedVariant, string>>>().notNull().default({}),
+    /**
+     * Which making of the derived files is current, part of their keys' content hash: every unhide
+     * raises it, so files made again never share a key with ones a hide is still deleting, or with
+     * a URL a cache remembers as gone.
+     */
+    derivedGeneration: integer("derived_generation").notNull().default(0),
     width: integer("width"),
     height: integer("height"),
     durationSeconds: real("duration_seconds"),
@@ -215,6 +225,11 @@ export const media = pgTable(
     index("media_unfinished_upload_idx")
       .on(table.startedAt, table.id)
       .where(sql`${table.status} = 'uploading' and ${table.multipartUploadId} is not null`),
+    // Hidden or deleted items whose public files no visibility job has withdrawn yet (Task 12),
+    // which the sweeper sends a job for: a handful at most.
+    index("media_withdrawal_idx")
+      .on(table.id)
+      .where(sql`(${table.hiddenAt} is not null or ${table.deletedAt} is not null) and ${table.derived} <> '{}'::jsonb`),
     check("media_purpose_check", oneOf(table.purpose, MEDIA_PURPOSES)),
     check("media_kind_check", oneOf(table.kind, MEDIA_FILE_KINDS)),
     check("media_status_check", oneOf(table.status, MEDIA_STATUSES)),

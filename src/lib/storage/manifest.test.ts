@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { storageConfig } from "@/lib/env";
 import { storageClient } from "./client";
 import { manifestKey } from "./keys";
-import { readManifest, writeManifest, type MediaManifest } from "./manifest";
+import { deleteManifest, readManifest, writeManifest, type MediaManifest } from "./manifest";
 
 // These run against the local MinIO: docker compose up -d minio && npm run storage:init.
 
@@ -114,5 +114,16 @@ describe("the manifest", () => {
 
   it("refuses an unsafe media id", async () => {
     await expect(writeManifest("../escape", justUploaded)).rejects.toThrow("mediaId");
+    await expect(deleteManifest("../escape")).rejects.toThrow("mediaId");
+  });
+
+  it("is deleted for good, and deleting one that is gone is fine", async () => {
+    const mediaId = newMediaId();
+    await writeManifest(mediaId, justUploaded);
+
+    await deleteManifest(mediaId);
+
+    expect(await readManifest(mediaId)).toBeNull();
+    await expect(deleteManifest(mediaId)).resolves.toBeUndefined();
   });
 });

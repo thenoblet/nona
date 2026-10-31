@@ -241,6 +241,7 @@ describe("markVideoReady", () => {
         deletedAt: null,
       },
       conversionQueued: true,
+      conversionOnDemand: false,
     });
     const { needsConversion, tooLongToConvert, ...columns } = processed;
     expect(needsConversion).toBe(true);
@@ -274,8 +275,8 @@ describe("markVideoReady", () => {
     expect(await readRow(done)).toMatchObject({ conversion: "done", conversionFailureReason: null });
   });
 
-  it("queues no conversion the row already has, queued or done: only the change from none sends a job", async () => {
-    for (const conversion of ["queued", "converting", "done", "failed"] as const) {
+  it("sends no conversion the row has under way, done or failed: only a queued one is to be sent", async () => {
+    for (const conversion of ["converting", "done", "failed"] as const) {
       const id = await addVideo({ conversion });
 
       const marked = await markVideoReady(id, processed);
@@ -283,6 +284,22 @@ describe("markVideoReady", () => {
       expect(marked?.conversionQueued, conversion).toBe(false);
       expect(await readRow(id), conversion).toMatchObject({ status: "ready", conversion });
     }
+  });
+
+  it("sends the conversion an unhide left queued, on demand for a highlight or a phone's ask", async () => {
+    const backlog = await addVideo({ conversion: "queued" });
+    const highlight = await addVideo({ conversion: "queued", highlight: true });
+    const asked = await addVideo({ conversion: "queued", conversionRequestedAt: new Date() });
+    const playable = await addVideo({ conversion: "queued" });
+
+    expect(await markVideoReady(backlog, processed)).toMatchObject({ conversionQueued: true, conversionOnDemand: false });
+    expect(await markVideoReady(highlight, processed)).toMatchObject({ conversionQueued: true, conversionOnDemand: true });
+    expect(await markVideoReady(asked, processed)).toMatchObject({ conversionQueued: true, conversionOnDemand: true });
+    // Queued is kept even for a video every phone plays: a phone asked for it, or the couple made it a highlight.
+    expect(await markVideoReady(playable, { ...processed, browserPlayable: true, needsConversion: false })).toMatchObject({
+      conversionQueued: true,
+    });
+    for (const id of [backlog, highlight, asked, playable]) expect(await readRow(id)).toMatchObject({ conversion: "queued" });
   });
 
   it("keeps an item's place in the album, and the celebration the couple moved it to", async () => {
@@ -334,6 +351,7 @@ describe("a video's conversion (Task 11, Rulings AG and AQ)", () => {
       originalKey: originalKey(id, "jpg"),
       capturedAt: new Date("2026-12-05T23:00:00Z"),
       durationSeconds: 12.5,
+      derivedGeneration: 0,
     });
     expect(await conversionOf(id)).toMatchObject({ conversion: "converting", lease });
     // A second job, whatever its attempt, finds nothing to do; the lease's own job carries it on.

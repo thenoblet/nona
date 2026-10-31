@@ -115,6 +115,7 @@ function convertOptions(changes: Partial<ConvertOptions> = {}): ConvertOptions {
     filterThreads: config.threads.ffmpegFilters,
     x264Preset: config.x264Preset,
     convertMaxSeconds: config.convertMaxSeconds,
+    jobQueue: async () => boss,
     ...changes,
   };
 }
@@ -949,6 +950,9 @@ describe.skipIf(!ffmpegSeven)("a conversion job delivered twice, late, or for a 
     expect(item).toMatchObject({ status: "ready", conversion: "queued", conversionJobId: null });
     expect(item.derived.video).toBeUndefined();
     expect(await publicKeysOf(mediaId)).toEqual([]);
+    // The visibility job then purges, and withdraws the poster the hide left.
+    const withdrawals = await boss.findJobs(MEDIA_QUEUES.visibility, { data: { mediaId } });
+    expect(withdrawals.map((job) => job.data)).toEqual([{ mediaId, action: "hide" }]);
   });
 });
 
@@ -1016,7 +1020,11 @@ describe.skipIf(!ffmpegSeven)("Ruling E: a photo stays fast while a real 4K HDR 
       boss,
       {
         [MEDIA_QUEUES.convert]: convertHandler(convertOptions()),
-        [MEDIA_QUEUES.photo]: photoHandler({ heifMemoryBytes: config.heifMemoryBytes, heifThreads: config.threads.heif }),
+        [MEDIA_QUEUES.photo]: photoHandler({
+          heifMemoryBytes: config.heifMemoryBytes,
+          heifThreads: config.threads.heif,
+          jobQueue: async () => boss,
+        }),
       },
       config.concurrency,
       { pollingIntervalSeconds: 0.5 },

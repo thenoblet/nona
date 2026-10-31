@@ -4,7 +4,6 @@ import { getSiteContent } from "@/lib/content/get";
 import type { MEDIA_FILE_KINDS, MEDIA_PURPOSES } from "@/lib/db/schema";
 import { describeError } from "@/lib/log-error";
 import { originalKey } from "@/lib/storage/keys";
-import { writeManifest } from "@/lib/storage/manifest";
 import {
   abortMultipart,
   headOriginal,
@@ -18,6 +17,7 @@ import { assignCelebration } from "./celebration";
 import {
   abortAndDelete,
   bytesHeld,
+  deleteUnfinished,
   discardOverfilled,
   errorName,
   finishIfOriginalExists,
@@ -25,7 +25,8 @@ import {
   type UploadOptions,
 } from "./completion";
 import { PART_SIZE_BYTES, partCount, partSizeOf } from "./limits";
-import { attachMultipartUpload, deleteUnfinishedUpload, insertUpload, type UploadRow } from "./rows";
+import { syncManifest } from "./manifest-sync";
+import { attachMultipartUpload, insertUpload, type UploadRow } from "./rows";
 
 // Completing an upload and the uploads switch live in completion.ts and uploads-switch.ts, which the
 // media worker's sweeper bundles too.
@@ -115,9 +116,10 @@ async function partsSoFar(upload: UploadRow, uploadId: string, options: UploadOp
 }
 
 /**
- * Starts the original's multipart upload, with its write-once metadata, and writes its manifest;
- * then records the upload id on the row. If another request recorded one first (two re-picks at
- * once), ours is dropped and theirs used.
+ * Starts the original's multipart upload, with its write-once metadata, and writes its manifest
+ * (through syncManifest, as every manifest write goes, from the facts the new row has); then records
+ * the upload id on the row. If another request recorded one first (two re-picks at once), ours is
+ * dropped and theirs used.
  */
 async function beginMultipart(upload: UploadRow, signal: AbortSignal | undefined): Promise<string> {
   const [uploadId] = await Promise.all([
@@ -132,9 +134,8 @@ async function beginMultipart(upload: UploadRow, signal: AbortSignal | undefined
       },
       { signal },
     ),
-    writeManifest(
-      upload.id,
-      {
+    syncManifest(upload.id, {
+      known: {
         celebration: upload.celebration,
         celebrationSetByAdmin: false,
         hiddenAt: null,
@@ -142,8 +143,8 @@ async function beginMultipart(upload: UploadRow, signal: AbortSignal | undefined
         removedByUploader: false,
         deletedAt: null,
       },
-      { signal },
-    ),
+      signal,
+    }),
   ]);
   const kept = await attachMultipartUpload(upload.id, uploadId);
   if (kept === uploadId) return uploadId;
@@ -198,7 +199,7 @@ export async function createUpload(request: NewUploadRequest, options: UploadOpt
   try {
     return toSession(upload, await beginMultipart(upload, options.signal), []);
   } catch (error) {
-    await deleteUnfinishedUpload(upload.id).catch((cleanupError) =>
+    await deleteUnfinished(upload.id, options.signal).catch((cleanupError) =>
       console.error("[uploads] could not remove the row of a start that failed:", describeError(cleanupError)),
     );
     throw error;
@@ -219,7 +220,7 @@ export async function resumeUpload(upload: UploadRow, options: UploadOptions): P
     const parts = await partsSoFar(upload, upload.multipartUploadId, options);
     if (!parts) {
       // Nothing to carry on. The row goes only if no original was made (Ruling Y).
-      if (!(await headOriginal(upload.originalKey, { signal: options.signal }))) await deleteUnfinishedUpload(upload.id);
+      if (!(await headOriginal(upload.originalKey, { signal: options.signal }))) await deleteUnfinished(upload.id, options.signal);
       return null;
     }
     session = toSession(upload, upload.multipartUploadId, parts);
@@ -253,11 +254,11 @@ export async function presignUploadParts(upload: UploadRow, partNumbers: number[
 
 /**
  * Cancels an unfinished upload at the guest's request: aborts its multipart upload, then deletes
- * its row (its events stay). False when it finished meanwhile (a complete R2 joined first), which
- * leaves it as it is, to be removed like any finished upload. Nothing else aborts uploads: R2's
- * 7-day rule clears the abandoned ones.
+ * its row and its manifest (its events stay). False when it finished meanwhile (a complete R2
+ * joined first), which leaves it as it is, to be removed like any finished upload. Nothing else
+ * aborts uploads: R2's 7-day rule clears the abandoned ones.
  */
 export async function cancelUpload(upload: UploadRow, options: { signal?: AbortSignal }): Promise<boolean> {
-  if (!upload.multipartUploadId) return deleteUnfinishedUpload(upload.id);
+  if (!upload.multipartUploadId) return deleteUnfinished(upload.id, options.signal);
   return abortAndDelete(upload, upload.multipartUploadId, options.signal);
 }

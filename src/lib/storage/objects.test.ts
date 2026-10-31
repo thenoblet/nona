@@ -11,9 +11,11 @@ import { fitOriginalMetadata, METADATA_TEXT_BYTES, type OriginalMetadata } from 
 import {
   abortMultipart,
   completeMultipart,
+  deleteOriginal,
   deletePublicObjects,
   DOWNLOAD_URL_SECONDS,
   headOriginal,
+  listDerivedKeys,
   listUploadedParts,
   PLAYBACK_URL_SECONDS,
   presignGet,
@@ -408,6 +410,38 @@ describe("public objects", () => {
   it("deleting none is a no-op", async () => {
     await expect(deletePublicObjects([])).resolves.toBeUndefined();
   });
+
+  it("are listed by item, whatever their content hash, and nothing of another item's", async () => {
+    const mediaId = randomUUID();
+    const other = randomUUID();
+    const keys = [
+      derivedKey(mediaId, "first-hash", "thumb", "webp"),
+      derivedKey(mediaId, "first-hash", "view", "webp"),
+      derivedKey(mediaId, "second-hash", "video", "mp4"),
+    ];
+    const othersKey = derivedKey(other, "first-hash", "thumb", "webp");
+    for (const key of [...keys, othersKey]) await putPublicObject(key, "bytes", "image/webp");
+
+    try {
+      expect((await listDerivedKeys(mediaId)).sort()).toEqual([...keys].sort());
+      expect(await listDerivedKeys(randomUUID())).toEqual([]);
+    } finally {
+      await deletePublicObjects([...keys, othersKey]);
+    }
+    expect(await listDerivedKeys(mediaId)).toEqual([]);
+  });
+});
+
+describe("deleteOriginal", () => {
+  it("deletes the original, and is fine when it is gone already", async () => {
+    const key = newOriginalKey();
+    await storageClient().send(new PutObjectCommand({ Bucket: storageConfig().privateBucket, Key: key, Body: "original" }));
+    expect(await headOriginal(key)).not.toBeNull();
+
+    await deleteOriginal(key);
+    expect(await headOriginal(key)).toBeNull();
+    await expect(deleteOriginal(key)).resolves.toBeUndefined();
+  });
 });
 
 describe("every operation", () => {
@@ -427,7 +461,9 @@ describe("every operation", () => {
       await expect(abortMultipart(key, "upload-id"), key).rejects.toThrow("originals/");
       await expect(headOriginal(key), key).rejects.toThrow("originals/");
       await expect(readOriginalStream(key), key).rejects.toThrow("originals/");
+      await expect(deleteOriginal(key), key).rejects.toThrow("originals/");
     }
+    await expect(listDerivedKeys("../originals")).rejects.toThrow("mediaId");
     for (const key of notDerived) {
       await expect(putPublicObject(key, "bytes", "text/plain"), key).rejects.toThrow("derived/");
       await expect(deletePublicObjects([derived, key]), key).rejects.toThrow("derived/");

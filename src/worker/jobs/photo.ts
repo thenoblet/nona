@@ -11,7 +11,7 @@ import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler 
 import { saveOriginal, withScratch } from "../scratch";
 import { describeEnding, killedFromOutside, runCapped, toolDidNotRun } from "./capped-tools";
 import { PHOTO_TYPE_HEAD_BYTES, photoTypeOf, type PhotoFormat } from "./photo-type";
-import { contentHashOf, rewriteManifest, withdrawIfHidden } from "./publishing";
+import { contentHashOf, rewriteManifest, withdrawIfHidden, type JobQueue } from "./publishing";
 import { decoder, decoding, deriveStills, type Stills, type StillSource } from "./stills";
 
 /*
@@ -86,6 +86,8 @@ export type PhotoOptions = {
   heifThreads: number;
   /** heif-dec's time limit; 60 s unless a test wants it shorter. */
   heifDecodeMilliseconds?: number;
+  /** The job queue a withdrawal is sent to, for a photo hidden while it was processed. */
+  jobQueue: JobQueue;
 };
 
 /** Where and how a job runs libheif's tools. */
@@ -274,7 +276,7 @@ export async function processPhoto(job: MediaJob, options: PhotoOptions): Promis
   const capturedAt =
     plausibleCaptureTime(derived.capturedAt, item.startedAt) ?? plausibleCaptureTime(item.capturedAt, item.startedAt);
   const { value: celebrations } = await readSection("celebrations");
-  const contentHash = contentHashOf(original.etag, `photo-settings-${PHOTO_SETTINGS_VERSION}`);
+  const contentHash = contentHashOf(original.etag, `photo-settings-${PHOTO_SETTINGS_VERSION}`, item.derivedGeneration);
   const keys = {
     thumb: derivedKey(mediaId, contentHash, "thumb", "webp"),
     view: derivedKey(mediaId, contentHash, "view", "webp"),
@@ -294,7 +296,7 @@ export async function processPhoto(job: MediaJob, options: PhotoOptions): Promis
     celebration: assignCelebration(capturedAt, item.startedAt, celebrations),
   });
   if (!manifest) {
-    await withdrawIfHidden(job.queue, mediaId, [keys.thumb, keys.view], job.signal);
+    await withdrawIfHidden(job.queue, mediaId, [keys.thumb, keys.view], { signal: job.signal, jobQueue: options.jobQueue });
     return;
   }
   await rewriteManifest(job.queue, mediaId, manifest, job.signal);

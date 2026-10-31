@@ -41,7 +41,8 @@ import { sharpFailure } from "./stills";
  */
 
 // A test can act between the photo's derived files going up and its row being marked (Ruling AG).
-const publishing = vi.hoisted(() => ({ afterPut: null as null | (() => Promise<void>) }));
+// It can make the job's own delete of what it published fail, as R2 might.
+const publishing = vi.hoisted(() => ({ afterPut: null as null | (() => Promise<void>), deleteFails: false }));
 vi.mock("@/lib/storage/objects", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/storage/objects")>();
   return {
@@ -51,6 +52,10 @@ vi.mock("@/lib/storage/objects", async (importOriginal) => {
       const afterPut = publishing.afterPut;
       publishing.afterPut = null;
       await afterPut?.();
+    },
+    deletePublicObjects: async (...args: Parameters<typeof real.deletePublicObjects>) => {
+      if (publishing.deleteFails) throw new Error("R2 answered 503 Slow Down");
+      return real.deletePublicObjects(...args);
     },
   };
 });
@@ -68,10 +73,20 @@ vi.mock("../processes", async (importOriginal) => {
   };
 });
 
+// The jobs a photo job sends: a media.visibility hide when the item was hidden while it worked.
+const sentJobs = vi.hoisted(() => [] as { name: string; data: unknown }[]);
+
 /** The production defaults: heif-dec capped at WORKER_HEIF_MEMORY_BYTES's, on WORKER_HEIF_THREADS's. */
 const PHOTO_OPTIONS: PhotoOptions = {
   heifMemoryBytes: workerConfig({}).heifMemoryBytes,
   heifThreads: workerConfig({}).threads.heif,
+  jobQueue: async () =>
+    ({
+      send: async (name: string, data?: object | null) => {
+        sentJobs.push({ name, data });
+        return randomUUID();
+      },
+    }) as Pick<PgBoss, "send">,
 };
 
 /** The programs run since the test began whose arguments include `program`. */
@@ -136,8 +151,10 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetDb();
   publishing.afterPut = null;
+  publishing.deleteFails = false;
   programs.runs = [];
   manifests.failuresLeft = 0;
+  sentJobs.length = 0;
 });
 
 afterEach(async () => {
@@ -952,7 +969,7 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
     expect(await publicKeysOf(mediaId)).toHaveLength(2);
   });
 
-  it("removes what it published when the item is hidden while it works, and leaves it uploaded", async () => {
+  it("removes what it published when the item is hidden while it works, leaves it uploaded, and queues its withdrawal", async () => {
     const mediaId = await uploadedPhoto(await png(), "png");
     publishing.afterPut = async () => {
       await getDb().update(media).set({ hiddenAt: new Date(), hiddenBy: "admin" }).where(eq(media.id, mediaId));
@@ -962,5 +979,22 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
 
     expect(await readItem(mediaId)).toMatchObject({ status: "uploaded", listedAt: null, thumbhash: null });
     expect(await publicKeysOf(mediaId)).toEqual([]);
+    // The visibility job purges the URLs and sweeps the item's folder, whatever the delete did.
+    expect(sentJobs).toEqual([{ name: MEDIA_QUEUES.visibility, data: { mediaId, action: "hide" } }]);
+  });
+
+  it("queues the withdrawal though its own delete of what it published fails, so the files still come down", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const mediaId = await uploadedPhoto(await png(), "png");
+    publishing.afterPut = async () => {
+      await getDb().update(media).set({ hiddenAt: new Date(), hiddenBy: "admin" }).where(eq(media.id, mediaId));
+      publishing.deleteFails = true;
+    };
+
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+    expect(await publicKeysOf(mediaId)).toHaveLength(2);
+    expect(sentJobs).toEqual([{ name: MEDIA_QUEUES.visibility, data: { mediaId, action: "hide" } }]);
+    expect(errors.mock.calls.flat().join(" ")).toContain(`media=${mediaId} was hidden while it was processed`);
   });
 });

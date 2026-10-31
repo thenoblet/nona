@@ -70,6 +70,7 @@ vi.mock("@/lib/jobs/boss", async (importOriginal) => {
 });
 
 import { guestCookieName, readGuestIds, signGuestIds } from "@/lib/guests/cookie";
+import { hideMedia } from "@/lib/media/moderation";
 import { POST as completeRoute } from "./[id]/complete/route";
 import { GET as listPartsRoute, POST as presignRoute } from "./[id]/parts/route";
 import { DELETE as cancelRoute } from "./[id]/route";
@@ -890,15 +891,29 @@ describe("cancelling", () => {
     const body = photo();
     const session = await startSession(body);
     await sendParts(session, randomBytes(body.size), [1]);
+    expect(await readManifest(session.mediaId)).not.toBeNull();
 
     const response = await cancel(session.mediaId);
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(await response.json()).toEqual({ mediaId: session.mediaId, cancelled: true });
     expect(await mediaRow(session.mediaId)).toBeUndefined();
+    // Its manifest goes with its row: a rebuild from R2 finds nothing of a cancelled upload.
+    expect(await readManifest(session.mediaId)).toBeNull();
     await expect(listUploadedParts(session.key, session.uploadId)).rejects.toMatchObject({ name: "NoSuchUpload" });
     // Cancelling again finds nothing of this browser's.
     expect((await cancel(session.mediaId)).status).toBe(403);
+  });
+
+  it("refuses to presign the parts of an upload the couple hid: every presign re-checks visibility (Review Focus 3)", async () => {
+    await signIn();
+    const body = photo();
+    const session = await startSession(body);
+    expect((await presign(session.mediaId, [1])).status).toBe(200);
+
+    expect(await hideMedia(session.mediaId, { admin: "couple@example.com" })).toEqual({ ok: true });
+
+    expect((await presign(session.mediaId, [1])).status).toBe(403);
   });
 
   it("refuses to cancel a finished upload, which is removed another way", async () => {

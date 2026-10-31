@@ -55,6 +55,11 @@ export function derivedKey(
   ].join("/");
 }
 
+/** The folder holding every derived file of an item, whatever its content hash: `derived/<mediaId>/`. */
+export function derivedFolder(mediaId: string): string {
+  return `derived/${safePart("mediaId", mediaId)}/`;
+}
+
 export function manifestKey(mediaId: string): string {
   return `manifests/${safePart("mediaId", mediaId)}.json`;
 }

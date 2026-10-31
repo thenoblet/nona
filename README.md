@@ -204,8 +204,14 @@ that fails for good marks its item `failed`, with the reason its uploader sees.
 - It saves a heartbeat every 30 s. `GET /api/worker-health` on the site answers 200 while the last
   one is under 2 minutes old and 503 otherwise, for the uptime check.
 - Every 10 minutes a sweeper queues anything left behind: items uploaded with no job, conversions
-  with no job (or, for one a phone asked for or a highlight, no on-demand job), and uploads whose
-  phone dropped at the very last step (it completes them when R2 holds every part).
+  with no job (or, for one a phone asked for or a highlight, no on-demand job), uploads whose
+  phone dropped at the very last step (it completes them when R2 holds every part), and hidden or
+  deleted items whose public files no job has taken down.
+- **Hiding** (`media.visibility`): an item the couple hide (or its uploader removes, or the couple
+  delete for good) leaves every list at once; then the worker deletes every public file under its
+  folder and purges their exact URLs from Cloudflare's cache (`CF_PURGE_TOKEN`, `CF_ZONE_ID`, 30 URLs
+  a call), retrying until both are done. An unhide processes the item again, its files under new
+  keys, and it keeps its place in the album.
 - **Conversions** (`media.convert`) make a version of a video every phone plays: H.264 High in MP4,
   within 1920 × 1080 either way up, HDR tone-mapped to SDR, at most 30 fps, AAC stereo, no
   metadata but its capture time, `moov` first. A phone that can't play an original asks
@@ -258,6 +264,8 @@ Its environment:
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | | The site's database. |
 | `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`, `MEDIA_BASE_URL` | | Cloudflare R2, as the site has them. |
 | `WORKER_SCRATCH_DIR` | required | `/scratch`, where the scratch folder is mounted. Without it the worker refuses to start, rather than fill the container's own disk. |
+| `CF_PURGE_TOKEN` | required | A Cloudflare API token allowed only "Zone · Cache Purge" on the site's zone. When an item is hidden or deleted, the worker deletes its public files and purges their URLs from Cloudflare's cache with it. Without it (or `CF_ZONE_ID`) in production, every hide's job fails and is retried, and the sweeper sends it again, until both are set. |
+| `CF_ZONE_ID` | required | The site's Cloudflare zone id, for the purge. |
 | `WORKER_PHOTO_CONCURRENCY` | 2 | Photos processed at once. |
 | `WORKER_POSTER_CONCURRENCY` | 1 | Videos probed and given a poster at once. |
 | `WORKER_WISH_CONCURRENCY` | 1 | Voice and video wishes at once. |

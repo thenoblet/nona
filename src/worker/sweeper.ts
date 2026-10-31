@@ -24,7 +24,10 @@ import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch
  *    original already joined. Partial uploads are left for their guest to carry on; R2's 7-day
  *    rule clears the abandoned ones. Only uploads the couple's switch still allows (Ruling Z), as
  *    the complete route checks: once uploads close, an album upload is finished only if it began
- *    before the close and the 24 hours after it haven't passed. Wishes always are.
+ *    before the close and the 24 hours after it haven't passed. Wishes always are;
+ * 4. (Task 12) queues media.visibility `hide` for items hidden, removed or deleted more than 5
+ *    minutes ago whose row still names public files, with no job to withdraw them (the app couldn't
+ *    queue one, or it failed for good): a hidden item's files never stay public for want of a job.
  * Each step handles a bounded batch, so a sweep is never unbounded; a backlog clears over a few.
  */
 
@@ -53,6 +56,7 @@ const RESCUE_BUDGET_MILLISECONDS = 40_000;
 /** The queues an item's processing runs on, and media.dead, where a failed job waits to mark its item. */
 const PROCESSING_QUEUES: MediaQueueName[] = [MEDIA_QUEUES.photo, MEDIA_QUEUES.poster, MEDIA_QUEUES.wish, MEDIA_QUEUES.dead];
 const CONVERSION_QUEUES: MediaQueueName[] = [MEDIA_QUEUES.convert, MEDIA_QUEUES.dead];
+const WITHDRAWAL_QUEUES: MediaQueueName[] = [MEDIA_QUEUES.visibility, MEDIA_QUEUES.dead];
 
 export type SweepResult = {
   /** Step 1: items queued for processing. */
@@ -63,6 +67,8 @@ export type SweepResult = {
   /** Step 3: unfinished uploads looked at in R2, and those finished. */
   checkedUploads: number;
   rescuedUploads: number;
+  /** Step 4: hidden or deleted items whose public files were sent to be withdrawn. */
+  requeuedWithdrawals: number;
 };
 
 export type SweeperOptions = {
@@ -149,6 +155,26 @@ export function convertingConversionsQuery(limit: number, reader: Reader = getDb
       ),
     )
     .orderBy(asc(media.listedAt))
+    .limit(limit);
+}
+
+/**
+ * Up to `limit` items hidden (or removed by their uploader) or deleted more than 5 minutes ago whose
+ * row still names public files, on the partial index of such items: a handful at most, so no order.
+ * Exported for its plan's test.
+ */
+export function withdrawalsQuery(limit: number, reader: Reader = getDb()) {
+  return reader
+    .select({ id: media.id })
+    .from(media)
+    .where(
+      and(
+        // The partial index's own condition, word for word, so Postgres proves it applies.
+        sql`(${media.hiddenAt} is not null or ${media.deletedAt} is not null) and ${media.derived} <> '{}'::jsonb`,
+        // greatest() passes over a null: whichever of the two happened.
+        sql`greatest(${media.hiddenAt}, ${media.deletedAt}) < ${minutesAgo(STUCK_AFTER_MINUTES)}`,
+      ),
+    )
     .limit(limit);
 }
 
@@ -303,6 +329,21 @@ export function createSweeper(options: SweeperOptions) {
   }
 
   /**
+   * Step 4: hidden or deleted items still naming public files with no visibility job (or a dead
+   * letter on its way), each sent media.visibility `hide`.
+   */
+  async function requeueWithdrawals(): Promise<number> {
+    const stuck = await stuckAmong(bossSchema, WITHDRAWAL_QUEUES, (reader) => withdrawalsQuery(CANDIDATE_BATCH_SIZE, reader));
+    if (stuck.length > 0) {
+      await boss.insert(
+        MEDIA_QUEUES.visibility,
+        stuck.map((item) => ({ data: { mediaId: item.id, action: "hide" } })),
+      );
+    }
+    return stuck.length;
+  }
+
+  /**
    * Step 3 (Ruling W): one batch of unfinished uploads, each completed if R2 holds all of it. An
    * upload the uploads switch no longer allows (Ruling Z) is left exactly as it is: not aborted and
    * its row not deleted, since its original may exist already; R2's 7-day rule clears its parts.
@@ -343,7 +384,7 @@ export function createSweeper(options: SweeperOptions) {
     return { checked: uploads.length, rescued };
   }
 
-  /** One sweep: the three steps, each on its own, so one failing doesn't stop the others. */
+  /** One sweep: the four steps, each on its own, so one failing doesn't stop the others. */
   async function sweep(): Promise<SweepResult> {
     const result: SweepResult = {
       requeuedUploads: 0,
@@ -351,6 +392,7 @@ export function createSweeper(options: SweeperOptions) {
       recoveredConversions: 0,
       checkedUploads: 0,
       rescuedUploads: 0,
+      requeuedWithdrawals: 0,
     };
     try {
       result.requeuedUploads = await requeueUploads();
@@ -372,9 +414,14 @@ export function createSweeper(options: SweeperOptions) {
       if (signal?.aborted) return result;
       console.error("[worker] sweeper could not check unfinished uploads:", describeError(error));
     }
-    if (result.requeuedUploads > 0 || result.requeuedConversions > 0 || result.rescuedUploads > 0) {
+    try {
+      result.requeuedWithdrawals = await requeueWithdrawals();
+    } catch (error) {
+      console.error("[worker] sweeper could not queue hidden items' withdrawals:", describeError(error));
+    }
+    if (result.requeuedUploads > 0 || result.requeuedConversions > 0 || result.rescuedUploads > 0 || result.requeuedWithdrawals > 0) {
       console.log(
-        `[worker] sweep queued ${result.requeuedUploads} upload(s) and ${result.requeuedConversions} conversion(s), and finished ${result.rescuedUploads} of ${result.checkedUploads} unfinished upload(s)`,
+        `[worker] sweep queued ${result.requeuedUploads} upload(s), ${result.requeuedConversions} conversion(s) and ${result.requeuedWithdrawals} withdrawal(s), and finished ${result.rescuedUploads} of ${result.checkedUploads} unfinished upload(s)`,
       );
     }
     return result;

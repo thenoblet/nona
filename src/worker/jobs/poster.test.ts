@@ -962,6 +962,21 @@ describe.skipIf(!ffmpegSeven)("a job delivered twice, or for an item that has mo
     expect(await conversionJobs(mediaId)).toHaveLength(1);
   });
 
+  it("sends the conversion an unhide left queued once the poster is made again: at 20 for a highlight or a phone's ask", async () => {
+    const backlog = await uploadedVideo(await rotatedClip(), "mov", { conversion: "queued", derivedGeneration: 1 });
+    const highlight = await uploadedVideo(await rotatedClip(), "mov", { conversion: "queued", highlight: true });
+    const asked = await uploadedVideo(await rotatedClip(), "mov", { conversion: "queued", conversionRequestedAt: new Date() });
+
+    for (const mediaId of [backlog, highlight, asked]) await processVideo(videoJob(mediaId), posterOptions());
+
+    expect((await conversionJobs(backlog)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.backlog]);
+    expect((await conversionJobs(highlight)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.onDemand]);
+    expect((await conversionJobs(asked)).map((job) => job.priority)).toEqual([CONVERT_PRIORITY.onDemand]);
+    // A new generation's poster has keys of its own, never a hidden one's.
+    const [first, second] = [await readItem(backlog), await readItem(highlight)];
+    expect(Object.values(first.derived)[0].split("/")[2]).not.toBe(Object.values(second.derived)[0].split("/")[2]);
+  });
+
   it("leaves alone an item another delivery finished while this one worked, and sends no conversion of its own", async () => {
     const mediaId = await uploadedVideo(await rotatedClip(), "mov");
     publishing.afterPut = async () => {
