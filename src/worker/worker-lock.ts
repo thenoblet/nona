@@ -15,8 +15,9 @@ import { describeError } from "@/lib/log-error";
  * The lock's connection can also close under a running worker: Postgres restarting, or the network
  * cutting it. Then the worker takes the lock again on a fresh connection, trying every 5 s while
  * the database can't be reached, and carries on. After a cut, the old session may still hold the
- * lock until Postgres notices it is gone: being the worker's own (its backend's pid), it is ended
- * (pg_terminate_backend, which a role may do to its own sessions) and the lock taken. Only if
+ * lock until Postgres notices it is gone: being the worker's own (its backend's pid and the time it
+ * started, both: after a restart a pid can be another session's), it is ended (pg_terminate_backend,
+ * which a role may do to its own sessions) and the lock taken. Only if
  * another worker holds it by then is the lock lost, and the worker stops. So a Postgres restart, or
  * a network blip, never kills the conversions running.
  */
@@ -69,25 +70,44 @@ export type WorkerLockOptions = {
   database?: ReturnType<typeof dbConfig>;
 };
 
-/** What trying for the lock found: whether this session holds it, and the session's backend pid. */
-type LockTry = { locked: boolean; backendPid: number };
+/**
+ * A Postgres session, as the lock knows one: its backend's pid and when that backend started (as
+ * Postgres prints it), which together name it even across a restart, where pids are used again.
+ * The start is null when Postgres doesn't show it (another role's session).
+ */
+export type LockSession = { pid: number; backendStart: string | null };
+
+/** What trying for the lock found: whether this session holds it, and the session. */
+type LockTry = { locked: boolean; session: LockSession };
 
 /** Tries to take the lock on this connection's session. Throws when the database can't be reached. */
 async function tryLock(sql: postgres.Sql): Promise<LockTry> {
   const [first, second] = WORKER_LOCK_KEYS;
-  const [row] = await sql<{ locked: boolean; backendPid: number }[]>`select
-    pg_try_advisory_lock(${first}::integer, ${second}::integer) as locked, pg_backend_pid() as "backendPid"`;
-  return { locked: row?.locked === true, backendPid: Number(row?.backendPid) };
+  const [row] = await sql<{ locked: boolean; pid: number; backendStart: string | null }[]>`select
+    pg_try_advisory_lock(${first}::integer, ${second}::integer) as locked, pg_backend_pid() as pid,
+    (select backend_start::text from pg_stat_activity where pid = pg_backend_pid()) as "backendStart"`;
+  return { locked: row?.locked === true, session: { pid: Number(row?.pid), backendStart: row?.backendStart ?? null } };
 }
 
-/** The backend pid of the session holding the lock, or null when none does. */
-async function holderOf(sql: postgres.Sql): Promise<number | null> {
+/** The session holding the lock, or null when none does. */
+async function holderOf(sql: postgres.Sql): Promise<LockSession | null> {
   const [first, second] = WORKER_LOCK_KEYS;
   // The two-key form: classid and objid are the keys, objsubid 2.
-  const [row] = await sql<{ pid: number }[]>`select pid from pg_locks
-    where locktype = 'advisory' and granted
-      and classid = ${first}::integer::oid and objid = ${second}::integer::oid and objsubid = 2`;
-  return row ? Number(row.pid) : null;
+  const [row] = await sql<{ pid: number; backendStart: string | null }[]>`select locks.pid, activity.backend_start::text as "backendStart"
+    from pg_locks as locks left join pg_stat_activity as activity on activity.pid = locks.pid
+    where locks.locktype = 'advisory' and locks.granted
+      and locks.classid = ${first}::integer::oid and locks.objid = ${second}::integer::oid and locks.objsubid = 2`;
+  return row ? { pid: Number(row.pid), backendStart: row.backendStart ?? null } : null;
+}
+
+/**
+ * Whether the session holding the lock is this worker's own, cut off: the pid it held the lock on,
+ * and the same backend start, both known. A pid alone could be another worker's session after a
+ * restart. Exported for its test.
+ */
+export function isOwnCutOffSession(holder: LockSession | null, own: LockSession | null): boolean {
+  if (holder === null || own === null || holder.backendStart === null || own.backendStart === null) return false;
+  return holder.pid === own.pid && holder.backendStart === own.backendStart;
 }
 
 /**
@@ -99,8 +119,8 @@ export async function takeWorkerLock(options: WorkerLockOptions = {}): Promise<W
   const pollMilliseconds = options.pollMilliseconds ?? WORKER_LOCK_POLL_MILLISECONDS;
   const database = options.database ?? dbConfig();
   let current: postgres.Sql | null = null;
-  /** The backend pid of the session that holds the lock for this worker, to know it after a cut. */
-  let heldByBackend: number | null = null;
+  /** The session that holds the lock for this worker, to know it after a cut. */
+  let heldBy: LockSession | null = null;
   let released = false;
   let resolveLost = () => {};
   const lost = new Promise<void>((resolve) => (resolveLost = resolve));
@@ -132,14 +152,14 @@ export async function takeWorkerLock(options: WorkerLockOptions = {}): Promise<W
             return;
           }
           current = sql;
-          heldByBackend = attempt.backendPid;
+          heldBy = attempt.session;
           console.log("[worker] took the worker lock again on a new connection");
           return;
         }
         const holder = await holderOf(sql);
-        if (holder !== null && holder === heldByBackend) {
+        if (isOwnCutOffSession(holder, heldBy) && holder !== null) {
           // This worker's own session, cut off, which Postgres hasn't noticed yet: ended, then tried again at once.
-          await sql`select pg_terminate_backend(${holder}::integer, 5000)`;
+          await sql`select pg_terminate_backend(${holder.pid}::integer, 5000)`;
           await sql.end({ timeout: 5 }).catch(() => {});
           continue;
         }
@@ -173,7 +193,7 @@ export async function takeWorkerLock(options: WorkerLockOptions = {}): Promise<W
         const attempt = await tryLock(sql);
         if (attempt.locked) {
           current = sql;
-          heldByBackend = attempt.backendPid;
+          heldBy = attempt.session;
           if (lastReported) console.log("[worker] the previous worker has stopped: this one holds the worker lock");
           break;
         }
@@ -200,7 +220,7 @@ export async function takeWorkerLock(options: WorkerLockOptions = {}): Promise<W
       if (released || sql === null) return false;
       try {
         const [row] = await sql<{ pid: number }[]>`select pg_backend_pid() as pid`;
-        return (await holderOf(sql)) === Number(row?.pid);
+        return (await holderOf(sql))?.pid === Number(row?.pid);
       } catch {
         return false;
       }

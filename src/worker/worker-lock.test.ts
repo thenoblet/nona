@@ -6,7 +6,14 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dbConfig } from "@/lib/env";
-import { LOCK_CONNECTION_OPTIONS, takeWorkerLock, WORKER_LOCK_KEYS, WORKER_LOCK_POLL_MILLISECONDS, type WorkerLock } from "./worker-lock";
+import {
+  isOwnCutOffSession,
+  LOCK_CONNECTION_OPTIONS,
+  takeWorkerLock,
+  WORKER_LOCK_KEYS,
+  WORKER_LOCK_POLL_MILLISECONDS,
+  type WorkerLock,
+} from "./worker-lock";
 
 /*
  * Ruling AZ: two worker containers overlapping (a start-first deploy) never both wipe scratch or
@@ -211,6 +218,18 @@ describe("the worker lock (Ruling AZ)", () => {
     );
     expect(after).toHaveLength(1);
     expect(after[0].pid).not.toBe(before.pid);
+  });
+
+  it("ends only its own cut-off session: the pid it held the lock on and that backend's start, never a pid reused after a restart", () => {
+    const own = { pid: 4242, backendStart: "2026-12-05 20:00:00.123456+00" };
+    expect(isOwnCutOffSession({ ...own }, own)).toBe(true);
+    // The same pid, another backend: Postgres restarted, and gave it to another worker's session.
+    expect(isOwnCutOffSession({ pid: 4242, backendStart: "2026-12-05 20:07:31.000001+00" }, own)).toBe(false);
+    expect(isOwnCutOffSession({ pid: 4243, backendStart: own.backendStart }, own)).toBe(false);
+    // Another role's session, whose start Postgres doesn't show, or none known: never ended.
+    expect(isOwnCutOffSession({ pid: 4242, backendStart: null }, own)).toBe(false);
+    expect(isOwnCutOffSession(null, own)).toBe(false);
+    expect(isOwnCutOffSession({ ...own }, null)).toBe(false);
   });
 
   it("is lost, so the worker stops, when another worker took the lock while its connection was down", async () => {

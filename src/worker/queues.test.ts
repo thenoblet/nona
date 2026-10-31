@@ -14,6 +14,7 @@ import { dropBossSchema, startTestBoss } from "../../test/uploads";
 import { runProcess } from "./processes";
 import {
   PermanentJobError,
+  RetriedJobError,
   startQueueWorkers,
   type MediaHandlers,
   type QueueWorkers,
@@ -229,6 +230,27 @@ describe("a job that fails for good", () => {
     );
     expect(errors.mock.calls.flat().join(" ")).not.toContain("marked failed");
     expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "done" });
+  });
+});
+
+describe("a job retried with facts for its next attempt (RetriedJobError)", () => {
+  it("hands its next attempt what the last one left in its output, and a first attempt nothing", async () => {
+    const seen: (Record<string, unknown> | null | undefined)[] = [];
+    await start({
+      [MEDIA_QUEUES.visibility]: async (job) => {
+        seen.push(job.previousOutput);
+        if (job.retryCount < 2) throw new RetriedJobError(`timed out ${job.retryCount + 1}`, { consecutiveTimeouts: job.retryCount + 1 });
+      },
+    });
+    const mediaId = await insertItem();
+    const jobId = await boss.send(MEDIA_QUEUES.visibility, { mediaId, action: "hide" }, { retryDelay: 1, retryBackoff: false });
+
+    await eventually(async () => expect(await jobState(MEDIA_QUEUES.visibility, jobId ?? "")).toBe("completed"), 30_000);
+    expect(seen).toEqual([
+      null,
+      { error: "RetriedJobError: timed out 1", consecutiveTimeouts: 1 },
+      { error: "RetriedJobError: timed out 2", consecutiveTimeouts: 2 },
+    ]);
   });
 });
 

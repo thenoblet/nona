@@ -21,13 +21,14 @@ import { readManifest } from "@/lib/storage/manifest";
 import { resetDb } from "../../../test/db";
 import { dropBossSchema, startTestBoss } from "../../../test/uploads";
 import { workerConfig } from "../config";
-import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
+import { PermanentJobError, RetriedJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
 import {
   conversionCpuSeconds,
   conversionMilliseconds,
   conversionThreads,
   convertHandler,
+  tooLongToConvert,
   convertVideo,
   outputProblem,
   type ConvertOptions,
@@ -61,15 +62,20 @@ vi.mock("@/lib/storage/objects", async (importOriginal) => {
   };
 });
 
-// Every program the job runs, with its priority, so a test can see how it ran.
+// Every program the job runs, with its priority, so a test can see how it ran. A test can shorten
+// the conversion's own time limit (its x264 run's), to time it out for real.
 type ProgramRun = { args: string[]; priority: string };
-const programs = vi.hoisted(() => ({ runs: [] as ProgramRun[] }));
+const programs = vi.hoisted(() => ({ runs: [] as ProgramRun[], conversionTimeoutMilliseconds: null as number | null }));
 vi.mock("../processes", async (importOriginal) => {
   const real = await importOriginal<typeof import("../processes")>();
   return {
     ...real,
     runProcess: (...args: Parameters<typeof real.runProcess>) => {
       programs.runs.push({ args: [args[0], ...args[1]], priority: args[2].priority });
+      const shortened = programs.conversionTimeoutMilliseconds;
+      if (shortened !== null && args[1].includes("libx264")) {
+        return real.runProcess(args[0], args[1], { ...args[2], timeoutMilliseconds: shortened });
+      }
       return real.runProcess(...args);
     },
   };
@@ -159,6 +165,7 @@ beforeEach(async () => {
   await resetDb();
   publishing.afterPut = null;
   programs.runs = [];
+  programs.conversionTimeoutMilliseconds = null;
   scratch.bytesNeeded = [];
 });
 
@@ -528,20 +535,53 @@ describe("conversionCpuSeconds: the conversion's CPU time, sized from its length
   it("gives a video of no known length the longest's", () => {
     expect(conversionCpuSeconds(null, 30, 1800)).toBe(600 + 1800 * 30);
   });
+
+  it("counts a file's frame rate at most 240, however absurd the rate it claims (Ruling BG)", () => {
+    for (const absurd of [90_000, 2_147_483_647, Number.POSITIVE_INFINITY]) {
+      expect(conversionCpuSeconds(10, absurd, 1800), String(absurd)).toBe(600 + 10 * 30 * 8);
+      expect(conversionMilliseconds(10, absurd), String(absurd)).toBe(10 * 60_000 + 10 * 10_000 * 8);
+    }
+    // Nonsense counts as 30 fps.
+    for (const nonsense of [0, -30, Number.NaN]) expect(conversionCpuSeconds(10, nonsense, 1800), String(nonsense)).toBe(900);
+  });
+});
+
+describe("tooLongToConvert: longer than the worker converts, or more frames than 60 a second of it (Rulings AR, BG)", () => {
+  it("takes a 30-minute video at 30 or 60 fps, and 7½ minutes of 240 fps slow motion", () => {
+    expect(tooLongToConvert(1800, 30, 1800)).toBe(false);
+    expect(tooLongToConvert(1800, 60, 1800)).toBe(false);
+    expect(tooLongToConvert(450, 240, 1800)).toBe(false);
+    expect(tooLongToConvert(null, 240, 1800)).toBe(false);
+  });
+
+  it("refuses a longer one, or more frames: 108,000 at the default 30 minutes, the rate counted at most 240", () => {
+    expect(tooLongToConvert(1801, 30, 1800)).toBe(true);
+    expect(tooLongToConvert(1800, 61, 1800)).toBe(true);
+    expect(tooLongToConvert(451, 240, 1800)).toBe(true);
+    // A crafted rate counts as 240: 10 s is 2,400 frames, well inside; 8 minutes is past.
+    expect(tooLongToConvert(10, 90_000, 1800)).toBe(false);
+    expect(tooLongToConvert(480, 90_000, 1800)).toBe(true);
+  });
 });
 
 describe("conversionMilliseconds: the conversion's time, sized from its measured speed", () => {
-  it("gives ten seconds a second of video and ten minutes more, never past three hours", () => {
-    expect(conversionMilliseconds(10)).toBe(10 * 60_000 + 100_000);
-    expect(conversionMilliseconds(180)).toBe(10 * 60_000 + 1_800_000);
-    expect(conversionMilliseconds(4 * 3600)).toBe(3 * 3600_000);
-    expect(conversionMilliseconds(null)).toBe(3 * 3600_000);
+  it("gives ten seconds a second of 30 fps video and ten minutes more, never past three hours", () => {
+    expect(conversionMilliseconds(10, 30)).toBe(10 * 60_000 + 100_000);
+    expect(conversionMilliseconds(180, null)).toBe(10 * 60_000 + 1_800_000);
+    expect(conversionMilliseconds(4 * 3600, 30)).toBe(3 * 3600_000);
+    expect(conversionMilliseconds(null, 30)).toBe(3 * 3600_000);
+  });
+
+  it("gives more in proportion to the frames read, as the CPU time is: twice at 60 fps, eight times at 240 (Ruling BH)", () => {
+    expect(conversionMilliseconds(10, 60)).toBe(10 * 60_000 + 200_000);
+    expect(conversionMilliseconds(10, 240)).toBe(10 * 60_000 + 800_000);
+    expect(conversionMilliseconds(450, 240)).toBe(3 * 3600_000);
   });
 
   it("leaves an hour of the job's four for the download, the upload and the rest", () => {
     const jobMilliseconds = (MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.convert].expireInSeconds ?? 0) * 1000;
     expect(jobMilliseconds).toBe(14_400_000);
-    expect(conversionMilliseconds(null) + 3600_000).toBeLessThanOrEqual(jobMilliseconds);
+    expect(conversionMilliseconds(null, 240) + 3600_000).toBeLessThanOrEqual(jobMilliseconds);
   });
 });
 
@@ -904,6 +944,60 @@ describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
     expect(last).toBeInstanceOf(PermanentJobError);
     expect((last as PermanentJobError).reason).toBe("corrupt");
     expect(programs.runs.at(-1)?.args.slice(0, 3)).toEqual(["prlimit", `--as=${3 * 1024 ** 3}`, "--cpu=1:61"]);
+  });
+
+  it("is retried on its first two wall-clock time-outs in a row, and fails for good, too-slow, on the third; another failure between starts the count again (Ruling BH)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const mediaId = await readyVideo(await iphoneClip(), "mov");
+    const jobId = randomUUID();
+    // The conversion's own time limit, shortened: its ffmpeg is killed for running past it.
+    programs.conversionTimeoutMilliseconds = 50;
+    const attempt = (retryCount: number, previousOutput: Record<string, unknown> | null) =>
+      convertVideo({ ...convertJob(mediaId, retryCount, { id: jobId }), previousOutput }, convertOptions()).then(
+        () => null,
+        (failure: unknown) => failure as Error,
+      );
+    // As runJobs keeps a failure's facts in the job's output, for its next attempt.
+    const outputOf = (failure: Error | null) => ({
+      error: failure?.message,
+      ...(failure instanceof RetriedJobError ? failure.output : {}),
+    });
+
+    const first = await attempt(0, null);
+    expect(first).toBeInstanceOf(RetriedJobError);
+    expect(first?.message).toMatch(/^ffmpeg didn't finish with the video: it was killed \(timeout\) \(time-out 1 in a row/);
+    expect((first as RetriedJobError).output).toEqual({ consecutiveTimeouts: 1 });
+    const second = await attempt(1, outputOf(first));
+    expect(second).toBeInstanceOf(RetriedJobError);
+    expect((second as RetriedJobError).output).toEqual({ consecutiveTimeouts: 2 });
+    const third = await attempt(2, outputOf(second));
+    expect(third).toBeInstanceOf(PermanentJobError);
+    expect(third).toMatchObject({ reason: "too-slow" });
+    expect(third?.message).toContain("3 time-outs in a row");
+    // Still converting under its lease: media.dead marks it failed, too-slow, and the video keeps its poster.
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "converting", conversionJobId: jobId });
+
+    // A failure of another kind in between (the network, say): the count starts again.
+    const afterAnother = await attempt(3, { error: "Error: R2 refused the download" });
+    expect(afterAnother).toBeInstanceOf(RetriedJobError);
+    expect((afterAnother as RetriedJobError).output).toEqual({ consecutiveTimeouts: 1 });
+    expect(await readdir(scratchRoot)).toEqual([]);
+  });
+
+  it("fails at once, too-long, when the file's own frames are past the limit for its length (Ruling BG)", async () => {
+    // Under a second of 240 fps slow motion, against a 1 s limit: 216 frames, past 1 s × 60.
+    const slowMotion = await clip("slow.mp4", [
+      ...["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=240", "-t", "0.9"],
+      ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+    ]);
+    const mediaId = await readyVideo(slowMotion, "mp4", { durationSeconds: 0.9, width: 320, height: 240, videoCodec: "h264" });
+
+    const error = await failureOf(mediaId, 0, convertOptions({ convertMaxSeconds: 1 }));
+
+    expect(error).toBeInstanceOf(PermanentJobError);
+    expect(error).toMatchObject({ reason: "too-long" });
+    expect(error?.message).toMatch(/216 frames counted at its frame rate/);
+    expect(conversionRuns()).toEqual([]);
   });
 
   it("removes its scratch folder however it ends: done, a file ffmpeg refuses, or killed mid-conversion by its job's end", async () => {

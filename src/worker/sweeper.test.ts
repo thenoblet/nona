@@ -682,9 +682,12 @@ describe("the sweeper's fifth step: videos whose playable copy's job was never s
     });
   }
 
-  /** A media.playable job for the item that has run and ended: `completed`, or `failed` for good. */
-  async function finishedCopyJob(mediaId: string, state: "completed" | "failed"): Promise<void> {
-    await boss.send(MEDIA_QUEUES.playable, { mediaId }, { retryLimit: 0 });
+  /**
+   * A media.playable job for the item that has run and ended: `completed`, or `failed` for good,
+   * for this generation, or naming none (as one sent before jobs named theirs).
+   */
+  async function finishedCopyJob(mediaId: string, state: "completed" | "failed", generation?: number): Promise<void> {
+    await boss.send(MEDIA_QUEUES.playable, generation === undefined ? { mediaId } : { mediaId, generation }, { retryLimit: 0 });
     const [job] = await boss.fetch<{ mediaId: string }>(MEDIA_QUEUES.playable);
     if (state === "completed") await boss.complete(MEDIA_QUEUES.playable, job.id);
     else await boss.fail(MEDIA_QUEUES.playable, job.id, { reason: "corrupt" });
@@ -700,18 +703,31 @@ describe("the sweeper's fifth step: videos whose playable copy's job was never s
 
     expect(result.requeuedCopies).toBe(2);
     for (const id of [h264, hevc]) {
-      expect((await liveJobs(MEDIA_QUEUES.playable, id)).map((job) => job.data), id).toEqual([{ mediaId: id }]);
+      expect((await liveJobs(MEDIA_QUEUES.playable, id)).map((job) => job.data), id).toEqual([{ mediaId: id, generation: 0 }]);
     }
     expect((await sweeper().sweep()).requeuedCopies).toBe(0);
   });
 
-  it("never sends again a copy whose job ran, completed (perhaps with no copy to make) or failed for good: no loop", async () => {
+  it("never sends again a copy whose job ran for its generation, completed (perhaps with no copy to make) or failed for good: no loop", async () => {
     const completed = await readyVideo();
     const failed = await readyVideo();
-    await finishedCopyJob(completed, "completed");
-    await finishedCopyJob(failed, "failed");
+    // A job sent before jobs named a generation counts for every one: no wave of copies after the deploy.
+    const unnamed = await readyVideo({ derivedGeneration: 2 });
+    await finishedCopyJob(completed, "completed", 0);
+    await finishedCopyJob(failed, "failed", 0);
+    await finishedCopyJob(unnamed, "completed");
 
     expect((await sweeper().sweep()).requeuedCopies).toBe(0);
+    expect((await sweeper().sweep()).requeuedCopies).toBe(0);
+  });
+
+  it("sends the copy's job of a generation an unhide began, whose send was lost, though the generation before had one", async () => {
+    // Unhidden into generation 1 and ready again; its earlier generation's copy job ran.
+    const mediaId = await readyVideo({ derivedGeneration: 1 });
+    await finishedCopyJob(mediaId, "completed", 0);
+
+    expect((await sweeper().sweep()).requeuedCopies).toBe(1);
+    expect((await liveJobs(MEDIA_QUEUES.playable, mediaId)).map((job) => job.data)).toEqual([{ mediaId, generation: 1 }]);
     expect((await sweeper().sweep()).requeuedCopies).toBe(0);
   });
 
@@ -726,6 +742,8 @@ describe("the sweeper's fifth step: videos whose playable copy's job was never s
       await readyVideo({ deletedAt: minutesAgo(10) }),
       await readyVideo({ purpose: "wish" }),
       await readyVideo({ videoCodec: "vp9", browserPlayable: false }),
+      // H.264 not every phone plays: its sound may be one an MP4 doesn't carry as it is, so its copy's job would make none.
+      await readyVideo({ videoCodec: "h264", browserPlayable: false, conversion: "queued" }),
       await readyVideo({ kind: "photo", videoCodec: null }),
       await readyVideo({ status: "uploaded", listedAt: null }),
     ];

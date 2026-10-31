@@ -212,8 +212,9 @@ that fails for good marks its item `failed`, with the reason its uploader sees.
   with no job (or, for one a phone asked for or a highlight, no on-demand job), uploads whose
   phone dropped at the very last step (it completes them when R2 holds every part), hidden or
   deleted items whose public files no job has taken down, and videos listed in the last 6 days
-  whose playable copy's job was never sent (one that ran, however it ended, is never sent again:
-  pg-boss keeps finished jobs 7 days).
+  that a playable copy is made for (HEVC, or H.264 every phone plays) whose copy's job was never
+  sent for their generation (one that ran, however it ended, is never sent again: pg-boss keeps
+  finished jobs 7 days).
 - **Hiding** (`media.visibility`): an item the couple hide (or its uploader removes, or the couple
   delete for good) leaves every list at once; then the worker deletes every public file under its
   folder and purges their exact URLs from Cloudflare's cache (`CF_PURGE_TOKEN`, `CF_ZONE_ID`, 30 URLs
@@ -245,14 +246,21 @@ that fails for good marks its item `failed`, with the reason its uploader sees.
   Everything else waits in the backlog, which runs only while the admin's backlog switch is on: the
   worker reads the switch every 30 s and again before each backlog job, and a job fetched as the
   switch went off goes back to wait, never failed. Each conversion downloads its original to
-  scratch (twice its size must be free), runs `nice -n 19` under its own memory cap and a CPU-time
-  cap (ten minutes and 30 CPU-seconds a second of video, times the frame rate over 30 for 60 fps
-  and slow motion: a phone's 1080p HDR measured 4.4 to 7.8, so only a file that makes ffmpeg work
-  several times harder than any phone's runs out, and is blamed on its third attempt), and is
-  checked before it is published: exiting 0 isn't enough. Only the job that claimed a conversion (its lease) carries it on, through its
-  retries; the sweeper puts one whose job is gone back in the queue. A video longer than
-  `WORKER_CONVERT_MAX_SECONDS` isn't converted: its conversion is `failed` with the reason
-  `too-long`, and it plays from its playable copy where a phone can. Measured under `--cpus=3` at
+  scratch (twice its size must be free), runs `nice -n 19` under its own memory cap, a CPU-time
+  cap and a time limit, and is checked before it is published: exiting 0 isn't enough. Both limits
+  are ten minutes plus so much a second of video, times the frame rate over 30 (60 fps gets twice,
+  240 fps slow motion eight times; a file's own rate counts at most 240, however absurd the rate it
+  claims): 30 CPU-seconds (a phone's 1080p HDR measured 4.4 to 7.8, so only a file that makes
+  ffmpeg work several times harder than any phone's runs out, blamed on its third attempt) and 10
+  seconds of time (at most three hours). A conversion that runs past its time is tried again,
+  since a busy box can't be told from a slow file by the clock, but its third time-out in a row
+  fails it for good, `too-slow`: the video keeps its poster and its playable copy, and the couple
+  can retry it from the admin, at priority 20. Only the job that claimed a conversion (its lease)
+  carries it on, through its retries; the sweeper puts one whose job is gone back in the queue. A
+  video longer than `WORKER_CONVERT_MAX_SECONDS`, or with more frames than 60 a second of it
+  (108,000 at the default: half an hour at 60 fps, or 7½ minutes of 240 fps slow motion), isn't
+  converted: its conversion is `failed` with the reason `too-long` at once, with no job, and it
+  plays from its playable copy where a phone can. Measured under `--cpus=3` at
   the defaults (Task 14b), one conversion alone takes 1.8 to 2.5 s a second of video for 1080 ×
   1920 HEVC HLG with a phone's detail (the first real one, on two threads each: 2.05 s) and 2.2 to
   3.1 s for 4K HEVC HLG, on a shared dev host whose speed varied by a third. The time is CPU, not
@@ -319,7 +327,7 @@ Its environment:
 | `WORKER_X264_MAXRATE` | off | Off by default; set to cap a phone copy's bitrate if mobile data becomes a concern (x264's `-maxrate:v`, e.g. `5M`), together with `WORKER_X264_BUFSIZE`: both or neither. In ffmpeg's notation: bits a second, or with `k` or `M`. Off, a conversion is pure CRF 23: a cap holds the bitrate down in exactly the scenes that need it (dancing, confetti, low light, grain). On, CRF 23 is kept and only its peaks are held to the cap; any T seconds of video then hold at most T × the cap plus the buffer. Changing it gives new conversions keys of their own. |
 | `WORKER_X264_BUFSIZE` | off | The cap's buffer (x264's `-bufsize:v`, e.g. `10M`): how far the bitrate may run over the cap for a moment. Off by default; set with `WORKER_X264_MAXRATE`, both or neither. |
 | `WORKER_X264_PRESET` | `veryfast` | x264's preset in each conversion, at CRF 23: one of `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. A slower one compresses better and takes longer: measure a 4K clip before changing it. |
-| `WORKER_CONVERT_MAX_SECONDS` | 1800 | The longest video converted, in seconds, from 60 to 86400. A longer one's conversion is `failed` at once with the reason `too-long` (no job, no retries); the video stays in the album with its poster, plays from its playable copy where a phone can, and its original stays downloadable. |
+| `WORKER_CONVERT_MAX_SECONDS` | 1800 | The longest video converted, in seconds, from 60 to 86400, and, times 60, the most frames (its length times its frame rate, counted at most 240). A longer one's, or one with more frames, is `failed` at once with the reason `too-long` (no job, no retries); the video stays in the album with its poster, plays from its playable copy where a phone can, and its original stays downloadable. |
 | `WORKER_FFMPEG_DECODER_THREADS` | 2 | ffmpeg's decoder threads in a conversion that starts beside another (its `-threads` before the input), which would otherwise be the host's CPUs; a lone one takes `WORKER_CPUS`. Two decode 4K HEVC in about real time. |
 | `WORKER_SHARP_THREADS` | 1 | sharp's threads in each photo. |
 | `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job, a lone conversion's too. Measured under `--cpus=3`, more made a conversion slower, not faster, since x264 and the decoder already keep the CPUs busy: for 20 s of 1080 × 1920 HLG on 3 decoder and x264 threads, 1.56 s a second of video at 1, 2.00 at 2 and 2.15 at 3 (Task 14b); earlier, 2 made a 4K HDR conversion 18.4 s against 12 to 17 s. |

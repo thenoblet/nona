@@ -638,7 +638,10 @@ describe.skipIf(!ffmpegSeven)("a video's poster (Review Focus 2)", () => {
     for (const mediaId of [h264, hevc, webm]) await processVideo(videoJob(mediaId), posterOptions());
 
     for (const mediaId of [h264, hevc]) {
-      expect(await playableJobs(mediaId), mediaId).toEqual([expect.objectContaining({ state: "created", data: { mediaId } })]);
+      // Its generation named, for the sweeper's step 5 (the job itself reads only the id).
+      expect(await playableJobs(mediaId), mediaId).toEqual([
+        expect.objectContaining({ state: "created", data: { mediaId, generation: 0 } }),
+      ]);
     }
     expect(await playableJobs(webm)).toEqual([]);
     // Each still gets the conversion it needs: none for H.264, the backlog's for HEVC and WebM.
@@ -667,6 +670,20 @@ describe.skipIf(!ffmpegSeven)("a video's poster (Review Focus 2)", () => {
       });
       expect(await conversionJobs(mediaId)).toEqual([]);
     }
+  });
+
+  it("queues no conversion of a video with more frames than the worker converts for its length: too-long, at once (Ruling BG)", async () => {
+    // Under a second of 240 fps slow motion against a 1 s limit: 216 frames, past 1 s × 60.
+    const slowMotion = await clip("slow.mp4", [
+      ...["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=240", "-t", "0.9"],
+      ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+    ]);
+    const mediaId = await uploadedVideo(slowMotion, "mp4");
+
+    await processVideo(videoJob(mediaId), posterOptions({ convertMaxSeconds: 1 }));
+
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "failed", conversionFailureReason: "too-long" });
+    expect(await conversionJobs(mediaId)).toEqual([]);
   });
 
   it("makes a 4K HDR video's poster well inside the photo's 20 s budget, on one thread", async () => {

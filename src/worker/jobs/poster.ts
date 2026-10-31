@@ -12,7 +12,8 @@ import { derivedKey } from "@/lib/storage/keys";
 import { headOriginal, PLAYBACK_URL_SECONDS, presignGet, putPublicObject } from "@/lib/storage/objects";
 import type { JobReport, MediaJob, MediaJobHandler } from "../queues";
 import { withScratch } from "../scratch";
-import { streamsCopyable } from "./playable";
+import { tooLongToConvert } from "./convert";
+import { streamsCopyable, type PlayableJobData } from "./playable";
 import { contentHashOf, rewriteManifest, withdrawIfHidden } from "./publishing";
 import { deriveStills, VIEW, type Stills } from "./stills";
 import { hdrToSdr, sdrInput } from "./video-filters";
@@ -257,13 +258,16 @@ export function conversionWanted(facts: Pick<VideoFacts, "browserPlayable" | "du
 }
 
 /**
- * Sends the video's clean copy's job (media.playable) once it is ready. Never throws: a copy that
- * can't be sent leaves the video ready with its poster (and its conversion, where it has one), and
- * an unhide's poster job sends it again; the failure is logged, with ids only.
+ * Sends the video's clean copy's job (media.playable) once it is ready, naming the generation its
+ * files are for (sweeper step 5 tells a job of this generation from an earlier one's by it). Never
+ * throws: a copy whose job can't be sent leaves the video ready with its poster (and its
+ * conversion, where it has one), and the sweeper's step 5 sends it within 10 minutes; the failure
+ * is logged, with ids only.
  */
-async function sendPlayableCopy(mediaId: string, options: PosterOptions): Promise<void> {
+async function sendPlayableCopy(mediaId: string, generation: number, options: PosterOptions): Promise<void> {
   try {
-    await (await options.jobQueue()).send(MEDIA_QUEUES.playable, { mediaId });
+    const data: PlayableJobData = { mediaId, generation };
+    await (await options.jobQueue()).send(MEDIA_QUEUES.playable, data);
   } catch (error) {
     console.error(`[worker] media.poster media=${mediaId} is ready, but its playable copy's job wasn't sent:`, describeError(error));
   }
@@ -343,7 +347,8 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
     videoCodec: facts.codec,
     browserPlayable: facts.browserPlayable,
     needsConversion: conversionWanted(facts, original.size),
-    tooLongToConvert: (facts.durationSeconds ?? 0) > options.convertMaxSeconds,
+    // Too long, or too many frames for its length (Ruling BG): failed, `too-long`, at once, and never queued.
+    tooLongToConvert: tooLongToConvert(facts.durationSeconds, facts.framesPerSecond, options.convertMaxSeconds),
   });
   if (!marked) {
     await withdrawIfHidden(job.queue, mediaId, [keys["poster-thumb"], keys["poster-view"]], {
@@ -353,7 +358,7 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
     });
     return;
   }
-  if (streamsCopyable(facts)) await sendPlayableCopy(mediaId, options);
+  if (streamsCopyable(facts)) await sendPlayableCopy(mediaId, item.derivedGeneration, options);
   if (marked.conversionQueued) await sendConversion(mediaId, marked.conversionOnDemand, options);
   await rewriteManifest(job.queue, mediaId, marked.manifest, job.signal);
   return { sizeBytes: original.size, kind: `video/${facts.codec}${facts.hdr ? "-hdr" : ""}` };

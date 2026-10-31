@@ -9,6 +9,7 @@ import { describeError } from "@/lib/log-error";
 import { completeUpload, processingQueue } from "@/lib/media/completion";
 import { unfinishedUploads, type UploadCursor } from "@/lib/media/rows";
 import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch";
+import type { PlayableJobData } from "./jobs/playable";
 
 /*
  * The sweeper makes sure no item stays "processing" for good. At start-up and every 10 minutes it:
@@ -29,11 +30,12 @@ import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch
  *    minutes ago whose row still names public files, and for items with a withdrawal under way
  *    (withdrawing_keys), when no job is withdrawing them (the app couldn't queue one, or it failed
  *    for good): a hidden item's files never stay public, or cached, for want of a job;
- * 5. (Task 14b) queues media.playable for ready, visible album videos of H.264 or HEVC with no
- *    playable copy, listed between 5 minutes and 6 days ago, that have never had a media.playable
- *    job, in any state: the poster job's send was lost. pg-boss keeps a finished job 7 days, so a
- *    copy whose job finished without one (sound an MP4 doesn't carry as it is) or failed for good
- *    is never sent again, and a lost send is sent once.
+ * 5. (Task 14b) queues media.playable for ready, visible album videos with no playable copy that
+ *    one is made for (HEVC, or H.264 every phone plays), listed between 5 minutes and 6 days ago,
+ *    that have never had a media.playable job for their generation, in any state: the poster
+ *    job's send was lost. pg-boss keeps a finished job 7 days, so a copy whose job finished without
+ *    one or failed for good is never sent again, and a lost send is sent once. A job that names no
+ *    generation (sent before jobs named one) counts for every generation.
  * Each step handles a bounded batch, so a sweep is never unbounded; a backlog clears over a few.
  */
 
@@ -193,14 +195,15 @@ export function withdrawalsQuery(limit: number, reader: Reader = getDb()) {
 }
 
 /**
- * Up to `limit` ready, visible album videos of H.264 or HEVC (what a playable copy is made of)
- * with no playable copy, listed between 5 minutes and 6 days ago, oldest first: read backwards
- * along the album's own index (media_album_cursor_idx), whose condition the query repeats as
- * literals, so no sort. Exported for its plan's test.
+ * Up to `limit` ready, visible album videos a playable copy is made for (HEVC, or H.264 every phone
+ * plays: one that isn't may have sound an MP4 doesn't carry as it is, and gets none) with no
+ * playable copy, listed between 5 minutes and 6 days ago, oldest first, with their generation:
+ * read backwards along the album's own index (media_album_cursor_idx), whose condition the query
+ * repeats as literals, so no sort. Exported for its plan's test.
  */
 export function missingCopiesQuery(limit: number, reader: Reader = getDb()) {
   return reader
-    .select({ id: media.id })
+    .select({ id: media.id, generation: media.derivedGeneration })
     .from(media)
     .where(
       and(
@@ -210,7 +213,7 @@ export function missingCopiesQuery(limit: number, reader: Reader = getDb()) {
         isNull(media.deletedAt),
         eq(media.removedByUploader, false),
         eq(media.kind, "video"),
-        inArray(media.videoCodec, ["h264", "hevc"]),
+        sql`(${media.videoCodec} = 'hevc' or (${media.videoCodec} = 'h264' and ${media.browserPlayable}))`,
         sql`${media.derived} ->> 'playable' is null`,
         sql`${media.listedAt} > ${minutesAgo(COPY_WITHIN_MINUTES)}`,
         sql`${media.listedAt} < ${minutesAgo(STUCK_AFTER_MINUTES)}`,
@@ -222,10 +225,12 @@ export function missingCopiesQuery(limit: number, reader: Reader = getDb()) {
 
 /**
  * These items' media.playable jobs in any state, live or finished (pg-boss keeps a finished one 7
- * days), on pg-boss's index of a queue's jobs by name. Exported for its plan's test.
+ * days), each item with the generation its job names (null for none), on pg-boss's index of a
+ * queue's jobs by name. Exported for its plan's test.
  */
 export function copyJobsQuery(bossSchema: string, mediaIds: string[]): SQL {
-  return sql`select distinct job.data ->> 'mediaId' as "mediaId" from ${sql.identifier(bossSchema)}.job as job
+  return sql`select distinct job.data ->> 'mediaId' as "mediaId", job.data ->> 'generation' as "generation"
+    from ${sql.identifier(bossSchema)}.job as job
     where job.name = ${MEDIA_QUEUES.playable} and ${inArray(sql`job.data ->> 'mediaId'`, mediaIds)}`;
 }
 
@@ -416,14 +421,19 @@ export function createSweeper(options: SweeperOptions) {
     const neverSent = await amongWithoutJobs(
       (reader) => missingCopiesQuery(CANDIDATE_BATCH_SIZE, reader),
       async (reader, candidates) => {
-        const rows = await reader.execute<{ mediaId: string }>(copyJobsQuery(bossSchema, candidates.map((candidate) => candidate.id)));
-        return new Set(rows.map((row) => row.mediaId));
+        const ids = candidates.map((candidate) => candidate.id);
+        const rows = await reader.execute<{ mediaId: string; generation: string | null }>(copyJobsQuery(bossSchema, ids));
+        const generationOf = new Map(candidates.map((candidate) => [candidate.id, String(candidate.generation)]));
+        // A job counts for its own generation, or, naming none, for every one.
+        return new Set(
+          rows.filter((row) => row.generation === null || row.generation === generationOf.get(row.mediaId)).map((row) => row.mediaId),
+        );
       },
     );
     if (neverSent.length > 0) {
       await boss.insert(
         MEDIA_QUEUES.playable,
-        neverSent.map((item) => ({ data: { mediaId: item.id } })),
+        neverSent.map((item) => ({ data: { mediaId: item.id, generation: item.generation } satisfies PlayableJobData })),
       );
       for (const item of neverSent) console.log(`[worker] sweeper sent the playable copy's job of ${item.id}, which was never sent`);
     }

@@ -8,7 +8,7 @@ import { claimConversion, markConversionDone, releaseConversion } from "@/lib/me
 import { derivedKey } from "@/lib/storage/keys";
 import { headOriginal, putPublicObject } from "@/lib/storage/objects";
 import type { X264Cap, X264Preset } from "../config";
-import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
+import { PermanentJobError, RetriedJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
 import { saveOriginal, withScratch } from "../scratch";
 import { contentHashOf, rewriteManifest, withdrawIfHidden, type JobQueue } from "./publishing";
 import { convertedPictureFilters } from "./video-filters";
@@ -19,6 +19,7 @@ import {
   probeVideo,
   runVideoTool,
   SCRATCH_FILE_READING,
+  ToolTimeoutError,
   type VideoToolRun,
 } from "./video-tools";
 
@@ -72,10 +73,12 @@ const PROBE_MILLISECONDS = 60_000;
  * --cpus=3, at the defaults (decoder and x264 on 2 threads, filters on 1), one conversion alone,
  * on grainy clips at a phone's bitrate, on a host whose speed varied about twofold between runs:
  * 4K HEVC HLG takes 1.0 to 3.1 s a second of video (an iPhone's portrait turn, done on the full
- * 4K frame, adds up to 40%), 8K HEVC 1.4 to 3.4 s, 1080p60 H.264 0.4 to 1.0 s. Ten seconds a second
- * is three times the slowest, room for the second conversion and the photos sharing those CPUs;
- * ten minutes more for a short clip's start. Never past three hours, so the download, the upload
- * and the rest fit inside the job's four (media.convert's expireInSeconds, 14,400).
+ * 4K frame, adds up to 40%), 8K HEVC 1.4 to 3.4 s, 1080p60 H.264 0.4 to 1.0 s; Task 14b's 1080p
+ * HLG with a phone's detail, 1.5 to 2.6 s. Ten seconds a second of 30 fps video is about four times
+ * the slowest, room for the second conversion and the photos sharing those CPUs, scaled by the
+ * frame rate as the CPU time is (frameRateFactor); ten minutes more for a short clip's start.
+ * Never past three hours, so the download, the upload and the rest fit inside the job's four
+ * (media.convert's expireInSeconds, 14,400).
  */
 const CONVERT_SECONDS_PER_VIDEO_SECOND = 10;
 const CONVERT_BASE_MILLISECONDS = 10 * 60_000;
@@ -92,8 +95,21 @@ const CONVERT_MAX_MILLISECONDS = 3 * 60 * 60_000;
  */
 const CONVERT_CPU_SECONDS_PER_VIDEO_SECOND = 30;
 const CONVERT_CPU_BASE_SECONDS = 10 * 60;
-/** The frame rate CONVERT_CPU_SECONDS_PER_VIDEO_SECOND is for: a faster video gets more in proportion. */
-const CPU_BUDGET_FRAMES_PER_SECOND = 30;
+/** The frame rate both budgets are for: a faster video gets more in proportion (frameRateFactor). */
+const BUDGET_FRAMES_PER_SECOND = 30;
+/**
+ * The most frames a second either budget counts, or the frame-count limit (tooLongToConvert) does:
+ * a phone's slow motion. A file says its own frame rate, and a crafted one can say 90000/1 or more,
+ * which would otherwise make every budget endless (Ruling BG).
+ */
+const MAX_COUNTED_FRAMES_PER_SECOND = 240;
+/**
+ * The most frames a converted video's original may hold, per second of WORKER_CONVERT_MAX_SECONDS:
+ * at its 1,800, 108,000, a 30-minute video at 60 fps, or 7½ minutes of 240 fps slow motion.
+ */
+const MAX_FRAMES_PER_CONVERTED_SECOND = 60;
+/** A conversion's wall-clock time-outs in a row that fail it for good, `too-slow` (Ruling BH). */
+const TIME_OUTS_FOR_GOOD = 3;
 /** Scratch beyond twice the original: a small original can come out bigger at CRF 23. */
 const SCRATCH_MARGIN_BYTES = 256 * 1024 * 1024;
 
@@ -228,26 +244,52 @@ async function withConversionThreads<TResult>(
   }
 }
 
+/** A frame rate as the budgets and limits count it: the file's, at most 240; 30 when it doesn't say (Ruling BG). */
+function countedFramesPerSecond(framesPerSecond: number | null): number {
+  // No rate, or nonsense (none, zero or less), is 30's; any rate past 240, infinite included, is 240's.
+  if (framesPerSecond === null || Number.isNaN(framesPerSecond) || framesPerSecond <= 0) return BUDGET_FRAMES_PER_SECOND;
+  return Math.min(framesPerSecond, MAX_COUNTED_FRAMES_PER_SECOND);
+}
+
+/** How much more time and CPU than 30 fps's a video's frames take to decode: from 1 to 8 (240 fps). */
+function frameRateFactor(framesPerSecond: number | null): number {
+  return Math.max(1, countedFramesPerSecond(framesPerSecond) / BUDGET_FRAMES_PER_SECOND);
+}
+
 /**
- * How long ffmpeg may take over a video this long (or of no known length: the most). Running past
- * it is retried: a busy box can't be told from a slow file by the clock (Ruling AR).
+ * Whether a video is too long to convert, `too-long` at once with no job (Rulings AR, BG): longer
+ * than WORKER_CONVERT_MAX_SECONDS, or holding more frames than 60 a second of it (its length times
+ * its frame rate, counted at most 240): 7½ minutes of slow motion is as much work as half an hour
+ * at 60 fps. A video of no known length isn't, here: its conversion checks the file's own.
  */
-export function conversionMilliseconds(durationSeconds: number | null): number {
+export function tooLongToConvert(durationSeconds: number | null, framesPerSecond: number | null, maxSeconds: number): boolean {
+  if (durationSeconds === null) return false;
+  return durationSeconds > maxSeconds || durationSeconds * countedFramesPerSecond(framesPerSecond) > maxSeconds * MAX_FRAMES_PER_CONVERTED_SECOND;
+}
+
+/**
+ * How long ffmpeg may take over a video this long at this frame rate (or of no known length: the
+ * most), ten minutes and ten seconds a second of video times frameRateFactor, never past three
+ * hours. A busy box can't be told from a slow file by the clock, so running past it is retried,
+ * but its third time in a row is for good, `too-slow` (Ruling BH): the couple can retry it.
+ */
+export function conversionMilliseconds(durationSeconds: number | null, framesPerSecond: number | null): number {
   if (durationSeconds === null) return CONVERT_MAX_MILLISECONDS;
-  return Math.min(CONVERT_MAX_MILLISECONDS, CONVERT_BASE_MILLISECONDS + durationSeconds * CONVERT_SECONDS_PER_VIDEO_SECOND * 1000);
+  const perVideoSecond = CONVERT_SECONDS_PER_VIDEO_SECOND * 1000 * frameRateFactor(framesPerSecond);
+  return Math.min(CONVERT_MAX_MILLISECONDS, CONVERT_BASE_MILLISECONDS + durationSeconds * perVideoSecond);
 }
 
 /**
  * How much CPU time ffmpeg may use over a video this long at this frame rate, all its threads
  * together (prlimit --cpu, Ruling AR): ten minutes and 30 CPU-seconds a second of video, times
- * max(1, frames a second / 30). A video of no known length gets the longest's; of no known frame
- * rate, 30 fps's. Waiting for a CPU doesn't count, so however busy the box (at nice 19 a conversion
+ * frameRateFactor (the frame rate over 30, counted from 30 to 240: Ruling BG). A video of no known
+ * length gets the longest's; of no known frame rate, 30 fps's. Waiting for a CPU doesn't count, so however busy the box (at nice 19 a conversion
  * may get a sliver of one), only a file that makes ffmpeg work far harder than any phone's runs
  * out: that is the file's fault, blamed from the third attempt.
  */
 export function conversionCpuSeconds(durationSeconds: number | null, framesPerSecond: number | null, maxSeconds: number): number {
-  const frameRateFactor = Math.max(1, (framesPerSecond ?? CPU_BUDGET_FRAMES_PER_SECOND) / CPU_BUDGET_FRAMES_PER_SECOND);
-  return Math.ceil(CONVERT_CPU_BASE_SECONDS + (durationSeconds ?? maxSeconds) * CONVERT_CPU_SECONDS_PER_VIDEO_SECOND * frameRateFactor);
+  const perVideoSecond = CONVERT_CPU_SECONDS_PER_VIDEO_SECOND * frameRateFactor(framesPerSecond);
+  return Math.ceil(CONVERT_CPU_BASE_SECONDS + (durationSeconds ?? maxSeconds) * perVideoSecond);
 }
 
 /** What ffprobe is asked of the converted file. */
@@ -371,13 +413,38 @@ async function checkOutput(output: string, facts: VideoFacts, run: VideoToolRun)
   return bytes;
 }
 
-/** A video longer than the worker converts: its conversion fails for good, `too-long`, with no retries (Ruling AR). */
-function tooLong(durationSeconds: number | null, options: Pick<ConvertOptions, "convertMaxSeconds">): PermanentJobError | null {
-  if (durationSeconds === null || durationSeconds <= options.convertMaxSeconds) return null;
+/** A video too long to convert (tooLongToConvert): its conversion fails for good, `too-long`, with no retries. */
+function tooLong(
+  durationSeconds: number | null,
+  framesPerSecond: number | null,
+  options: Pick<ConvertOptions, "convertMaxSeconds">,
+): PermanentJobError | null {
+  if (durationSeconds === null || !tooLongToConvert(durationSeconds, framesPerSecond, options.convertMaxSeconds)) return null;
+  const frames = Math.round(durationSeconds * countedFramesPerSecond(framesPerSecond));
   return new PermanentJobError(
     "too-long",
-    `The video is ${Math.round(durationSeconds)} s long, past the ${options.convertMaxSeconds} s the worker converts`,
+    `The video is ${Math.round(durationSeconds)} s long, ${frames} frames counted at its frame rate (at most 240), past the ` +
+      `${options.convertMaxSeconds} s and ${options.convertMaxSeconds * MAX_FRAMES_PER_CONVERTED_SECOND} frames the worker converts`,
   );
+}
+
+/**
+ * A conversion's failure, its wall-clock time-outs counted in a row (Ruling BH): one is retried,
+ * leaving its count in the job's output for the next attempt (RetriedJobError); the third in a row
+ * fails it for good, `too-slow`, as a runaway file would otherwise hold a conversion's slot for its
+ * thirteen attempts' time-outs. Its video stays ready with its poster and copy, and the couple can
+ * retry it (retryProcessing). Any other failure leaves no count, so it starts again from one.
+ */
+function withTimeOutsCounted(error: unknown, job: MediaJob): unknown {
+  if (!(error instanceof ToolTimeoutError)) return error;
+  const before = Number(job.previousOutput?.consecutiveTimeouts ?? 0);
+  const timeOuts = (Number.isInteger(before) && before > 0 ? before : 0) + 1;
+  if (timeOuts >= TIME_OUTS_FOR_GOOD) {
+    return new PermanentJobError("too-slow", `${error.message}, ${timeOuts} time-outs in a row`);
+  }
+  return new RetriedJobError(`${error.message} (time-out ${timeOuts} in a row; the third fails it as too-slow)`, {
+    consecutiveTimeouts: timeOuts,
+  });
 }
 
 /** Downloads, probes, converts, checks and uploads, in the job's scratch folder. */
@@ -404,20 +471,24 @@ async function convertIn(
   await saveOriginal(originalKey, paths.original, job.signal);
   const convertStartedAt = performance.now();
   const facts = await probeVideo(SCRATCH_FILE_READING, paths.original, run, PROBE_MILLISECONDS);
-  // Its own length, read from the file itself, decides: the row's could be a poster's from a file since replaced.
-  const refusal = tooLong(facts.durationSeconds, options);
+  // Its own length and frame rate, read from the file itself, decide: the row's could be a poster's from a file since replaced.
+  const refusal = tooLong(facts.durationSeconds, facts.framesPerSecond, options);
   if (refusal) throw refusal;
   const threads = await withConversionThreads(options, async (threads) => {
-    await runVideoTool(
-      "ffmpeg",
-      convertArgs(facts, paths, threads, options, capturedAt),
-      {
-        ...run,
-        memoryBytes: options.convertMemoryBytes,
-        cpuSeconds: conversionCpuSeconds(facts.durationSeconds, facts.framesPerSecond, options.convertMaxSeconds),
-      },
-      conversionMilliseconds(facts.durationSeconds),
-    );
+    try {
+      await runVideoTool(
+        "ffmpeg",
+        convertArgs(facts, paths, threads, options, capturedAt),
+        {
+          ...run,
+          memoryBytes: options.convertMemoryBytes,
+          cpuSeconds: conversionCpuSeconds(facts.durationSeconds, facts.framesPerSecond, options.convertMaxSeconds),
+        },
+        conversionMilliseconds(facts.durationSeconds, facts.framesPerSecond),
+      );
+    } catch (error) {
+      throw withTimeOutsCounted(error, job);
+    }
     return threads;
   });
   const outputBytes = await checkOutput(paths.output, facts, run);
@@ -455,8 +526,9 @@ export async function convertVideo(job: MediaJob, options: ConvertOptions): Prom
     );
     return;
   }
-  // Past the longest the worker converts: failed at once, before any download (the poster's probe said so).
-  const refusal = tooLong(item.durationSeconds, options);
+  // Past the longest the worker converts: failed at once, before any download (the poster's probe
+  // said so; the row keeps no frame rate, so the file's is checked once probed).
+  const refusal = tooLong(item.durationSeconds, null, options);
   if (refusal) throw refusal;
   const original = await headOriginal(item.originalKey, { signal: job.signal });
   if (!original) throw new Error(`The original ${item.originalKey} isn't in the private bucket`);

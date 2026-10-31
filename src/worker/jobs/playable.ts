@@ -81,6 +81,13 @@ const SCRATCH_MARGIN_BYTES = 64 * 1024 * 1024;
  */
 const MAX_INDEX_BYTES = 64 * 1024 * 1024;
 
+/**
+ * A media.playable job's data: its video, and the generation of the files it is sent for, which
+ * the sweeper's step 5 tells one generation's job from another's by. The job itself reads only the
+ * id: what it copies is whatever generation the row is in when it runs.
+ */
+export type PlayableJobData = { mediaId: string; generation: number };
+
 /** What the job takes from the worker's settings. */
 export type PlayableOptions = {
   /** The memory (address space) ffprobe and the copy's ffmpeg may take: WORKER_FFMPEG_MEMORY_BYTES. */

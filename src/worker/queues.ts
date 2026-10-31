@@ -32,6 +32,11 @@ export type MediaJob = {
    */
   signal: AbortSignal;
   retryCount: number;
+  /**
+   * What the job's last attempt left in its output when it failed: a RetriedJobError's facts (a
+   * conversion's time-outs in a row), beside its error. Null or absent on a first attempt.
+   */
+  previousOutput?: Record<string, unknown> | null;
 };
 
 /** What a handler tells the job's log line: the file's size and kind, never anything personal. */
@@ -65,6 +70,26 @@ export class PermanentJobError extends Error {
   ) {
     super(message);
   }
+}
+
+/**
+ * A failure to retry that leaves its next attempt a few facts (MediaJob.previousOutput), kept in
+ * the job's output beside its error: ids and counts only, never anything personal.
+ */
+export class RetriedJobError extends Error {
+  override name = "RetriedJobError";
+  constructor(
+    message: string,
+    readonly output: Record<string, unknown>,
+  ) {
+    super(message);
+  }
+}
+
+/** The output a fetched job's last attempt left, when it is an object. */
+function previousOutputOf(job: Job<Record<string, unknown>>): Record<string, unknown> | null {
+  const output = (job as Partial<JobWithMetadata<Record<string, unknown>>>).output;
+  return output !== null && typeof output === "object" && !Array.isArray(output) ? (output as Record<string, unknown>) : null;
 }
 
 /** The item a job is about, when its data names one. */
@@ -124,6 +149,7 @@ function runJobs(queue: WorkQueueName, handler: MediaJobHandler, gate?: JobGate)
             data: job.data ?? {},
             signal: job.signal,
             retryCount: job.retryCount,
+            previousOutput: job.retryCount > 0 ? previousOutputOf(job) : null,
           });
           console.log(`[worker] ${queue} completed in ${elapsed()} ms ${subject}${describeReport(report)}`);
           return { id: job.id, status: "completed" };
@@ -135,7 +161,8 @@ function runJobs(queue: WorkQueueName, handler: MediaJobHandler, gate?: JobGate)
           console.error(
             `[worker] ${queue} failed in ${elapsed()} ms ${subject} on attempt ${job.retryCount + 1}: ${errorMessage(error)}`,
           );
-          return { id: job.id, status: "failed", output: { error: errorMessage(error) } };
+          const facts = error instanceof RetriedJobError ? error.output : {};
+          return { id: job.id, status: "failed", output: { error: errorMessage(error), ...facts } };
         }
       }),
     );
@@ -222,9 +249,10 @@ export async function startQueueWorkers(
     priorities: WorkOptions = {},
     gate?: JobGate,
   ) =>
-    boss.work<Record<string, unknown>, JobResult[], WorkOptions & { perJobResults: true }>(
+    // With its metadata, so a retried job's handler sees what its last attempt left (previousOutput).
+    boss.work<Record<string, unknown>, JobResult[], WorkOptions & { perJobResults: true; includeMetadata: true }>(
       queue,
-      { ...polling, ...priorities, localConcurrency, perJobResults: true },
+      { ...polling, ...priorities, localConcurrency, perJobResults: true, includeMetadata: true },
       runJobs(queue, handler, gate),
     );
 
