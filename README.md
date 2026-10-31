@@ -46,6 +46,9 @@ src/
     db/ content/       Postgres client, schema, migrations; editable site content
     data/              rsvp.ts (Postgres), media.ts and wishes.ts (stand-ins, see below)
     email/ jobs/       confirmation emails (Resend), sent from a pg-boss job queue
+    storage/           Cloudflare R2 (MinIO locally): object keys, multipart uploads, manifests
+    media/             the upload API's work and the media table's queries
+  worker/              the media worker, a process and image of its own (see below)
     calendar/          calendar files for each celebration
     qr.ts              album QR codes
   fonts/               self-hosted fonts (no request to Google)
@@ -63,18 +66,20 @@ longer changes it on the site. Anything still to confirm is in square brackets, 
 
 ## Data: Postgres, and what is still a stand-in
 
-RSVPs and the site's editable content (times, venues, text) are stored in Postgres. Schema
-migrations (`drizzle/`) run at server start. Confirmation emails go out through Resend from a
-pg-boss job queue, never in the request itself. A reply whose confirmation never reached the queue
-(at most three a day go to one address, or the server restarted at the wrong moment) shows as
-"Not sent"; when the queue starts, it tries the last day's again.
+RSVPs, the site's editable content (times, venues, text) and written wishes are stored in
+Postgres, beside the tables the album will use: guests, media, site images, upload events and
+settings (`src/lib/db/schema.ts`). Schema migrations (`drizzle/`) run at server start. A new
+database starts with guest uploads closed (`uploads_open` is false), so no deploy opens them before
+the couple do.
+Confirmation emails go out through Resend from a pg-boss job queue, never in the request itself.
+A reply whose confirmation never reached the queue (at most three a day go to one address, or the
+server restarted at the wrong moment) shows as "Not sent"; when the queue starts, it tries the
+last day's again.
 
-Two files in `src/lib/data/` are still stubs with their final function signatures, so the pages
-won't change when the real backend arrives:
-
-- `media.ts`: a fixed set of sample photos. Next: Postgres rows pointing at objects in Cloudflare R2.
-- `wishes.ts`: sample wishes plus any sent while the server runs. Next: Postgres, with voice and
-  video in R2.
+The album is still a stub with its final function signatures, so the pages won't change when the
+real backend arrives: `listMedia` and `mediaStats` in `src/lib/data/media.ts` return a fixed set
+of sample photos. Next: the media rows, with their files in Cloudflare R2. Voice and video wishes
+are next too.
 
 Search for `TODO` to find the other placeholders: uploads (presigned multipart to R2), downloads
 (per-celebration zips, built by a separate media worker), voice and video recording, the device
@@ -100,9 +105,11 @@ Set the laptop itself never to sleep as well: the wake lock only holds while the
 
 ```bash
 npm install
-cp .env.example .env.local   # local settings; the Postgres values match docker compose
-docker compose up -d db      # local Postgres
-npm run dev                  # http://localhost:3000
+cp .env.example .env.local      # local settings; the Postgres and MinIO values match docker compose
+docker compose up -d db minio   # local Postgres, and MinIO standing in for R2
+npm run storage:init            # creates MinIO's two buckets (safe to run again)
+npm run seed                    # optional: sample photos and wishes, and opens uploads (safe to run again)
+npm run dev                     # http://localhost:3000
 npm run lint
 npm run build
 ```
@@ -110,9 +117,23 @@ npm run build
 ### Tests
 
 ```bash
-docker compose up -d db
-npm test             # Vitest, against the nona_test database
+docker compose up -d db minio
+npm run storage:init
+npm test             # Vitest, against the nona_test database and MinIO
 npm run test:e2e     # Playwright, against a production build on port 3100
+```
+
+The e2e run starts the media worker beside the site: its production image (`Dockerfile.worker`'s
+`run` target), built from your checkout as it starts (`nona-worker-e2e`; Docker's cache makes later
+runs quick) and run on the host's network as `nona-e2e-worker`, removed when the run ends (its log
+is kept in `test-results/worker.log`). CI builds the image first and names it in `E2E_WORKER_IMAGE`.
+
+The media worker's tests (`npm run test:worker`, `src/worker/`) run ffmpeg and libheif's tools, so
+they run in the worker image's test target, against the same database and MinIO:
+
+```bash
+docker build -f Dockerfile.worker --target test -t nona-worker-test .
+docker run --rm --network host nona-worker-test
 ```
 
 Without `RESEND_API_KEY`, development only logs the email instead of sending it.
@@ -150,6 +171,7 @@ in this repository.
 |---|---|
 | `SITE_URL` | The public address, `https://nobletxnancy.com`, without a trailing slash. Used in QR codes, emails, calendar files and link previews; also passed to the build, because static pages bake it in. |
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | The database on the private network. Without them the site shows its built-in text, but replies, the admin and emails are off. |
+| `GUEST_COOKIE_SECRET` | Signs the cookie that recognises a guest's browser: at least 32 random bytes (`openssl rand -base64 32`). Without it, every page and route that reads the guest cookie fails. Changing it forgets every browser's guests; their personal links bring them back. |
 | `RESEND_API_KEY` | Sends the confirmation emails. Without it, or once Resend's daily limit is reached, a confirmation shows "Sending" in the admin for about 24 to 28 hours of retries, then ends "Failed"; it never claims to have sent. |
 | `EMAIL_FROM` | The sender: a name and an address on a domain verified in Resend. Optional; it defaults to the RSVP address in `src/lib/email/send.ts`. |
 | `EMAIL_REPLY_TO` | Where a guest's reply to the email goes. Several addresses, separated by commas, all receive it. |
@@ -172,3 +194,106 @@ To deploy automatically, put the Dokploy app's deploy URL in the repository secr
 Only `main` builds the image and deploys; running the workflow by hand on another branch runs the
 tests only. To freeze deploys (the wedding week), blank that secret. To roll back, point the app at an earlier
 `:sha-` tag.
+
+## The media worker
+
+Guests' photos and videos are processed by a second process, the media worker (`src/worker/`): its
+own image (`Dockerfile.worker`, Debian trixie with ffmpeg and libheif), on its own box
+(`nona-worker-01`). It takes the jobs the site queues in Postgres (pg-boss): thumbnails, posters,
+conversions, wish recordings, hiding and preview cards, each queue at its own concurrency, so a long
+conversion never holds up a photo (conversions run under `nice -n 19` with capped threads). A job
+that fails for good marks its item `failed`, with the reason its uploader sees.
+
+- It never migrates the database: it waits ("waiting for schema") until the site has applied every
+  migration it was built with, then logs "ready".
+- It saves a heartbeat every 30 s. `GET /api/worker-health` on the site answers 200 while the last
+  one is under 2 minutes old and 503 otherwise, for the uptime check.
+- Every 10 minutes a sweeper queues anything left behind: items uploaded with no job, conversions
+  with no job (or, for one a phone asked for or a highlight, no on-demand job), uploads whose
+  phone dropped at the very last step (it completes them when R2 holds every part), and hidden or
+  deleted items whose public files no job has taken down.
+- **Hiding** (`media.visibility`): an item the couple hide (or its uploader removes, or the couple
+  delete for good) leaves every list at once; then the worker deletes every public file under its
+  folder and purges their exact URLs from Cloudflare's cache (`CF_PURGE_TOKEN`, `CF_ZONE_ID`, 30 URLs
+  a call), retrying until both are done. What it withdraws is recorded on the row first, so a retry
+  purges every one; a permanent delete's original is deleted the same way, once its 30-day lock
+  allows. An unhide processes the item again, its files under new keys, and it keeps its place in
+  the album.
+- **Conversions** (`media.convert`) make a version of a video every phone plays: H.264 High in MP4,
+  within 1920 × 1080 either way up, HDR tone-mapped to SDR, at most 30 fps, AAC stereo, no
+  metadata but its capture time, `moov` first. A phone that can't play an original asks
+  `POST /api/media/[id]/playable`, which sends its conversion at priority 20; the worker takes
+  those (and the couple's highlights) at once. Everything else waits in the backlog, which runs only
+  while the admin's backlog switch is on: the worker reads the switch every 30 s and again before
+  each backlog job, and a job fetched as the switch went off goes back to wait, never failed. Each
+  conversion downloads its original to scratch (twice its size must be free), runs `nice -n 19`
+  under its own memory cap and a CPU-time cap (10 CPU-seconds a second of video and ten minutes:
+  a file that makes ffmpeg work harder than any phone's is blamed on its third attempt), and is
+  checked before it is published: exiting 0 isn't enough. Only the job that claimed a conversion
+  (its lease) carries it on, through its retries; the sweeper puts one whose job is gone back in
+  the queue. A video longer than `WORKER_CONVERT_MAX_SECONDS` isn't converted: its conversion is
+  `failed` with the reason `too-long`, and it plays from its original where a phone can. Measured
+  under `--cpus=3` at the defaults, one conversion alone takes 1 to 3 s a second of video for 4K
+  HEVC HDR (8K: 1.4 to 3.4 s) and 0.4 to 1 s for 1080p60 H.264, on a dev host whose speed varied
+  twofold; each job logs its own speed.
+- On SIGTERM it stops taking jobs, kills ffmpeg and the other tools, and exits within 8 s; the
+  interrupted jobs go back to their queues.
+
+To run it locally against docker compose's database and MinIO: `npm run worker` (it builds
+`dist/worker` first, with `npm run build:worker`). The site must have migrated the database.
+
+**Deploy.** On every push to `main`, GitHub Actions builds the image and pushes it to
+`ghcr.io/thenoblet/nona-worker` (private) as `:latest` and `:sha-<short>`, then calls the repository
+secret `DOKPLOY_WORKER_DEPLOY_URL` (skipped when blank: blank it to freeze the worker's deploys).
+In Dokploy, the `nona26-worker` app runs that image on `nona-worker-01`, with the same `ghcr.io`
+registry login as the site, about 3 CPUs and 12 GB, and the box's scratch folder `/mnt/nona-worker`
+bind-mounted at `/scratch`. The image runs as uid:gid `10001:10001`, the scratch folder's owner. It
+needs no port.
+
+**Exactly one worker container at a time: 1 replica, deployed stop-first** (Swarm
+`update_config.order: stop-first`, never start-first). Dokploy sets this in the app's Swarm
+settings, under Update Config, and defaults to start-first, so change it there when creating
+`nona26-worker`. Each start removes the scratch folders it
+finds (an earlier run's leftovers) and runs its own sweeper, so a second container running beside it,
+even for the seconds of a deploy, could remove a running job's files or queue an item twice. The
+old container stops within 8 s of SIGTERM and its interrupted jobs go back to their queues, so
+stop-first costs only those seconds. To process more at once, raise the concurrency variables
+below, never the replicas.
+
+`pg-boss` is pinned to one exact version in `package.json`: the sweeper reads pg-boss's own `job`
+table to see which items have a job, so upgrading pg-boss is a deliberate change, made with
+`npm run test:worker`.
+
+Its environment:
+
+| Variable | Default | What it is |
+|---|---|---|
+| `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | | The site's database. |
+| `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`, `MEDIA_BASE_URL` | | Cloudflare R2, as the site has them. |
+| `WORKER_SCRATCH_DIR` | required | `/scratch`, where the scratch folder is mounted. Without it the worker refuses to start, rather than fill the container's own disk. |
+| `CF_PURGE_TOKEN` | required | A Cloudflare API token allowed only "Zone · Cache Purge" on the site's zone. When an item is hidden or deleted, the worker deletes its public files and purges their URLs from Cloudflare's cache with it. Without it (or `CF_ZONE_ID`) in production, every hide's job fails and is retried, and the sweeper sends it again, until both are set. |
+| `CF_ZONE_ID` | required | The site's Cloudflare zone id, for the purge. |
+| `WORKER_PHOTO_CONCURRENCY` | 2 | Photos processed at once. |
+| `WORKER_POSTER_CONCURRENCY` | 1 | Videos probed and given a poster at once. |
+| `WORKER_WISH_CONCURRENCY` | 1 | Voice and video wishes at once. |
+| `WORKER_JPEG_CONCURRENCY` | 1 | Full-size JPEGs of HEIC photos at once. |
+| `WORKER_VISIBILITY_CONCURRENCY` | 2 | Hides and unhides at once. |
+| `WORKER_CARD_CONCURRENCY` | 1 | Link-preview cards at once. |
+| `WORKER_CONVERT_ON_DEMAND_CONCURRENCY` | 1 | Conversions a phone asked for, or highlights, at once. |
+| `WORKER_CONVERT_BACKLOG_CONCURRENCY` | 1 | Backlog conversions at once, while the admin's backlog switch is on. |
+| `WORKER_X264_THREADS` | 2 | x264's threads in each conversion (x264 adds a lookahead thread of its own). |
+| `WORKER_X264_PRESET` | `veryfast` | x264's preset in each conversion, at CRF 23: one of `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. A slower one compresses better and takes longer: measure a 4K clip before changing it. |
+| `WORKER_CONVERT_MAX_SECONDS` | 1800 | The longest video converted, in seconds, from 60 to 86400. A longer one's conversion is `failed` at once with the reason `too-long` (no job, no retries); the video stays in the album with its poster, plays from its original where a phone can, and its original stays downloadable. |
+| `WORKER_FFMPEG_DECODER_THREADS` | 2 | ffmpeg's decoder threads in each conversion (its `-threads` before the input), which would otherwise be the host's CPUs. Two decode 4K HEVC in about real time. |
+| `WORKER_SHARP_THREADS` | 1 | sharp's threads in each photo. |
+| `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job. Measured under `--cpus=3`, 2 made a 4K HDR conversion slower (18.4 s against 12 to 17 s, and 43 s against 31 s, for 10 s of video), not faster. |
+| `WORKER_HEIF_THREADS` | 1 | `heif-dec`'s codec and tile threads for each HEIC (libheif would otherwise decode 4 tiles at once). |
+| `WORKER_HEIF_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `heif-info` and `heif-dec` may take for one HEIC, at least 256 MiB: a backstop against a crafted file. A 48 MP iPhone photo decodes in about 300 MB; a file that hits the cap fails as `corrupt`. |
+| `WORKER_POSTER_THREADS` | 1 | ffmpeg's `-threads` for each video's poster: decoding its frame and writing it. Each thread takes its own stack and heap within `WORKER_FFMPEG_MEMORY_BYTES`: measure the cap again before raising this or `WORKER_FFMPEG_FILTER_THREADS`. |
+| `WORKER_FFMPEG_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `ffprobe` and `ffmpeg` may take for one video's probe and poster, at least 1 GiB: a backstop against a crafted file. Measured on one thread each (`WORKER_POSTER_THREADS` and `WORKER_FFMPEG_FILTER_THREADS` at 1), a 4K HDR poster needs about 830 MiB and an 8K one about 980 MiB. A file that runs out of memory under the cap three times fails as `corrupt`; a thread ffmpeg can't start (`pthread_create`, "Resource temporarily unavailable") is the worker's trouble and retries. |
+| `WORKER_CONVERT_MEMORY_BYTES` | 3221225472 (3 GiB) | The most memory (address space) a conversion's `ffmpeg` may take, at least 2 GiB: a backstop against a crafted file. Measured in the worker image under `--cpus=3` at the default threads, a 4K HEVC HLG conversion peaks at about 1,720 MiB (RSS about 730 MiB), an 8K HEVC one at about 1,790 MiB (RSS about 830 MiB), 1080p60 H.264 at about 1,310 MiB. More decoder, x264 or filter threads raise it: measure again before raising them. As for posters, running out of memory under the cap three times fails the conversion, and the video keeps its poster. |
+| `WORKER_QUEUE_POOL_SIZE` | 10 | Database connections for the job queue. |
+
+The defaults suit about 3 CPUs and 12 GB. Thread counts never follow the machine's core count,
+which inside Docker is the host's, not the container's share; for a bigger box (the backlog week),
+raise the container's CPUs and these numbers together.

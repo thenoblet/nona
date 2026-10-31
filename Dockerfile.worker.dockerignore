@@ -1,0 +1,18 @@
+# The worker image's build context (Dockerfile.worker): only what it builds and tests from. The
+# package files, the configs, src/, test/, scripts/ and the drizzle/ migrations; nothing else, so no
+# env file, note or mockup ever reaches an image.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!vitest.config.ts
+!vitest.worker.config.ts
+!scripts
+!src
+!test
+!drizzle
+
+# never these, even inside the folders above
+**/.env*
+**/node_modules
+**/.DS_Store

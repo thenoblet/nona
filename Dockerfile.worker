@@ -1,0 +1,68 @@
+# The media worker's image: Node 22 on Debian trixie with ffmpeg and libheif, running the bundled
+# worker (scripts/build-worker.mjs) as uid:gid 10001:10001, the owner of nona-worker-01's scratch
+# folder (Ruling G). Dokploy pulls it from ghcr.io/thenoblet/nona-worker.
+#
+#   docker build -f Dockerfile.worker -t nona-worker .                  the image Dokploy runs
+#   docker build -f Dockerfile.worker --target test -t nona-worker-test .
+#   docker run --rm --network host nona-worker-test                   npm run test:worker, against
+#                                                                     the local Postgres and MinIO
+#
+# node:22-trixie-slim, pinned by digest: `docker buildx imagetools inspect node:22-trixie-slim`
+# on 30 Oct 2026 (an image built 28 Oct 2026). Bump it deliberately, with the tests.
+ARG NODE_IMAGE=node:22-trixie-slim@sha256:2117f713a417f3aff682ac8f5bc2ebbdf1beed51f36e67ab1e0fd3866b6d2d8f
+
+# The tools the worker runs: ffmpeg and ffprobe (video), heif-dec with the HEVC decoder (iPhone
+# photos), rclone (the Azure copy, Plan 3), and the CA certificates for R2 and GHCR.
+FROM ${NODE_IMAGE} AS tools
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates ffmpeg libheif-examples libheif-plugin-libde265 rclone \
+  && rm -rf /var/lib/apt/lists/* \
+  && groupadd --gid 10001 worker \
+  && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin worker
+
+# Every dependency, for the build and the tests.
+FROM ${NODE_IMAGE} AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM deps AS build
+COPY tsconfig.json ./
+COPY scripts/build-worker.mjs scripts/
+COPY src src
+COPY drizzle drizzle
+RUN npm run build:worker
+
+# Production dependencies only: the bundle leaves every package to node_modules, and its build
+# fails if it reaches one that isn't a production dependency.
+FROM ${NODE_IMAGE} AS production-deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# The tests (npm run test:worker), as the worker's own user. heif-enc's HEVC encoder makes the
+# HEIC fixtures. WORKER_TEST_IMAGE makes the HEIC tests run here whatever happens, never skip.
+FROM tools AS test
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libheif-plugin-x265 \
+  && rm -rf /var/lib/apt/lists/*
+ENV WORKER_TEST_IMAGE=1
+WORKDIR /app
+COPY --from=deps --chown=10001:10001 /app/node_modules ./node_modules
+COPY --chown=10001:10001 . .
+USER 10001:10001
+CMD ["npm", "run", "test:worker"]
+
+FROM tools AS run
+LABEL org.opencontainers.image.source=https://github.com/thenoblet/nona
+# The commit this image was built from.
+ARG GIT_SHA=dev
+ENV APP_VERSION=$GIT_SHA \
+    NODE_ENV=production \
+    NODE_OPTIONS=--enable-source-maps
+WORKDIR /app
+COPY --from=production-deps /app/node_modules ./node_modules
+COPY --from=build /app/dist/worker ./dist/worker
+USER 10001:10001
+CMD ["node", "dist/worker/main.mjs"]

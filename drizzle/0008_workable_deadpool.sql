@@ -1,0 +1,1 @@
+CREATE INDEX "media_couple_hidden_idx" ON "media" USING btree ("file_fingerprint","size_bytes") WHERE "media"."hidden_at" is not null and not "media"."removed_by_uploader" and "media"."deleted_at" is null;

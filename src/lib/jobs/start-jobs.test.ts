@@ -5,14 +5,14 @@ const queue = vi.hoisted(() => {
   const order: string[] = [];
   return {
     order,
-    createQueue: vi.fn(async () => {
-      order.push("createQueue");
+    createQueue: vi.fn(async (name: string) => {
+      order.push(`createQueue ${name}`);
     }),
-    updateQueue: vi.fn(async () => {
-      order.push("updateQueue");
+    updateQueue: vi.fn(async (name: string) => {
+      order.push(`updateQueue ${name}`);
     }),
-    work: vi.fn(async () => {
-      order.push("work");
+    work: vi.fn(async (name: string) => {
+      order.push(`work ${name}`);
       return "worker";
     }),
   };
@@ -42,6 +42,7 @@ vi.mock("./rsvp-confirmation", () => ({
 }));
 
 import { CONFIRMATION_QUEUE, QUEUES } from "./boss";
+import { MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES } from "./media-queues";
 import { startJobs } from "./start-jobs";
 
 type ConfirmationWorker = (
@@ -62,7 +63,33 @@ describe("startJobs", () => {
     expect(queue.createQueue).toHaveBeenCalledWith(QUEUES.rsvpConfirmation, CONFIRMATION_QUEUE);
     // createQueue leaves an existing queue's settings alone; updateQueue applies the new ones.
     expect(queue.updateQueue).toHaveBeenCalledWith(QUEUES.rsvpConfirmation, CONFIRMATION_QUEUE);
-    expect(queue.order).toEqual(["createQueue", "updateQueue", "work", "requeue"]);
+    const confirmationSteps = queue.order.filter((step) => !step.includes(" media."));
+    expect(confirmationSteps).toEqual([
+      `createQueue ${QUEUES.rsvpConfirmation}`,
+      `updateQueue ${QUEUES.rsvpConfirmation}`,
+      `work ${QUEUES.rsvpConfirmation}`,
+      "requeue",
+    ]);
+  });
+
+  it("creates every media queue with its options, so the app can send media jobs before the worker first runs", async () => {
+    await startJobs();
+    for (const name of Object.values(MEDIA_QUEUES)) {
+      expect(queue.createQueue).toHaveBeenCalledWith(name, MEDIA_QUEUE_OPTIONS[name]);
+      // updateQueue refuses a policy, which can't change after creation; it gets everything else.
+      const { policy, ...updatable } = MEDIA_QUEUE_OPTIONS[name];
+      expect(policy).toBe("standard");
+      expect(queue.updateQueue).toHaveBeenCalledWith(name, updatable);
+    }
+    // Before any worker starts: a failure here retries the whole start-up, which must not leave a
+    // second confirmation worker running.
+    const lastMediaStep = Math.max(...queue.order.flatMap((step, index) => (step.includes(" media.") ? [index] : [])));
+    expect(lastMediaStep).toBeLessThan(queue.order.indexOf(`work ${QUEUES.rsvpConfirmation}`));
+  });
+
+  it("starts no media worker: the media worker takes those jobs", async () => {
+    await startJobs();
+    expect(queue.work.mock.calls.map(([name]) => name)).toEqual([QUEUES.rsvpConfirmation]);
   });
 
   it("hands each job's reply and attempt to the confirmation's handler, one job after another", async () => {

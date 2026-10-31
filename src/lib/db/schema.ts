@@ -1,6 +1,23 @@
-import { sql } from "drizzle-orm";
-import { check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql, type SQL } from "drizzle-orm";
+import {
+  bigint,
+  boolean,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  real,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  type AnyPgColumn,
+} from "drizzle-orm/pg-core";
 import type { EventId } from "@/content/wedding";
+import { EVENT_IDS } from "@/lib/content/schema";
+import type { DerivedVariant } from "@/lib/storage/keys";
 
 export const rsvps = pgTable(
   "rsvps",
@@ -60,3 +77,270 @@ export const siteContent = pgTable(
   },
   (table) => [primaryKey({ columns: [table.key, table.version] })],
 );
+
+/** The values a text column of the media tables may hold, checked by the database too. */
+export const MEDIA_PURPOSES = ["album", "wish", "site"] as const;
+export const MEDIA_FILE_KINDS = ["photo", "video", "audio"] as const;
+export const MEDIA_STATUSES = ["uploading", "uploaded", "ready", "failed"] as const;
+export const CONVERSION_STATES = ["none", "queued", "converting", "done", "failed"] as const;
+export const WISH_KINDS = ["text", "voice", "video"] as const;
+export const UPLOAD_EVENT_KINDS = ["part-retry", "failed", "resumed", "completed"] as const;
+
+/**
+ * The longest a guest's name may be, in characters (code points, as Postgres counts them): it
+ * shows on every album tile and in emails. The same as a wish's signature.
+ */
+export const NAME_MAX_CHARACTERS = 80;
+/** The longest an original's filename may be, in characters. */
+export const FILENAME_MAX_CHARACTERS = 255;
+
+/** A check that the column holds one of these values (constants of ours, never guest input). */
+function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
+  return sql`${column} in (${sql.raw(values.map((value) => `'${value}'`).join(", "))})`;
+}
+
+/** A check that the text column holds at most this many characters (or is null). */
+function atMost(column: AnyPgColumn, maxCharacters: number): SQL {
+  return sql`char_length(${column}) <= ${sql.raw(String(maxCharacters))}`;
+}
+
+const withTimezone = { withTimezone: true } as const;
+
+/**
+ * Each browser that has RSVPed or uploaded. Guests are never merged: a browser's cookie lists every
+ * guest it knows (its own, plus any opened through a personal link).
+ */
+export const guests = pgTable(
+  "guests",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    /** The name the guest typed (at most 80 characters), or null when they gave none. */
+    displayName: text("display_name"),
+    /** The personal link's secret: 32 random bytes in base64url. */
+    linkToken: text("link_token").notNull().unique(),
+    createdAt: timestamp("created_at", withTimezone).notNull().defaultNow(),
+  },
+  (table) => [check("guests_display_name_length", atMost(table.displayName, NAME_MAX_CHARACTERS))],
+);
+
+/**
+ * One row per upload: album photos and videos, voice and video wishes, and the site's own photos.
+ * A row is never removed once uploaded: "Delete permanently" leaves it as a tombstone (deleted_at).
+ */
+export const media = pgTable(
+  "media",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    purpose: text("purpose").$type<(typeof MEDIA_PURPOSES)[number]>().notNull(),
+    kind: text("kind").$type<(typeof MEDIA_FILE_KINDS)[number]>().notNull(),
+    /** The uploading guest; null for a site photo, which the couple upload from the admin. */
+    guestId: uuid("guest_id").references(() => guests.id),
+    /** The name shown with the item, as the uploader gave it (at most 80 characters); null for none. */
+    uploaderName: text("uploader_name"),
+    celebration: text("celebration").$type<EventId | "more">().notNull(),
+    /** Set once the couple move an item, so re-processing never moves it back. */
+    celebrationSetByAdmin: boolean("celebration_set_by_admin").notNull().default(false),
+
+    /** `originals/<id>.<ext>` in the private bucket (originalKey). */
+    originalKey: text("original_key").notNull().unique(),
+    originalFilename: text("original_filename").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    contentType: text("content_type").notNull(),
+    /** sha-256 of the size, the first MB and the last MB, so a re-picked file resumes its upload. */
+    fileFingerprint: text("file_fingerprint"),
+    multipartUploadId: text("multipart_upload_id"),
+    startedAt: timestamp("started_at", withTimezone).notNull().defaultNow(),
+    /** When the upload completed, which starts the original's 30-day lock. */
+    uploadedAt: timestamp("uploaded_at", withTimezone),
+    capturedAt: timestamp("captured_at", withTimezone),
+    /** When the item first became viewable: the album's order and cursor. */
+    listedAt: timestamp("listed_at", withTimezone),
+
+    status: text("status").$type<(typeof MEDIA_STATUSES)[number]>().notNull().default("uploading"),
+    failureReason: text("failure_reason"),
+    /**
+     * The derived files' keys in the public bucket, by variant. Not empty only while those files may
+     * be public: a hidden or deleted item keeps them until the visibility job has deleted and purged
+     * them (the sweeper looks for any it hasn't), then they are cleared.
+     */
+    derived: jsonb("derived").$type<Partial<Record<DerivedVariant, string>>>().notNull().default({}),
+    /**
+     * Which making of the derived files is current, part of their keys' content hash: every unhide
+     * raises it, so files made again never share a key with ones a hide is still deleting, or with
+     * a URL a cache remembers as gone.
+     */
+    derivedGeneration: integer("derived_generation").notNull().default(0),
+    /**
+     * Storage keys being withdrawn: public files to delete and purge from Cloudflare, and, for
+     * "Delete permanently", the original. Recorded before anything is deleted and cleared once all
+     * is done, so a retry (or the sweeper) finishes what an attempt started, even for files no
+     * listing shows any more. Null when nothing is pending.
+     */
+    withdrawingKeys: text("withdrawing_keys").array(),
+    width: integer("width"),
+    height: integer("height"),
+    durationSeconds: real("duration_seconds"),
+    /** The raw ThumbHash, base64; the client decodes it. */
+    thumbhash: text("thumbhash"),
+    averageColor: text("average_color"),
+    videoCodec: text("video_codec"),
+    /** Null until the video is probed. */
+    browserPlayable: boolean("browser_playable"),
+
+    conversion: text("conversion").$type<(typeof CONVERSION_STATES)[number]>().notNull().default("none"),
+    conversionRequestedAt: timestamp("conversion_requested_at", withTimezone),
+    /**
+     * The lease on a `converting` conversion: the media.convert job (pg-boss keeps a job's id across
+     * its retries) that claimed it, and so the only one that may carry it on (Ruling AQ).
+     */
+    conversionJobId: uuid("conversion_job_id"),
+    /** Why a `failed` conversion failed, for its wording: "too-long", "corrupt", "processing-failed"… */
+    conversionFailureReason: text("conversion_failure_reason"),
+    highlight: boolean("highlight").notNull().default(false),
+
+    hiddenAt: timestamp("hidden_at", withTimezone),
+    /** Who hid it: an admin, or the guest who removed their own upload. */
+    hiddenBy: text("hidden_by"),
+    removedByUploader: boolean("removed_by_uploader").notNull().default(false),
+    deletedAt: timestamp("deleted_at", withTimezone),
+  },
+  (table) => [
+    // The album's pages and its new-items count: visible album items, newest listed first, the id
+    // breaking ties. hidden_at and deleted_at are the index's condition, not leading columns:
+    // Postgres doesn't treat "is null" as fixing a column's value, so with them as columns every
+    // `order by listed_at desc, id desc` would sort. Descending with nulls first, Postgres's own
+    // order for DESC, so a plain `desc()` reads it (drizzle-kit writes NULLS LAST otherwise).
+    index("media_album_cursor_idx")
+      .on(table.purpose, table.status, table.listedAt.desc().nullsFirst(), table.id.desc().nullsFirst())
+      .where(sql`${table.hiddenAt} is null and ${table.deletedAt} is null`),
+    index("media_guest_id_idx").on(table.guestId),
+    // Re-picking a file finds its unfinished upload.
+    index("media_resume_idx")
+      .on(table.guestId, table.sizeBytes, table.fileFingerprint)
+      .where(sql`${table.status} = 'uploading'`),
+    // Ruling AX: a start of a file the couple hid is refused, whichever phone sends it. Only the
+    // items they hid (not those a guest removed, nor the deleted): a handful at most.
+    index("media_couple_hidden_idx")
+      .on(table.fileFingerprint, table.sizeBytes)
+      .where(sql`${table.hiddenAt} is not null and not ${table.removedByUploader} and ${table.deletedAt} is null`),
+    // The media worker's sweeper (Task 8), every 10 minutes. Each holds only the rows in transit:
+    // items waiting to be processed, conversions waiting, and unfinished uploads in the order the
+    // sweeper pages through them.
+    index("media_uploaded_idx").on(table.uploadedAt).where(sql`${table.status} = 'uploaded'`),
+    index("media_conversion_queued_idx")
+      .on(table.listedAt)
+      .where(sql`${table.status} = 'ready' and ${table.conversion} = 'queued'`),
+    // Conversions under way, which the sweeper checks for one whose job is gone (Ruling AQ).
+    index("media_conversion_converting_idx")
+      .on(table.listedAt)
+      .where(sql`${table.status} = 'ready' and ${table.conversion} = 'converting'`),
+    index("media_unfinished_upload_idx")
+      .on(table.startedAt, table.id)
+      .where(sql`${table.status} = 'uploading' and ${table.multipartUploadId} is not null`),
+    // Hidden or deleted items whose public files no visibility job has withdrawn yet, and items with
+    // a withdrawal under way (Task 12), which the sweeper sends a job for: a handful at most.
+    index("media_withdrawal_idx")
+      .on(table.id)
+      .where(
+        sql`((${table.hiddenAt} is not null or ${table.deletedAt} is not null) and ${table.derived} <> '{}'::jsonb) or ${table.withdrawingKeys} is not null`,
+      ),
+    check("media_purpose_check", oneOf(table.purpose, MEDIA_PURPOSES)),
+    check("media_kind_check", oneOf(table.kind, MEDIA_FILE_KINDS)),
+    check("media_status_check", oneOf(table.status, MEDIA_STATUSES)),
+    check("media_conversion_check", oneOf(table.conversion, CONVERSION_STATES)),
+    check("media_celebration_check", oneOf(table.celebration, [...EVENT_IDS, "more"])),
+    check("media_uploader_name_length", atMost(table.uploaderName, NAME_MAX_CHARACTERS)),
+    check("media_original_filename_length", atMost(table.originalFilename, FILENAME_MAX_CHARACTERS)),
+    // A guest removing their own upload hides it as well (Task 12 sets both).
+    check("media_removed_is_hidden", sql`not ${table.removedByUploader} or ${table.hiddenAt} is not null`),
+  ],
+);
+
+/** The guestbook. A voice or video wish points at its recording, a media row of purpose "wish". */
+export const wishes = pgTable(
+  "wishes",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    guestId: uuid("guest_id").references(() => guests.id),
+    signedAs: text("signed_as").notNull(),
+    kind: text("kind").$type<(typeof WISH_KINDS)[number]>().notNull(),
+    message: text("message"),
+    mediaId: uuid("media_id").references(() => media.id),
+    createdAt: timestamp("created_at", withTimezone).notNull().defaultNow(),
+    hiddenAt: timestamp("hidden_at", withTimezone),
+    hiddenBy: text("hidden_by"),
+    deletedAt: timestamp("deleted_at", withTimezone),
+  },
+  (table) => [
+    // The wall: visible wishes, newest first.
+    index("wishes_wall_idx")
+      .on(table.createdAt.desc().nullsFirst(), table.id.desc().nullsFirst())
+      .where(sql`${table.hiddenAt} is null and ${table.deletedAt} is null`),
+    check("wishes_kind_check", oneOf(table.kind, WISH_KINDS)),
+    check("wishes_text_has_message", sql`${table.kind} <> 'text' or ${table.message} is not null`),
+    check("wishes_recording_has_media", sql`${table.kind} = 'text' or ${table.mediaId} is not null`),
+    // A recording belongs to one wish.
+    uniqueIndex("wishes_media_id_unique").on(table.mediaId).where(sql`${table.mediaId} is not null`),
+  ],
+);
+
+/**
+ * The site's own photos, by slot (the home hero, each story photo, each preview card…). Every save
+ * adds a row; the newest row per slot is live, and an older one can be restored.
+ */
+export const siteImages = pgTable(
+  "site_images",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    slot: text("slot").notNull(),
+    mediaId: uuid("media_id")
+      .notNull()
+      .references(() => media.id),
+    alt: text("alt").notNull(),
+    /** The focal point, 0–1 from the left and the top, used as object-position. */
+    focalX: real("focal_x").notNull().default(0.5),
+    focalY: real("focal_y").notNull().default(0.5),
+    /** The worker-drawn link-preview card, for preview slots, in the public bucket. */
+    cardKey: text("card_key"),
+    savedBy: text("saved_by").notNull(),
+    savedAt: timestamp("saved_at", withTimezone).notNull().defaultNow(),
+  },
+  (table) => [
+    index("site_images_slot_newest_idx").on(
+      table.slot,
+      table.savedAt.desc().nullsFirst(),
+      table.id.desc().nullsFirst(),
+    ),
+    check(
+      "site_images_focal_point_inside",
+      sql`${table.focalX} between 0 and 1 and ${table.focalY} between 0 and 1`,
+    ),
+  ],
+);
+
+/** Failures and retries the phones report while uploading, for the admin's status page. */
+export const uploadEvents = pgTable(
+  "upload_events",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    guestId: uuid("guest_id").references(() => guests.id),
+    // A cancelled upload's row is deleted; its events stay.
+    mediaId: uuid("media_id").references(() => media.id, { onDelete: "set null" }),
+    kind: text("kind").$type<(typeof UPLOAD_EVENT_KINDS)[number]>().notNull(),
+    reason: text("reason"),
+    detail: jsonb("detail").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", withTimezone).notNull().defaultNow(),
+  },
+  (table) => [
+    index("upload_events_created_at_idx").on(table.createdAt.desc().nullsFirst()),
+    index("upload_events_media_id_idx").on(table.mediaId),
+    check("upload_events_kind_check", oneOf(table.kind, UPLOAD_EVENT_KINDS)),
+  ],
+);
+
+/** Switches and markers shared by the app and the worker, one JSON value per key (settings.ts). */
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").$type<unknown>().notNull(),
+  updatedAt: timestamp("updated_at", withTimezone).notNull().defaultNow(),
+});

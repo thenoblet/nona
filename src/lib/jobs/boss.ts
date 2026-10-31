@@ -10,12 +10,23 @@ const globalWithQueue = globalThis as typeof globalThis & {
   __nonaJobQueue?: Promise<PgBoss> | null;
 };
 
-/** One pg-boss per process, on its own small pool so jobs never starve the site. */
-export function getBoss(): Promise<PgBoss> {
+/** The Postgres schema pg-boss keeps its tables in. The worker's sweeper reads its jobs there. */
+export const JOB_QUEUE_SCHEMA = "pgboss";
+
+/** The web app's pool: small, so jobs never starve the site. */
+export const WEB_QUEUE_POOL_SIZE = 3;
+
+/**
+ * One pg-boss per process, on its own pool. The first call opens it, so its pool size counts: the
+ * web app's is small (the default); the media worker, which runs a dozen handlers at once, asks
+ * for its own when it starts, before anything else in it calls this.
+ */
+export function getBoss(poolSize: number = WEB_QUEUE_POOL_SIZE): Promise<PgBoss> {
   globalWithQueue.__nonaJobQueue ??= (async () => {
     const boss = new PgBoss({
       ...dbConfig(),
-      max: 3,
+      schema: JOB_QUEUE_SCHEMA,
+      max: poolSize,
       connectionTimeoutMillis: 5000,
       // Sent to the server on every connection: a stalled statement is cut off after 10 s.
       options: "-c statement_timeout=10000",

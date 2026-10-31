@@ -1,12 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { lazy, Suspense, useState, type ComponentType } from "react";
 import type { EventId } from "@/content/wedding";
 import type { Celebration } from "@/lib/content/schema";
 import type { MediaItem } from "@/lib/data/types";
 import { Halo } from "@/components/ui/Halo";
 import { Segmented } from "@/components/ui/Segmented";
 import { MediaTile } from "./MediaTile";
+import { usePersonalLink } from "./uploader/personal-link";
+
+// Its own chunk, loaded only once the page knows the guest's link. One that can't be fetched leaves
+// the row out, never the album.
+const PersonalLinkStrip = lazy<ComponentType<{ link: string }>>(() =>
+  import("./PersonalLinkOffer")
+    .then((module) => ({ default: module.PersonalLinkStrip }))
+    .catch(() => ({ default: NothingShown })),
+);
+
+function NothingShown(): null {
+  return null;
+}
 
 type EventFilter = EventId | "all";
 type Whose = "everyone" | "mine";
@@ -38,6 +51,7 @@ export function AlbumBrowser({
   ];
   const [event, setEvent] = useState<EventFilter>("all");
   const [whose, setWhose] = useState<Whose>("everyone");
+  const personalLink = usePersonalLink();
 
   const shown = items.filter(
     (item) => (event === "all" || item.event === event) && (whose === "everyone" || item.uploaderDevice === myDevice),
@@ -94,6 +108,13 @@ export function AlbumBrowser({
           {mine ? "Download mine" : "Download all"}
         </button>
       </div>
+
+      {/* The personal link's slim row (gate A). TODO(Task 15): pass the viewer's link from the server. */}
+      {mine && personalLink ? (
+        <Suspense fallback={null}>
+          <PersonalLinkStrip link={personalLink} />
+        </Suspense>
+      ) : null}
 
       {shown.length ? (
         <ul className="m-0 grid list-none grid-cols-3 gap-1.5 p-0 md:grid-cols-4 lg:grid-cols-5">

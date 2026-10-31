@@ -16,7 +16,7 @@ export type WishFormState = {
 const MAX_MESSAGE = 1000;
 const MAX_NAME = 80;
 
-/** Saves a written wish and re-renders the page so it appears on the wall. */
+/** Saves a written wish in Postgres and re-renders the page so it appears on the wall. */
 export async function sendWish(_prev: WishFormState, formData: FormData): Promise<WishFormState> {
   const kind = String(formData.get("kind") ?? "text");
   const message = String(formData.get("message") ?? "").trim();
@@ -24,7 +24,8 @@ export async function sendWish(_prev: WishFormState, formData: FormData): Promis
   const values = { message, signedAs };
 
   if (kind !== "text") {
-    // TODO: voice and video wishes arrive as files uploaded to S3 first.
+    // TODO: voice and video wishes are uploaded to R2 first, through the upload API, then saved
+    // with addWish({ kind, mediaId, signedAs }).
     return { status: "error", values, errors: { form: "Voice and video wishes are on their way. For now, please write yours." } };
   }
 

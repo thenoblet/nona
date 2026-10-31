@@ -1,5 +1,8 @@
-# Local Postgres for development and tests: docker compose up -d db
+# Local services for development and tests:
+#   docker compose up -d db minio
+#   npm run storage:init
 services:
+  # Local Postgres.
   db:
     image: postgres:18
     ports:
@@ -10,3 +13,31 @@ services:
       POSTGRES_DB: nona
     volumes:
       - ./docker/postgres/init:/docker-entrypoint-initdb.d
+
+  # MinIO stands in for Cloudflare R2 (S3 API on port 9000). The upstream minio/minio image is
+  # gone from Docker Hub, so this is Chainguard's build, pinned by digest (the same digest is in
+  # .github/workflows/image.yml). npm run storage:init creates the two buckets.
+  # Its server-wide CORS (any origin, ETag exposed) stands in for R2's bucket CORS, which MinIO
+  # doesn't implement.
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:3b6e40c30ecd5cea627e382ff0b82ca841f58c52294578787043ee80c8ef7c82
+    command: ["server", "/data"]
+    ports:
+      - "9000:9000"
+    environment:
+      # MinIO's well-known local defaults, not a secret.
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    # A volume, not the container's own layer: MinIO's renames fail on overlayfs.
+    volumes:
+      - minio-data:/data
+    # Healthy once MinIO answers (`docker compose up -d --wait minio` waits for it). The image
+    # ships MinIO's own client, mc, whose built-in `local` alias is this server.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  minio-data:

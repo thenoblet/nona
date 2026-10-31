@@ -1,0 +1,77 @@
+import { runProcess, type ProcessError, type ProcessOutput, type RedactedLink } from "../processes";
+
+/**
+ * The hard CPU limit's lead over the soft one: SIGXCPU comes first, so the tool can say it ran out
+ * of CPU time, rather than a SIGKILL that would read as the OOM killer's and be retried.
+ */
+const CPU_HARD_LIMIT_MARGIN_SECONDS = 60;
+
+/*
+ * The programs the worker runs on a guest's file (heif-info and heif-dec for a HEIC, ffprobe and
+ * ffmpeg for a video), each under a memory cap, and what their failures say about whose fault they
+ * were. Each job decides the rest: what its tool printing nonsense, or running past its time, means.
+ */
+
+export type CappedRun = {
+  /** The most address space the tool may take: prlimit --as. A crafted file hits it, a real one never does. */
+  memoryBytes: number;
+  /**
+   * The most CPU time the tool may use, all its threads together, in seconds: prlimit --cpu (RLIMIT_CPU).
+   * Unlike its run time, a busy box can't eat it: time spent waiting for a CPU doesn't count. Past
+   * it the kernel sends SIGXCPU, and SIGKILL a minute of CPU later if the tool hasn't stopped
+   * (ffmpeg catches SIGXCPU and exits 255, "Immediate exit requested"). None when unset.
+   */
+  cpuSeconds?: number;
+  /** The job's signal: aborting it kills the tool. */
+  signal: AbortSignal;
+  timeoutMilliseconds: number;
+  /**
+   * Required, as runProcess's is. `foreground`, the worker's own priority, for what a guest is
+   * waiting for (a photo, a poster), which never waits behind a conversion; `background` (nice 19)
+   * for a conversion.
+   */
+  priority: "background" | "foreground";
+  cwd?: string;
+  /** A presigned link among the arguments, kept out of what the tool printed (runProcess). */
+  redact?: RedactedLink;
+};
+
+/**
+ * Runs `tool` under prlimit --as, at the priority given. prlimit (and nice before it) replaces
+ * itself with the tool, so the job's signal and the time limit kill the tool itself. Resolves with
+ * its stdout and the end of its stderr; a failure is the ProcessError runProcess gives.
+ */
+export function runCapped(tool: string, args: readonly string[], run: CappedRun): Promise<ProcessOutput> {
+  const cpu = run.cpuSeconds === undefined ? [] : [`--cpu=${run.cpuSeconds}:${run.cpuSeconds + CPU_HARD_LIMIT_MARGIN_SECONDS}`];
+  return runProcess("prlimit", [`--as=${run.memoryBytes}`, ...cpu, "--", tool, ...args], {
+    signal: run.signal,
+    timeoutMilliseconds: run.timeoutMilliseconds,
+    priority: run.priority,
+    cwd: run.cwd,
+    redact: run.redact,
+  });
+}
+
+// prlimit's own exit codes when it can't run the tool at all, and the loader's 127 when it can't map
+// the tool's libraries: the worker's install (or a cap set far too low), not the file.
+const TOOL_NOT_RUN = new Set([126, 127]);
+
+/** Whether the tool never ran: prlimit or the loader couldn't start it. */
+export function toolDidNotRun(error: ProcessError): boolean {
+  return error.ending === "exit" && error.exitCode !== null && TOOL_NOT_RUN.has(error.exitCode);
+}
+
+/**
+ * Whether something outside the worker killed the tool: a SIGKILL nothing in the worker sent, which
+ * is the kernel's OOM killer when a conversion beside it filled the container. Under prlimit --as a
+ * crafted file gets ENOMEM, never a SIGKILL.
+ */
+export function killedFromOutside(error: ProcessError): boolean {
+  return error.ending === "exit" && error.exitSignal === "SIGKILL";
+}
+
+/** How the tool ended, in words for a failure's message. */
+export function describeEnding(error: ProcessError): string {
+  if (error.ending !== "exit") return `it was killed (${error.ending})`;
+  return error.exitCode === null ? `it died on ${error.exitSignal ?? "a signal"}` : `it exited with ${error.exitCode}`;
+}

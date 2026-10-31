@@ -1,0 +1,188 @@
+import { spawn, type ChildProcess } from "node:child_process";
+
+/*
+ * The worker's child processes: ffmpeg, ffprobe and heif-dec. Each runs from an argument list,
+ * never a shell string, so nothing in a file's name or metadata can become a command. Each has a
+ * time limit, and is killed when its job's signal aborts (the job expired, or pg-boss gave up on
+ * it) or when the worker stops. Run ffmpeg and ffprobe with `-loglevel error`: their stderr is kept
+ * for the job's error, and at the default level it lists the file's metadata, location included.
+ *
+ * What a program printed is cleaned before anything keeps it: ffmpeg and ffprobe end their errors
+ * with the input they were given, which for the worker is a presigned link, a credential. Every
+ * link and presigned parameter is taken out of the stderr tail, and the link a job names in
+ * `redact` is replaced by a name of its own, so no error, log or job output can hold one.
+ */
+
+/** How much of the end of a program's stderr a failure keeps. */
+const STDERR_TAIL_CHARACTERS = 4000;
+// Any link (http, https, tcp…), and any presigned link's parameters (X-Amz-Signature, X-Amz-Credential
+// and the rest), in any case.
+const ANY_LINK = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+const PRESIGNED_PARAMETER = /x-amz-[a-z-]*=?[^&\s]*/gi;
+
+/** A link among a program's arguments that it may print: never kept as it is. */
+export type RedactedLink = {
+  /** The link itself: a presigned GET for an original. */
+  link: string;
+  /** What it is called instead, such as "the original". */
+  as: string;
+};
+
+/**
+ * A program's stderr, fit to keep: the link given in `redact` replaced by its name, every other
+ * link and presigned parameter taken out, and the link's host (which, for R2, holds the account id)
+ * replaced wherever it is left. Exported for its test.
+ */
+export function cleanedStderr(text: string, redact?: RedactedLink): string {
+  let cleaned = (redact ? text.split(redact.link).join(redact.as) : text)
+    .replace(ANY_LINK, "a link")
+    .replace(PRESIGNED_PARAMETER, "…");
+  if (redact) {
+    try {
+      const { host, hostname } = new URL(redact.link);
+      for (const name of [host, hostname].filter(Boolean)) cleaned = cleaned.split(name).join("the storage host");
+    } catch {
+      // Not a URL: there is no host to take out.
+    }
+  }
+  return cleaned;
+}
+
+/** The most stdout a program may print (ffprobe's JSON is a few KB); more kills it. */
+const STDOUT_LIMIT_BYTES = 4 * 1024 * 1024;
+
+export type ProcessOptions = {
+  /** The job's signal: aborting it kills the program. */
+  signal: AbortSignal;
+  /** Kills the program once it has run this long. */
+  timeoutMilliseconds: number;
+  /**
+   * Required, so no call can forget it. `background` runs it under `nice -n 19`, so it takes only
+   * the CPU photos leave: conversions and other long video work. `foreground` runs it at the
+   * worker's own priority: a photo's tools (heif-dec), which must stay fast.
+   */
+  priority: "background" | "foreground";
+  cwd?: string;
+  /** A presigned link among the arguments, which the program may print (ffmpeg, ffprobe). */
+  redact?: RedactedLink;
+};
+
+export type ProcessOutput = { stdout: string; stderrTail: string };
+
+/** How a program ended: by itself, or killed for running too long, for its job, or for the worker stopping. */
+export type ProcessEnding = "exit" | "timeout" | "aborted" | "stopping" | "too-much-output";
+
+/** A program that failed, or was killed. Its message names the program and how it ended, never its arguments. */
+export class ProcessError extends Error {
+  override name = "ProcessError";
+  constructor(
+    readonly command: string,
+    readonly ending: ProcessEnding,
+    readonly exitCode: number | null,
+    readonly stderrTail: string,
+    /**
+     * The signal that ended it, if one did. With ending "exit", nothing here sent it: the program
+     * died by itself (SIGSEGV, SIGABRT) or something outside killed it (SIGKILL: the kernel's OOM
+     * killer, when the container runs out of memory).
+     */
+    readonly exitSignal: NodeJS.Signals | null = null,
+  ) {
+    const lastLine = stderrTail.trim().split("\n").at(-1) ?? "";
+    super(
+      ending !== "exit"
+        ? `${command} was killed: ${ending}`
+        : exitCode === null && exitSignal
+          ? `${command} died on ${exitSignal}: ${lastLine}`
+          : `${command} exited with ${exitCode}: ${lastLine}`,
+    );
+  }
+}
+
+// The programs running now, each with the function that kills it and records why.
+const running = new Map<ChildProcess, (ending: ProcessEnding) => void>();
+let stopping = false;
+
+/**
+ * Runs `command` with `args` and resolves with its stdout and the end of its stderr once it exits
+ * with 0. Rejects with a ProcessError when it exits otherwise or is killed (SIGKILL: its output is
+ * scratch, and the job retries or fails anyway), or with the spawn error when it can't start.
+ */
+export function runProcess(command: string, args: readonly string[], options: ProcessOptions): Promise<ProcessOutput> {
+  if (stopping) return Promise.reject(new ProcessError(command, "stopping", null, ""));
+  if (options.signal.aborted) return Promise.reject(new ProcessError(command, "aborted", null, ""));
+
+  const [file, fileArgs] =
+    options.priority === "background" ? ["nice", ["-n", "19", command, ...args]] : [command, [...args]];
+  // `nice` replaces itself with the program, so the child's pid is the program's.
+  const child = spawn(file, fileArgs, { cwd: options.cwd, stdio: ["ignore", "pipe", "pipe"], shell: false });
+
+  return new Promise((resolve, reject) => {
+    let killedFor: ProcessEnding | null = null;
+    let settled = false;
+    const stdoutChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrTail = "";
+    // Whether the tail lost its beginning: its first line may then be part of a link, and is dropped.
+    let stderrCut = false;
+
+    const kill = (ending: ProcessEnding) => {
+      killedFor ??= ending;
+      child.kill("SIGKILL");
+    };
+    const onAbort = () => kill("aborted");
+    const timer = setTimeout(() => kill("timeout"), options.timeoutMilliseconds);
+    options.signal.addEventListener("abort", onAbort, { once: true });
+    running.set(child, kill);
+
+    const finish = (outcome: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.signal.removeEventListener("abort", onAbort);
+      running.delete(child);
+      outcome();
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > STDOUT_LIMIT_BYTES) kill("too-much-output");
+      else stdoutChunks.push(chunk);
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      const combined = stderrTail + chunk;
+      stderrCut ||= combined.length > STDERR_TAIL_CHARACTERS;
+      stderrTail = combined.slice(-STDERR_TAIL_CHARACTERS);
+    });
+    // Node's spawn error carries the arguments (spawnargs), perhaps a link: only its message (the
+    // program's name and why it couldn't start) and its code are passed on.
+    child.on("error", (error: NodeJS.ErrnoException) =>
+      finish(() => reject(Object.assign(new Error(error.message), { code: error.code }))),
+    );
+    child.on("close", (exitCode, exitSignal) =>
+      finish(() => {
+        const whole = stderrCut ? stderrTail.slice(stderrTail.indexOf("\n") + 1) : stderrTail;
+        const kept = cleanedStderr(whole, options.redact);
+        if (exitCode === 0 && killedFor === null) {
+          resolve({ stdout: Buffer.concat(stdoutChunks).toString("utf8"), stderrTail: kept });
+        } else {
+          reject(new ProcessError(command, killedFor ?? "exit", exitCode, kept, exitSignal));
+        }
+      }),
+    );
+  });
+}
+
+/** The process ids of the programs running now. */
+export function runningProcessIds(): number[] {
+  return [...running.keys()].flatMap((child) => (child.pid === undefined ? [] : [child.pid]));
+}
+
+/**
+ * Kills every running program and refuses to start new ones: the worker is stopping. Their jobs
+ * fail and go back to their queues for the next start.
+ */
+export function stopAllProcesses(): void {
+  stopping = true;
+  for (const kill of running.values()) kill("stopping");
+}

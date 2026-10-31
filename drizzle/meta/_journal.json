@@ -15,6 +15,55 @@
       "when": 1793342478536,
       "tag": "0001_abandoned_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793376090723,
+      "tag": "0002_slim_winter_soldier",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793377903527,
+      "tag": "0003_nifty_mephistopheles",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793391087575,
+      "tag": "0004_sweet_lyja",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793433909574,
+      "tag": "0005_open_captain_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793442429814,
+      "tag": "0006_misty_calypso",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793445468524,
+      "tag": "0007_naive_turbo",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793455743923,
+      "tag": "0008_workable_deadpool",
+      "breakpoints": true
     }
   ]
 }

@@ -35,6 +35,15 @@ const nextConfig: NextConfig = {
       { source: "/audio/:path*", headers: [week] },
       // The email header: every confirmation loads it, and Gmail's image proxy fetches it too.
       { source: "/email/:path*", headers: [week] },
+      // A personal link's question names its guest: never in a shared cache, never in a search index.
+      // Next keeps a Cache-Control set here rather than writing its own.
+      {
+        source: "/my/:token/confirm",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
     ];
   },
   turbopack: {

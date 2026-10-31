@@ -2,9 +2,13 @@ import "server-only";
 import { photos } from "@/content/images";
 import type { MediaFilter, MediaItem } from "./types";
 
+// The media table's queries live in src/lib/media/rows.ts, which the worker can bundle (this file
+// can't, for the stub's image imports). The app reaches them here too.
+export { isVisible } from "@/lib/media/rows";
+
 /**
- * STUB. A fixed set of sample uploads built from the couple's photos.
- * Later: rows in Postgres pointing at S3 objects served through CloudFront.
+ * STUB, below. A fixed set of sample uploads built from the couple's photos, until the album
+ * (Task 15) and the slideshow and home counts (Task 20) read the media table.
  */
 
 /** The stand-in "this phone" so My uploads has something to show. */

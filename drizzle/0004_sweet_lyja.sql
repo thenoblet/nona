@@ -1,0 +1,3 @@
+CREATE INDEX "media_uploaded_idx" ON "media" USING btree ("uploaded_at") WHERE "media"."status" = 'uploaded';--> statement-breakpoint
+CREATE INDEX "media_conversion_queued_idx" ON "media" USING btree ("listed_at") WHERE "media"."status" = 'ready' and "media"."conversion" = 'queued';--> statement-breakpoint
+CREATE INDEX "media_unfinished_upload_idx" ON "media" USING btree ("started_at","id") WHERE "media"."status" = 'uploading' and "media"."multipart_upload_id" is not null;

@@ -1,7 +1,9 @@
 import { couple } from "@/content/wedding";
 import type { Celebration, ScheduleItem, SiteContent } from "@/lib/content/schema";
 import { listMedia, mediaStats, SAMPLE_DEVICE } from "@/lib/data/media";
+import type { Wish } from "@/lib/data/types";
 import { listWishes } from "@/lib/data/wishes";
+import { describeError } from "@/lib/log-error";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { PlayGlyph } from "@/components/ui/Icon";
@@ -175,28 +177,46 @@ export async function AfterAlbum({ celebrations }: { celebrations: Celebration[]
   );
 }
 
-/** After the wedding: the guestbook wall. */
+/**
+ * After the wedding: the guestbook wall. When the wishes can't be read, the wall says so and the
+ * rest of the home page still shows.
+ */
 export async function WishesWall() {
-  const wishes = await listWishes();
+  let wishes: Wish[] | null;
+  try {
+    wishes = await listWishes();
+  } catch (error) {
+    console.error("[home] could not read the wishes:", describeError(error));
+    wishes = null;
+  }
   return (
     <section id="wishes" className="bg-white px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[1160px] flex-col gap-12 sm:gap-14">
         <Reveal>
           <SectionHeading eyebrow="Our guestbook" title="Your wishes" lead="Words we'll be reading for years to come." />
         </Reveal>
-        <div className="columns-1 gap-7 sm:columns-2 lg:columns-3">
-          {wishes.map((wish, index) => (
-            <div key={wish.id} className="mb-7 break-inside-avoid">
-              {wish.kind === "voice" ? (
-                <VoiceWish wish={wish} index={index} />
-              ) : wish.kind === "video" ? (
-                <VideoWish wish={wish} index={index} />
-              ) : (
-                <TextWish wish={wish} index={index} />
-              )}
-            </div>
-          ))}
-        </div>
+        {wishes === null ? (
+          <p className="m-0 text-center font-serif text-xl text-mocha italic">
+            The wishes can&apos;t load right now. Try again in a minute.
+          </p>
+        ) : wishes.length ? (
+          <div className="columns-1 gap-7 sm:columns-2 lg:columns-3">
+            {wishes.map((wish, index) => (
+              <div key={wish.id} className="mb-7 break-inside-avoid">
+                {wish.kind === "voice" ? (
+                  <VoiceWish wish={wish} index={index} />
+                ) : wish.kind === "video" ? (
+                  <VideoWish wish={wish} index={index} />
+                ) : (
+                  <TextWish wish={wish} index={index} />
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          // No wishes yet: the button below leads to the guestbook.
+          <p className="m-0 text-center font-serif text-xl text-mocha italic">Be the first to leave a wish.</p>
+        )}
         <div className="flex justify-center">
           <PillLink href="/wishes" variant="cocoa">
             Leave a wish

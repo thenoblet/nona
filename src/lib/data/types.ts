@@ -1,5 +1,13 @@
 import type { StaticImageData } from "next/image";
 import type { EventId } from "@/content/wedding";
+import type {
+  CONVERSION_STATES,
+  MEDIA_FILE_KINDS,
+  MEDIA_PURPOSES,
+  MEDIA_STATUSES,
+  UPLOAD_EVENT_KINDS,
+  WISH_KINDS,
+} from "@/lib/db/schema";
 
 export type Answer = "yes" | "no";
 
@@ -60,7 +68,7 @@ export type MediaFilter = {
   device?: string;
 };
 
-export type WishKind = "text" | "voice" | "video";
+export type WishKind = (typeof WISH_KINDS)[number];
 
 export type Wish = {
   id: string;
@@ -72,4 +80,35 @@ export type Wish = {
   createdAt: string;
 };
 
-export type WishInput = { kind: WishKind; message?: string; signedAs: string };
+export type WishInput = {
+  kind: WishKind;
+  message?: string;
+  signedAs: string;
+  /** The sending guest, once guests are recognised. */
+  guestId?: string;
+  /** A voice or video wish's recording. */
+  mediaId?: string;
+};
+
+/** A browser that has RSVPed or uploaded (guests.ts). */
+export type Guest = {
+  id: string;
+  /** The name they typed, or null when they gave none. */
+  displayName: string | null;
+  /** The secret in their personal link, /my/<linkToken>. */
+  linkToken: string;
+  createdAt: string;
+};
+
+/** What an upload is for: the album, a voice or video wish, or one of the site's own photos. */
+export type MediaPurpose = (typeof MEDIA_PURPOSES)[number];
+/** What an uploaded file is. Voice wishes are audio. */
+export type MediaFileKind = (typeof MEDIA_FILE_KINDS)[number];
+/** uploading → uploaded (verified, waiting for the worker) → ready, or failed. */
+export type MediaStatus = (typeof MEDIA_STATUSES)[number];
+/** A video's conversion to a version every phone can play. */
+export type ConversionState = (typeof CONVERSION_STATES)[number];
+/** The celebration an item is grouped under; "more" is any other day. */
+export type MediaCelebration = EventId | "more";
+/** What a phone reported while uploading. */
+export type UploadEventKind = (typeof UPLOAD_EVENT_KINDS)[number];

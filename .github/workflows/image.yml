@@ -1,8 +1,10 @@
-# Builds the production image on every push to main and pushes it to GHCR.
-# Dokploy pulls the image; nothing is built on the server.
+# Builds the production images on every push to main and pushes them to GHCR: the site
+# (ghcr.io/thenoblet/nona) and the media worker (ghcr.io/thenoblet/nona-worker).
+# Dokploy pulls the images; nothing is built on the server.
 # Pull requests into main and manual runs on other branches run the tests only:
 # only main builds :latest and deploys.
-# To freeze deploys (e.g. the wedding week), blank the DOKPLOY_DEPLOY_URL secret.
+# To freeze deploys (e.g. the wedding week), blank the DOKPLOY_DEPLOY_URL and
+# DOKPLOY_WORKER_DEPLOY_URL secrets.
 
 name: Image
 
@@ -46,6 +48,13 @@ jobs:
       POSTGRES_DB: nona_test
       POSTGRES_USER: nona
       POSTGRES_PASSWORD: nona
+      # The MinIO started below, with MinIO's well-known default keys (not secrets).
+      R2_ENDPOINT: http://localhost:9000
+      R2_ACCESS_KEY_ID: minioadmin
+      R2_SECRET_ACCESS_KEY: minioadmin
+      R2_PRIVATE_BUCKET: nona-private
+      R2_PUBLIC_BUCKET: nona-public
+      MEDIA_BASE_URL: http://localhost:9000/nona-public
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -60,15 +69,130 @@ jobs:
         env:
           PGPASSWORD: nona
 
+      # MinIO stands in for R2. A service container can't be given MinIO's `server /data`
+      # command, so it starts here: the image pinned in docker-compose.yml, on a volume because
+      # MinIO's renames fail on the container's own overlay layer.
+      - name: Start MinIO
+        run: |
+          docker run --detach --name minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$R2_ACCESS_KEY_ID" --env MINIO_ROOT_PASSWORD="$R2_SECRET_ACCESS_KEY" \
+            --volume minio-data:/data \
+            cgr.dev/chainguard/minio@sha256:3b6e40c30ecd5cea627e382ff0b82ca841f58c52294578787043ee80c8ef7c82 \
+            server /data
+          for attempt in $(seq 1 30); do
+            if curl -fs --max-time 2 -o /dev/null http://localhost:9000/minio/health/live; then exit 0; fi
+            sleep 1
+          done
+          echo "MinIO did not become ready in 30 s"
+          docker logs minio
+          exit 1
+
       - run: npm ci
+      # Creates MinIO's two buckets and makes the public one readable by anyone.
+      - run: npm run storage:init
       # Generates next-env.d.ts and route types, which a fresh checkout lacks.
       - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm test
-      # Builds the site and runs it against the test database; the config blanks the email key.
+
+      # The e2e run uploads real files and waits for the media worker to make them ready, so it
+      # runs the worker's production image beside the site (e2e/worker.ts), as Dokploy runs it, with
+      # its ffmpeg 7 and libheif: the runner's own tools are neither. Built from this commit with
+      # main's layer caches, so a run usually rebuilds only the bundle. Only main writes its cache:
+      # a branch's own would fill GitHub's 10 GB of cache for nothing.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the worker image for the e2e run
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.worker
+          target: run
+          load: true
+          tags: nona-worker-e2e
+          cache-from: |
+            type=gha,scope=worker-e2e
+            type=gha,scope=worker-run
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=worker-e2e,mode=max' || '' }}
+
+      # Builds the site and runs it against the test database and MinIO, with the worker image
+      # above; the config blanks the email key.
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+        env:
+          E2E_WORKER_IMAGE: nona-worker-e2e
+
+  # The media worker's tests need ffmpeg and libheif, so they run in its image: the test target,
+  # on the host's network against this job's Postgres and MinIO (test/env.ts's localhost settings).
+  worker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: nona
+          POSTGRES_PASSWORD: nona
+          POSTGRES_DB: nona
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nona"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # MinIO's well-known default keys (not secrets).
+      R2_ACCESS_KEY_ID: minioadmin
+      R2_SECRET_ACCESS_KEY: minioadmin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Create test database
+        run: psql -h localhost -U nona -d nona -c "CREATE DATABASE nona_test"
+        env:
+          PGPASSWORD: nona
+
+      # The same MinIO as the test job's.
+      - name: Start MinIO
+        run: |
+          docker run --detach --name minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$R2_ACCESS_KEY_ID" --env MINIO_ROOT_PASSWORD="$R2_SECRET_ACCESS_KEY" \
+            --volume minio-data:/data \
+            cgr.dev/chainguard/minio@sha256:3b6e40c30ecd5cea627e382ff0b82ca841f58c52294578787043ee80c8ef7c82 \
+            server /data
+          for attempt in $(seq 1 30); do
+            if curl -fs --max-time 2 -o /dev/null http://localhost:9000/minio/health/live; then exit 0; fi
+            sleep 1
+          done
+          echo "MinIO did not become ready in 30 s"
+          docker logs minio
+          exit 1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the worker's test image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.worker
+          target: test
+          load: true
+          tags: nona-worker-test
+          # Each worker build keeps its own cache: one shared scope would have each overwrite the other's.
+          # Only main writes it: a branch's own would fill GitHub's 10 GB of cache for nothing.
+          cache-from: type=gha,scope=worker-test
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=worker-test,mode=max' || '' }}
+
+      # Creates MinIO's two buckets, then runs npm run test:worker on at most 3 CPUs, as
+      # nona-worker-01's container has them: Ruling E's test (a photo stays fast while a 4K HDR
+      # conversion runs) must hold on production's CPUs. A private repo's runner has only 2, which
+      # Docker refuses to exceed, so it runs on all of them there: a stricter version of the test.
+      - run: docker run --rm --network host nona-worker-test npm run storage:init
+      - run: |
+          cpu_limit=$(( $(nproc) < 3 ? $(nproc) : 3 ))
+          docker run --rm --network host --cpus="$cpu_limit" nona-worker-test
 
   build:
     needs: test
@@ -115,3 +239,51 @@ jobs:
       - name: Tell Dokploy to deploy
         if: env.DOKPLOY_DEPLOY_URL != ''
         run: curl -fsS -X POST "$DOKPLOY_DEPLOY_URL"
+
+  worker-image:
+    needs: [test, worker]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # Private, as the repository is: a new GHCR package takes its repository's visibility.
+      IMAGE: ghcr.io/${{ github.repository }}-worker
+      DOKPLOY_WORKER_DEPLOY_URL: ${{ secrets.DOKPLOY_WORKER_DEPLOY_URL }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.worker
+          target: run
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=worker-run
+          cache-to: type=gha,scope=worker-run,mode=max
+
+      - name: Tell Dokploy to deploy the worker
+        if: env.DOKPLOY_WORKER_DEPLOY_URL != ''
+        run: curl -fsS --max-time 10 -X POST "$DOKPLOY_WORKER_DEPLOY_URL"
