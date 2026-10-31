@@ -6,10 +6,48 @@ import { spawn, type ChildProcess } from "node:child_process";
  * time limit, and is killed when its job's signal aborts (the job expired, or pg-boss gave up on
  * it) or when the worker stops. Run ffmpeg and ffprobe with `-loglevel error`: their stderr is kept
  * for the job's error, and at the default level it lists the file's metadata, location included.
+ *
+ * What a program printed is cleaned before anything keeps it: ffmpeg and ffprobe end their errors
+ * with the input they were given, which for the worker is a presigned link, a credential. Every
+ * link and presigned parameter is taken out of the stderr tail, and the link a job names in
+ * `redact` is replaced by a name of its own, so no error, log or job output can hold one.
  */
 
 /** How much of the end of a program's stderr a failure keeps. */
 const STDERR_TAIL_CHARACTERS = 4000;
+// Any link (http, https, tcp…), and any presigned link's parameters (X-Amz-Signature, X-Amz-Credential
+// and the rest), in any case.
+const ANY_LINK = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+const PRESIGNED_PARAMETER = /x-amz-[a-z-]*=?[^&\s]*/gi;
+
+/** A link among a program's arguments that it may print: never kept as it is. */
+export type RedactedLink = {
+  /** The link itself: a presigned GET for an original. */
+  link: string;
+  /** What it is called instead, such as "the original". */
+  as: string;
+};
+
+/**
+ * A program's stderr, fit to keep: the link given in `redact` replaced by its name, every other
+ * link and presigned parameter taken out, and the link's host (which, for R2, holds the account id)
+ * replaced wherever it is left. Exported for its test.
+ */
+export function cleanedStderr(text: string, redact?: RedactedLink): string {
+  let cleaned = (redact ? text.split(redact.link).join(redact.as) : text)
+    .replace(ANY_LINK, "a link")
+    .replace(PRESIGNED_PARAMETER, "…");
+  if (redact) {
+    try {
+      const { host, hostname } = new URL(redact.link);
+      for (const name of [host, hostname].filter(Boolean)) cleaned = cleaned.split(name).join("the storage host");
+    } catch {
+      // Not a URL: there is no host to take out.
+    }
+  }
+  return cleaned;
+}
+
 /** The most stdout a program may print (ffprobe's JSON is a few KB); more kills it. */
 const STDOUT_LIMIT_BYTES = 4 * 1024 * 1024;
 
@@ -25,6 +63,8 @@ export type ProcessOptions = {
    */
   priority: "background" | "foreground";
   cwd?: string;
+  /** A presigned link among the arguments, which the program may print (ffmpeg, ffprobe). */
+  redact?: RedactedLink;
 };
 
 export type ProcessOutput = { stdout: string; stderrTail: string };
@@ -82,6 +122,8 @@ export function runProcess(command: string, args: readonly string[], options: Pr
     const stdoutChunks: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrTail = "";
+    // Whether the tail lost its beginning: its first line may then be part of a link, and is dropped.
+    let stderrCut = false;
 
     const kill = (ending: ProcessEnding) => {
       killedFor ??= ending;
@@ -108,15 +150,23 @@ export function runProcess(command: string, args: readonly string[], options: Pr
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
-      stderrTail = (stderrTail + chunk).slice(-STDERR_TAIL_CHARACTERS);
+      const combined = stderrTail + chunk;
+      stderrCut ||= combined.length > STDERR_TAIL_CHARACTERS;
+      stderrTail = combined.slice(-STDERR_TAIL_CHARACTERS);
     });
-    child.on("error", (error) => finish(() => reject(error)));
+    // Node's spawn error carries the arguments (spawnargs), perhaps a link: only its message (the
+    // program's name and why it couldn't start) and its code are passed on.
+    child.on("error", (error: NodeJS.ErrnoException) =>
+      finish(() => reject(Object.assign(new Error(error.message), { code: error.code }))),
+    );
     child.on("close", (exitCode, exitSignal) =>
       finish(() => {
+        const whole = stderrCut ? stderrTail.slice(stderrTail.indexOf("\n") + 1) : stderrTail;
+        const kept = cleanedStderr(whole, options.redact);
         if (exitCode === 0 && killedFor === null) {
-          resolve({ stdout: Buffer.concat(stdoutChunks).toString("utf8"), stderrTail });
+          resolve({ stdout: Buffer.concat(stdoutChunks).toString("utf8"), stderrTail: kept });
         } else {
-          reject(new ProcessError(command, killedFor ?? "exit", exitCode, stderrTail, exitSignal));
+          reject(new ProcessError(command, killedFor ?? "exit", exitCode, kept, exitSignal));
         }
       }),
     );

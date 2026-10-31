@@ -401,7 +401,11 @@ export async function markVideoReady(mediaId: string, video: ProcessedVideo): Pr
     .returning({
       ...manifestColumns,
       conversion: media.conversion,
-      // A subquery in RETURNING reads the snapshot the statement started from: the row as it was.
+      // The conversion this statement changed it from. A subquery in RETURNING doesn't see the
+      // statement's own update: it reads the rows as of the statement's snapshot. That can be older
+      // than the row the update locked when another transaction changed it meanwhile, but nothing
+      // else sets the conversion of an `uploaded` item, and a second ready mark waits on the row's
+      // lock and then fails the re-checked `uploaded` condition, so only one statement gets here.
       conversionBefore: sql<string>`(select previous.conversion from ${media} as previous where previous.id = ${mediaId})`,
     });
   if (!row) return null;

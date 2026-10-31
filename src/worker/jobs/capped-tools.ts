@@ -1,4 +1,4 @@
-import { runProcess, type ProcessError, type ProcessOutput } from "../processes";
+import { runProcess, type ProcessError, type ProcessOutput, type RedactedLink } from "../processes";
 
 /*
  * The programs the worker runs on a guest's file (heif-info and heif-dec for a HEIC, ffprobe and
@@ -13,6 +13,8 @@ export type CappedRun = {
   signal: AbortSignal;
   timeoutMilliseconds: number;
   cwd?: string;
+  /** A presigned link among the arguments, kept out of what the tool printed (runProcess). */
+  redact?: RedactedLink;
 };
 
 /**
@@ -27,6 +29,7 @@ export function runCapped(tool: string, args: readonly string[], run: CappedRun)
     timeoutMilliseconds: run.timeoutMilliseconds,
     priority: "foreground",
     cwd: run.cwd,
+    redact: run.redact,
   });
 }
 

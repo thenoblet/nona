@@ -29,8 +29,10 @@ import { posterHandler, processVideo, videoToolFailure, type PosterOptions } fro
  * media.poster against the local MinIO and test database (docker compose up -d db minio && npm run
  * storage:init). ffprobe and ffmpeg read the original over a presigned link, as in production.
  * Every clip is made here, in setup, by ffmpeg, except Noblet's own iPhone HEVC/HDR clip
- * (test/fixtures/iphone-hdr.mov), which is committed once it arrives (Ruling F). The worker image's
- * test target runs all of these; elsewhere the few that need ffmpeg 7 (or libheif's encoder) skip.
+ * (test/fixtures/iphone-hdr.mov), which is committed once it arrives (Ruling F).
+ *
+ * The job runs ffmpeg 7.1's options (the bounded reconnects are 7.0's), so the tests that run it run
+ * where ffmpeg is 7 or later: always in the worker image's test target. The failure rules run anywhere.
  */
 
 // A test can act between the poster's files going up and its row being marked (Ruling AG), or
@@ -71,13 +73,13 @@ vi.mock("../processes", async (importOriginal) => {
 
 const runFile = promisify(execFile);
 
-/** ffmpeg's major version here: 7 in the worker image (trixie), older on some machines. */
-async function ffmpegMajorVersion(): Promise<number> {
+/** `ffmpeg -version`'s first line, or "" when there is no ffmpeg. */
+async function ffmpegVersionLine(): Promise<string> {
   try {
     const { stdout } = await runFile("ffmpeg", ["-version"], { timeout: 10_000 });
-    return Number(/ffmpeg version n?(\d+)\./.exec(stdout)?.[1] ?? 0);
+    return stdout.split("\n")[0];
   } catch {
-    return 0;
+    return "";
   }
 }
 
@@ -89,9 +91,9 @@ async function hasProgram(name: string): Promise<boolean> {
 }
 
 const inWorkerImage = process.env.WORKER_TEST_IMAGE === "1";
-const ffmpegVersion = await ffmpegMajorVersion();
-// The worker image's ffmpeg (7.1): its memory use and threads are what the cap was measured on.
-const ffmpegSeven = inWorkerImage || ffmpegVersion >= 7;
+const versionLine = await ffmpegVersionLine();
+// The job's options are ffmpeg 7's; elsewhere (an older ffmpeg) the tests that run it skip.
+const ffmpegSeven = inWorkerImage || Number(/ffmpeg version n?(\d+)\./.exec(versionLine)?.[1] ?? 0) >= 7;
 const heicTests = inWorkerImage || ((await hasProgram("heif-enc")) && (await hasProgram("heif-info")));
 const IPHONE_HDR_SAMPLE = new URL("../../../test/fixtures/iphone-hdr.mov", import.meta.url);
 
@@ -151,7 +153,7 @@ function runsOf(program: string): string[][] {
   return programs.runs.filter((run) => run.includes(program));
 }
 
-/** Makes a clip with ffmpeg in the test's folder and returns its bytes. */
+/** Makes a clip (or a still) with ffmpeg in the test's folder and returns its bytes. */
 async function clip(name: string, args: string[]): Promise<Buffer> {
   const output = join(folder, `${randomUUID()}-${name}`);
   await runFile("ffmpeg", ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", ...args, output], {
@@ -181,11 +183,11 @@ function androidClip(seconds = 3, faststart = false): Promise<Buffer> {
 
 /**
  * A landscape HEVC clip, 640 × 360 and red with a blue band along its top, whose display matrix
- * says to show it turned a quarter counter-clockwise (made by a copy pass with -display_rotation
- * 90): upright, it is portrait with the band down its left side. Its tags hold Apple's own
- * capture time, at +02:00.
+ * says to show it turned (made by a copy pass with -display_rotation): +90 is a quarter turn
+ * counter-clockwise, so upright the band runs down the left; −90, an iPhone's portrait, clockwise,
+ * so down the right. Its tags hold Apple's own capture time, at +02:00.
  */
-async function rotatedClip(): Promise<Buffer> {
+async function rotatedClip(rotation: 90 | -90 = 90): Promise<Buffer> {
   const flat = await clip("flat.mov", [
     ...["-f", "lavfi", "-i", "color=c=red:s=640x360:r=30,drawbox=x=0:y=0:w=640:h=90:color=blue:t=fill"],
     ...["-t", "2", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error", "-pix_fmt", "yuv420p"],
@@ -193,29 +195,37 @@ async function rotatedClip(): Promise<Buffer> {
     ...["-movflags", "use_metadata_tags"],
   ]);
   const source = await saved(flat, "mov");
-  // ffmpeg before 6 has no -display_rotation; its rotate tag writes the same display matrix.
-  const rotation =
-    ffmpegVersion >= 6 || inWorkerImage
-      ? ["-display_rotation", "90", "-i", source, "-c", "copy"]
-      : ["-i", source, "-c", "copy", "-metadata:s:v:0", "rotate=90"];
-  const rotated = await clip("rotated.mov", [...rotation, "-movflags", "use_metadata_tags"]);
+  const rotated = await clip("rotated.mov", [
+    ...["-display_rotation", String(rotation), "-i", source, "-c", "copy", "-movflags", "use_metadata_tags"],
+  ]);
   const { stdout } = await runFile("ffprobe", [
     ...["-hide_banner", "-loglevel", "error", "-print_format", "json"],
     ...["-show_entries", "stream=width,height:stream_side_data_list", await saved(rotated, "mov")],
   ]);
-  // ffprobe gives the display matrix's turn counter-clockwise: +90 here.
-  expect(JSON.parse(stdout).streams[0].side_data_list).toEqual([expect.objectContaining({ rotation: 90 })]);
+  // ffprobe gives the display matrix's turn counter-clockwise, as -display_rotation takes it.
+  expect(JSON.parse(stdout).streams[0].side_data_list).toEqual([
+    expect.objectContaining({ side_data_type: "Display Matrix", rotation }),
+  ]);
   return rotated;
 }
 
+/** The test pattern every HDR clip is made from, at `size`. */
+function testPattern(size: string): string {
+  return `testsrc2=size=${size}:rate=30`;
+}
+
 /**
- * An iPhone-like HDR clip: a real HLG signal (ARIB STD-B67, BT.2020), 10-bit HEVC tagged as such,
- * made from an SDR test pattern by zscale. Shown without tone-mapping, it would be flat and grey.
+ * An iPhone-like HDR clip: the test pattern made into a real HLG signal (ARIB STD-B67, BT.2020) by
+ * zscale (ffmpeg notes §5), as 10-bit HEVC tagged so. Shown without tone-mapping, it is flat and
+ * dull: its colours read as BT.709 lose a third of their saturation.
  */
 function hlgClip(size = "1280x720", seconds = 2, keyframeInterval = 60): Promise<Buffer> {
   return clip("hlg.mov", [
-    ...["-f", "lavfi", "-i", `testsrc2=size=${size}:rate=30`, "-t", String(seconds)],
-    ...["-vf", "zscale=tin=bt709:min=bt709:pin=bt709:rin=tv:t=arib-std-b67:m=bt2020nc:p=bt2020:r=tv:npl=100,format=yuv420p10le"],
+    ...["-f", "lavfi", "-i", testPattern(size), "-t", String(seconds)],
+    ...[
+      "-vf",
+      "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=2020:t=arib-std-b67:m=2020_ncl:r=limited,format=yuv420p10le",
+    ],
     ...["-c:v", "libx265", "-preset", "ultrafast"],
     ...[
       "-x265-params",
@@ -256,13 +266,14 @@ async function uploadedVideo(
   return id;
 }
 
-function videoJob(mediaId: string): MediaJob {
+/** The job as pg-boss delivers it, on its first attempt unless `retryCount` says otherwise. */
+function videoJob(mediaId: string, retryCount = 0): MediaJob {
   return {
     id: randomUUID(),
     queue: MEDIA_QUEUES.poster,
     data: { mediaId },
     signal: AbortSignal.timeout(180_000),
-    retryCount: 0,
+    retryCount,
   };
 }
 
@@ -293,10 +304,19 @@ async function sizeOf(bytes: Uint8Array) {
   return { width, height, format };
 }
 
-/** The image's mean luma, 0 to 255. */
-async function meanLuma(bytes: Uint8Array): Promise<number> {
-  const { channels } = await sharp(bytes).greyscale().stats();
-  return channels[0].mean;
+/** The image's mean luma, 0 to 255, and mean saturation (HSV's), 0 to 1. */
+async function lumaAndSaturation(bytes: Uint8Array): Promise<{ luma: number; saturation: number }> {
+  const { data } = await sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let luma = 0;
+  let saturation = 0;
+  for (let offset = 0; offset < data.length; offset += 3) {
+    const [red, green, blue] = [data[offset], data[offset + 1], data[offset + 2]];
+    const brightest = Math.max(red, green, blue);
+    saturation += brightest === 0 ? 0 : (brightest - Math.min(red, green, blue)) / brightest;
+    luma += 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  }
+  const pixels = data.length / 3;
+  return { luma: luma / pixels, saturation: saturation / pixels };
 }
 
 /** The colour at a point of an image, given as fractions of its width and height. */
@@ -323,30 +343,33 @@ function valueAfter(run: string[], flag: string): string | undefined {
   return at === -1 ? undefined : run[at + 1];
 }
 
-/** The error processVideo failed with, or null when it didn't fail. */
-async function failureOf(mediaId: string, options = posterOptions()): Promise<Error | null> {
+/** The error processVideo failed with on attempt `retryCount + 1`, or null when it didn't fail. */
+async function failureOf(mediaId: string, retryCount = 0, options = posterOptions()): Promise<Error | null> {
   try {
-    await processVideo(videoJob(mediaId), options);
+    await processVideo(videoJob(mediaId, retryCount), options);
     return null;
   } catch (error) {
     return error as Error;
   }
 }
 
-/** The reason processVideo failed for good with, or a message saying it didn't. */
-async function permanentFailure(mediaId: string, options = posterOptions()): Promise<string> {
-  const error = await failureOf(mediaId, options);
+/** The reason processVideo failed for good with on that attempt, "retried" when it may try again, or "no failure". */
+async function outcomeOf(mediaId: string, retryCount = 0, options = posterOptions()): Promise<string> {
+  const error = await failureOf(mediaId, retryCount, options);
   if (error === null) return "no failure";
-  if (error instanceof PermanentJobError) return error.reason;
-  return `retried: ${error.message}`;
+  return error instanceof PermanentJobError ? error.reason : "retried";
 }
 
 /** Fails the test if the text holds a presigned link or any part of one. */
 function expectNoLink(text: string): void {
-  expect(text).not.toMatch(/X-Amz-|Signature|Credential|https?:\/\//);
+  expect(text).not.toMatch(/X-Amz-|Signature|Credential|https?:\/\//i);
 }
 
-describe("a video's poster (Review Focus 2)", () => {
+it.skipIf(!inWorkerImage)("runs on the worker image's ffmpeg 7.1, which the poster's options and memory cap were measured on", () => {
+  expect(versionLine).toMatch(/^ffmpeg version 7\.1\./);
+});
+
+describe.skipIf(!ffmpegSeven)("a video's poster (Review Focus 2)", () => {
   it.skipIf(!existsSync(IPHONE_HDR_SAMPLE))(
     "Noblet's real iPhone HEVC/HDR clip (test/fixtures/iphone-hdr.mov, pending until it arrives) gives an upright SDR poster and is marked not playable",
     async () => {
@@ -372,7 +395,7 @@ describe("a video's poster (Review Focus 2)", () => {
       const thumbSize = await sizeOf(thumb);
       expect(Math.max(thumbSize.width ?? 0, thumbSize.height ?? 0)).toBe(480);
       expect((thumbSize.width ?? 0) / (thumbSize.height ?? 1)).toBeCloseTo(upright.width / upright.height, 1);
-      const luma = await meanLuma((await readPublic(item.derived["poster-view"] ?? "")).bytes);
+      const { luma } = await lumaAndSaturation((await readPublic(item.derived["poster-view"] ?? "")).bytes);
       expect(luma).toBeGreaterThan(40);
       expect(luma).toBeLessThan(210);
       expect(runsOf("ffmpeg").flat().join(" ")).toContain("tonemap=tonemap=hable");
@@ -421,43 +444,59 @@ describe("a video's poster (Review Focus 2)", () => {
     }
     expect(await readManifest(mediaId)).toMatchObject({ celebration: "ceremony", celebrationSetByAdmin: false });
     expect(await conversionJobs(mediaId)).toEqual([]);
-    // An SDR clip isn't tone-mapped.
-    expect(runsOf("ffmpeg").flat().join(" ")).not.toContain("tonemap");
+    // An SDR clip isn't tone-mapped, and its YUV is read as BT.709 (it is untagged), never BT.601.
+    const filters = valueAfter(runsOf("ffmpeg")[0], "-vf") ?? "";
+    expect(filters).not.toContain("tonemap");
+    expect(filters).toContain(":in_color_matrix=bt709:in_range=tv,");
     expect(report).toEqual({ sizeBytes: mp4.length, kind: "video/h264" });
   });
 
-  it("is upright for a generated HEVC clip turned by its display matrix, and the video queues a backlog conversion", async () => {
-    const mov = await rotatedClip();
-    const mediaId = await uploadedVideo(mov, "mov");
+  it("is upright for a generated HEVC clip turned by its display matrix either way, and the video queues a backlog conversion", async () => {
+    // +90 turns it counter-clockwise, so the band along the stored frame's top runs down the left;
+    // −90, an iPhone's portrait, clockwise, so down the right.
+    for (const [rotation, bandAcross] of [
+      [90, 0.05],
+      [-90, 0.95],
+    ] as const) {
+      programs.runs = [];
+      const mediaId = await uploadedVideo(await rotatedClip(rotation), "mov");
 
-    await processVideo(videoJob(mediaId), posterOptions());
+      await processVideo(videoJob(mediaId), posterOptions());
 
-    const item = await readItem(mediaId);
-    // Stored upright: portrait.
-    expect(item).toMatchObject({ status: "ready", width: 360, height: 640, videoCodec: "hevc", browserPlayable: false });
-    const thumb = (await readPublic(item.derived["poster-thumb"] ?? "")).bytes;
-    expect(await sizeOf(thumb)).toEqual({ width: 270, height: 480, format: "webp" });
-    // Turned a quarter counter-clockwise, the band along the stored frame's top runs down the left.
-    // Not along the top (not turned), not down the right (turned the wrong way), not along the bottom.
-    expect(isBlue(await colourAt(thumb, 0.05, 0.5))).toBe(true);
-    expect(isBlue(await colourAt(thumb, 0.95, 0.5))).toBe(false);
-    expect(isBlue(await colourAt(thumb, 0.6, 0.03))).toBe(false);
-    expect(isBlue(await colourAt(thumb, 0.6, 0.97))).toBe(false);
-    // Apple's own date, at its offset: 01:00 on Sunday at +02:00 is 23:00 on Saturday in Accra.
-    expect(item.capturedAt?.toISOString()).toBe("2026-12-05T23:00:00.000Z");
-    expect(item.celebration).toBe("reception");
-    expect(item.conversion).toBe("queued");
-    expect(await conversionJobs(mediaId)).toEqual([
-      expect.objectContaining({ state: "created", priority: CONVERT_PRIORITY.backlog, data: { mediaId } }),
-    ]);
-    // ffmpeg turns the frame itself, by the display matrix (its autorotate): no turn of our own on top.
-    const [poster] = runsOf("ffmpeg");
-    expect(poster).not.toContain("-noautorotate");
-    expect(valueAfter(poster, "-vf")).not.toMatch(/transpose|rotate|hflip|vflip/);
+      const item = await readItem(mediaId);
+      // Stored upright: portrait.
+      expect(item, `${rotation}`).toMatchObject({
+        status: "ready",
+        width: 360,
+        height: 640,
+        videoCodec: "hevc",
+        browserPlayable: false,
+      });
+      const thumb = (await readPublic(item.derived["poster-thumb"] ?? "")).bytes;
+      expect(await sizeOf(thumb), `${rotation}`).toEqual({ width: 270, height: 480, format: "webp" });
+      // On its side; not along the top (not turned), not on the other side (turned the wrong way), not along the bottom.
+      expect(isBlue(await colourAt(thumb, bandAcross, 0.5)), `${rotation}`).toBe(true);
+      expect(isBlue(await colourAt(thumb, 1 - bandAcross, 0.5)), `${rotation}`).toBe(false);
+      expect(isBlue(await colourAt(thumb, 0.5, 0.03)), `${rotation}`).toBe(false);
+      expect(isBlue(await colourAt(thumb, 0.5, 0.97)), `${rotation}`).toBe(false);
+      // Apple's own date, at its offset: 01:00 on Sunday at +02:00 is 23:00 on Saturday in Accra.
+      expect(item.capturedAt?.toISOString()).toBe("2026-12-05T23:00:00.000Z");
+      expect(item.celebration).toBe("reception");
+      expect(item.conversion).toBe("queued");
+      expect(await conversionJobs(mediaId)).toEqual([
+        expect.objectContaining({ state: "created", priority: CONVERT_PRIORITY.backlog, data: { mediaId } }),
+      ]);
+      // ffmpeg turns the frame itself, by the display matrix (its autorotate): no turn of our own on top.
+      const [poster] = runsOf("ffmpeg");
+      expect(poster).not.toContain("-noautorotate");
+      expect(valueAfter(poster, "-vf")).not.toMatch(/transpose|rotate|hflip|vflip/);
+    }
   });
 
-  it("is tone-mapped to SDR for an HLG HDR clip, with its mean luma in SDR's range", async () => {
+  it("is tone-mapped to SDR for an HLG HDR clip: its colours as saturated as the SDR picture's, its luma in SDR's range", async () => {
     const mov = await hlgClip();
+    // The test pattern as SDR, at the poster's moment (1 s, half the clip).
+    const reference = await clip("reference.png", ["-f", "lavfi", "-i", testPattern("1280x720"), "-ss", "1", "-frames:v", "1"]);
     const mediaId = await uploadedVideo(mov, "mov");
 
     const report = await processVideo(videoJob(mediaId), posterOptions());
@@ -466,13 +505,78 @@ describe("a video's poster (Review Focus 2)", () => {
     expect(item).toMatchObject({ status: "ready", width: 1280, height: 720, videoCodec: "hevc", browserPlayable: false });
     const view = (await readPublic(item.derived["poster-view"] ?? "")).bytes;
     expect(await sizeOf(view)).toEqual({ width: 1280, height: 720, format: "webp" });
-    const luma = await meanLuma(view);
-    expect(luma).toBeGreaterThan(40);
-    expect(luma).toBeLessThan(210);
+    const poster = await lumaAndSaturation(view);
+    const sdr = await lumaAndSaturation(reference);
+    expect(poster.luma).toBeGreaterThan(40);
+    expect(poster.luma).toBeLessThan(210);
+    // Measured in the worker image: the SDR picture 0.97, tone-mapped 0.91, and the HLG read as if it
+    // were BT.709 (no tone-mapping) 0.62. So the poster is within 0.12 of the SDR picture's.
+    expect(Math.abs(poster.saturation - sdr.saturation)).toBeLessThan(0.12);
     const filters = valueAfter(runsOf("ffmpeg")[0], "-vf") ?? "";
-    expect(filters).toContain("zscale=tin=arib-std-b67");
-    expect(filters).toContain("tonemap=tonemap=hable");
+    // zscale's own names for the colours (ffmpeg-filters, zscale).
+    expect(filters).toContain("zscale=tin=arib-std-b67:min=2020_ncl:pin=2020:rin=limited:t=linear:npl=100");
+    expect(filters).toContain("tonemap=tonemap=hable:desat=0,zscale=t=709:m=709:r=limited");
     expect(report).toMatchObject({ kind: "video/hevc-hdr" });
+  });
+
+  it("is made from an HDR clip whose fitted size would be odd: 2560 × 1080 fits 1600 × 675, which zscale refuses", async () => {
+    const mediaId = await uploadedVideo(await hlgClip("2560x1080", 1.2), "mov");
+
+    await processVideo(videoJob(mediaId), posterOptions());
+
+    const item = await readItem(mediaId);
+    expect(item).toMatchObject({ status: "ready", width: 2560, height: 1080 });
+    expect(await sizeOf((await readPublic(item.derived["poster-view"] ?? "")).bytes)).toEqual({
+      width: 1600,
+      height: 676,
+      format: "webp",
+    });
+    expect(valueAfter(runsOf("ffmpeg")[0], "-vf")).toContain(":force_original_aspect_ratio=decrease:force_divisible_by=2,");
+  });
+
+  it("is made from the very start of a clip of one frame, where seeking half its length finds nothing", async () => {
+    const one = await clip("one.mp4", [
+      ...["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-frames:v", "1"],
+      ...["-c:v", "libx264", "-pix_fmt", "yuv420p"],
+    ]);
+    const mediaId = await uploadedVideo(one, "mp4");
+
+    await processVideo(videoJob(mediaId), posterOptions());
+
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", width: 1280, height: 720 });
+    const posters = runsOf("ffmpeg");
+    expect(posters.map((run) => valueAfter(run, "-ss"))).toEqual(["0.017", "0"]);
+  });
+
+  it("is made from the default (or largest) video stream of several, beside a data track: a Cinematic clip's disparity track is no second video", async () => {
+    const twoVideos = await clip("two-videos.mov", [
+      ...["-f", "lavfi", "-i", "color=c=green:s=160x90:r=30", "-f", "lavfi", "-i", testPattern("640x360")],
+      ...["-t", "2", "-map", "0:v", "-map", "1:v", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+      ...["-disposition:v:0", "0", "-disposition:v:1", "default", "-timecode", "01:00:00:00"],
+    ]);
+    const { stdout } = await runFile("ffprobe", [
+      ...["-hide_banner", "-loglevel", "error", "-print_format", "json", "-show_entries", "stream=index,codec_type,width"],
+      await saved(twoVideos, "mov"),
+    ]);
+    const streams: { index: number; codec_type: string; width?: number }[] = JSON.parse(stdout).streams;
+    expect(streams.slice(0, 2)).toEqual([
+      expect.objectContaining({ index: 0, codec_type: "video", width: 160 }),
+      expect.objectContaining({ index: 1, codec_type: "video", width: 640 }),
+    ]);
+    // A timecode (tmcd) data track for each video.
+    expect(streams.slice(2).map((stream) => stream.codec_type)).toEqual(["data", "data"]);
+    const mediaId = await uploadedVideo(twoVideos, "mov");
+
+    await processVideo(videoJob(mediaId), posterOptions());
+
+    const item = await readItem(mediaId);
+    expect(item).toMatchObject({ status: "ready", width: 640, height: 360, videoCodec: "h264" });
+    expect(valueAfter(runsOf("ffmpeg")[0], "-map")).toBe("0:1");
+    expect(await sizeOf((await readPublic(item.derived["poster-thumb"] ?? "")).bytes)).toEqual({
+      width: 480,
+      height: 270,
+      format: "webp",
+    });
   });
 
   it("queues a backlog conversion for a playable video longer than about three minutes", async () => {
@@ -490,7 +594,7 @@ describe("a video's poster (Review Focus 2)", () => {
     expect(await conversionJobs(mediaId)).toHaveLength(1);
   });
 
-  it.skipIf(!ffmpegSeven)("makes a 4K HDR video's poster well inside the photo's 20 s budget, on one thread", async () => {
+  it("makes a 4K HDR video's poster well inside the photo's 20 s budget, on one thread", async () => {
     // 4K HLG with keyframes 2 s apart: the poster's frame is decoded from the keyframe before it.
     const mov = await hlgClip("3840x2160", 1.6, 60);
     const mediaId = await uploadedVideo(mov, "mov");
@@ -503,7 +607,7 @@ describe("a video's poster (Review Focus 2)", () => {
     expect(milliseconds).toBeLessThan(15_000);
   }, 180_000);
 
-  it("reads the original over the presigned link, bounded, on the configured threads and under the memory cap", async () => {
+  it("reads the original over the presigned link, bounded, with bounded reconnects, on the configured threads and under the memory cap", async () => {
     const options = posterOptions({ posterThreads: 2, filterThreads: 3 });
     const mediaId = await uploadedVideo(await androidClip(), "mp4");
 
@@ -511,18 +615,27 @@ describe("a video's poster (Review Focus 2)", () => {
 
     const [probe] = runsOf("ffprobe");
     const [poster] = runsOf("ffmpeg");
-    for (const [tool, run] of [["ffprobe", probe], ["ffmpeg", poster]] as const) {
+    for (const [tool, run] of [
+      ["ffprobe", probe],
+      ["ffmpeg", poster],
+    ] as const) {
       expect(run.slice(0, 4), tool).toEqual(["prlimit", `--as=${options.ffmpegMemoryBytes}`, "--", tool]);
       // 10 s with nothing read or written, in microseconds.
       expect(valueAfter(run, "-rw_timeout"), tool).toBe("10000000");
       expect(valueAfter(run, "-format_whitelist"), tool).toBe("mov,matroska");
-      expect(valueAfter(run, "-protocol_whitelist"), tool).toBe("http,https,tcp,tls");
+      // MinIO's plain http here; https,tls,tcp for R2.
+      expect(valueAfter(run, "-protocol_whitelist"), tool).toBe("http,tcp");
+      expect(valueAfter(run, "-reconnect"), tool).toBe("1");
+      expect(valueAfter(run, "-reconnect_on_network_error"), tool).toBe("1");
+      expect(valueAfter(run, "-reconnect_on_http_error"), tool).toBe("5xx");
+      expect(valueAfter(run, "-reconnect_max_retries"), tool).toBe("2");
+      expect(valueAfter(run, "-reconnect_delay_max"), tool).toBe("4");
     }
     // The link, never a download: ffprobe's last argument, ffmpeg's input.
     expect(probe.at(-1)).toMatch(/^http:\/\/localhost:9000\/nona-private\/originals\//);
+    expect(probe).toContain("-show_error");
     expect(valueAfter(poster, "-i")).toBe(probe.at(-1));
-    expect(valueAfter(probe, "-probesize")).toBe("5000000");
-    expect(valueAfter(probe, "-analyzeduration")).toBe("5000000");
+    expect(poster).toEqual(expect.arrayContaining(["-xerror", "-nostats", "-y", "-nostdin"]));
     // -ss before -i: ffmpeg seeks with range requests rather than read up to the frame.
     expect(poster.indexOf("-ss")).toBeLessThan(poster.indexOf("-i"));
     expect(valueAfter(poster, "-ss")).toBe("1");
@@ -531,14 +644,14 @@ describe("a video's poster (Review Focus 2)", () => {
   });
 });
 
-describe("a file that isn't a video the album takes (Review Focus 5)", () => {
+describe.skipIf(!ffmpegSeven)("a file that isn't a video the album takes (Review Focus 5)", () => {
   let workers: QueueWorkers | null = null;
 
   afterAll(() => {
     workers?.stopFetching();
   });
 
-  it("fails at once, as corrupt, when it was cut short, with no retries and nothing published", async () => {
+  it("fails at once, through the queue, when it is a photo named as a video: no stall makes ffmpeg see a JPEG", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
     workers = await startQueueWorkers(
@@ -547,33 +660,58 @@ describe("a file that isn't a video the album takes (Review Focus 5)", () => {
       { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
       { pollingIntervalSeconds: 0.5 },
     );
+    const jpeg = await clip("photo.jpg", ["-f", "lavfi", "-i", "testsrc2=size=640x480", "-frames:v", "1"]);
+    const photo = await uploadedVideo(jpeg, "mp4");
+    const photoJobId = await boss.send(MEDIA_QUEUES.poster, { mediaId: photo });
     // A phone writes the index (moov) last, so a recording cut short has none.
     const mp4 = await androidClip();
     const cut = await uploadedVideo(mp4.subarray(0, Math.floor(mp4.length / 2)), "mp4");
-    const jobId = await boss.send(MEDIA_QUEUES.poster, { mediaId: cut });
+    const cutJobId = await boss.send(MEDIA_QUEUES.poster, { mediaId: cut });
 
     const deadline = Date.now() + 30_000;
-    while ((await readItem(cut)).status !== "failed" && Date.now() < deadline) {
+    const settled = async () => {
+      const [photoJob] = await boss.findJobs(MEDIA_QUEUES.poster, { id: photoJobId ?? "" });
+      const [cutJob] = await boss.findJobs(MEDIA_QUEUES.poster, { id: cutJobId ?? "" });
+      const failed = (await readItem(photo)).status === "failed";
+      return photoJob?.state === "failed" && cutJob?.state === "retry" && failed;
+    };
+    while (!(await settled()) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    workers.stopFetching();
 
-    expect(await readItem(cut)).toMatchObject({ status: "failed", failureReason: "corrupt", listedAt: null });
-    const [job] = await boss.findJobs(MEDIA_QUEUES.poster, { id: jobId ?? "" });
-    expect(job).toMatchObject({ state: "failed", retryCount: 0 });
+    const [photoJob] = await boss.findJobs(MEDIA_QUEUES.poster, { id: photoJobId ?? "" });
+    expect(photoJob).toMatchObject({ state: "failed", retryCount: 0 });
+    // media.dead's handler marked it, with the reason its uploader sees.
+    expect(await readItem(photo)).toMatchObject({ status: "failed", failureReason: "unsupported-type", listedAt: null });
+    expect(await publicKeysOf(photo)).toEqual([]);
+    // The file cut short waits to be tried again: on its first attempt it can't be told from a stalled read.
+    const [cutJob] = await boss.findJobs(MEDIA_QUEUES.poster, { id: cutJobId ?? "" });
+    expect(cutJob).toMatchObject({ state: "retry" });
+    expect(await readItem(cut)).toMatchObject({ status: "uploaded", listedAt: null });
     expect(await publicKeysOf(cut)).toEqual([]);
   });
 
-  it("fails as corrupt when its index is whole but its frames are cut off, or it is random bytes", async () => {
-    const faststart = await androidClip(3, true);
-    const cutFrames = await uploadedVideo(faststart.subarray(0, 30_000), "mp4");
-    const random = await uploadedVideo(Buffer.concat([Buffer.from([0x13, 0x37]), randomBytes(20_000)]), "mp4");
-
-    expect(await permanentFailure(cutFrames)).toBe("corrupt");
-    expect(await permanentFailure(random)).toBe("corrupt");
-    expect(await publicKeysOf(cutFrames)).toEqual([]);
+  it("is retried when it was cut short or is random bytes, and is corrupt for good on its third attempt", async () => {
+    const mp4 = await androidClip();
+    const files = {
+      // The index (moov) last, as a phone writes it: none left.
+      "index cut off": mp4.subarray(0, Math.floor(mp4.length / 2)),
+      // The index first, its frames cut off before the poster's moment.
+      "frames cut off": (await androidClip(3, true)).subarray(0, 30_000),
+      "random bytes": Buffer.concat([Buffer.from([0x13, 0x37]), randomBytes(20_000)]),
+    };
+    for (const [what, bytes] of Object.entries(files)) {
+      const mediaId = await uploadedVideo(bytes, "mp4");
+      expect(await outcomeOf(mediaId, 0), what).toBe("retried");
+      expect(await outcomeOf(mediaId, 1), what).toBe("retried");
+      expect(await outcomeOf(mediaId, 2), what).toBe("corrupt");
+      expect(await publicKeysOf(mediaId), what).toEqual([]);
+      expect(await readItem(mediaId), what).toMatchObject({ status: "uploaded", listedAt: null });
+    }
   });
 
-  it("fails as unsupported-type when it is a photo, audio alone, or an MP3 named as a video", async () => {
+  it("fails at once as unsupported-type when it is a photo, audio alone, or an MP3 named as a video", async () => {
     const files = {
       jpeg: await clip("photo.jpg", ["-f", "lavfi", "-i", "testsrc2=size=640x480", "-frames:v", "1"]),
       png: await clip("photo.png", ["-f", "lavfi", "-i", "testsrc2=size=64x48", "-frames:v", "1"]),
@@ -582,34 +720,35 @@ describe("a file that isn't a video the album takes (Review Focus 5)", () => {
     };
     for (const [what, bytes] of Object.entries(files)) {
       const mediaId = await uploadedVideo(bytes, "mp4");
-      expect(await permanentFailure(mediaId), what).toBe("unsupported-type");
+      expect(await outcomeOf(mediaId, 0), what).toBe("unsupported-type");
       expect(await publicKeysOf(mediaId), what).toEqual([]);
       expect(runsOf("ffmpeg"), what).toEqual([]);
     }
   });
 
-  it.skipIf(!heicTests)("fails as unsupported-type when it is a HEIC photo, which ffmpeg 7 reads as a one-frame video", async () => {
+  it.skipIf(!heicTests)("fails at once as unsupported-type when it is a HEIC photo, which ffmpeg 7 reads as a one-frame video", async () => {
     const jpeg = await saved(await clip("still.jpg", ["-f", "lavfi", "-i", "testsrc2=size=1200x900", "-frames:v", "1"]), "jpg");
     const heic = join(folder, `${randomUUID()}.heic`);
     await runFile("heif-enc", ["--quality", "60", "--output", heic, jpeg], { timeout: 120_000 });
     const mediaId = await uploadedVideo(await readFile(heic), "mov");
 
-    expect(await permanentFailure(mediaId)).toBe("unsupported-type");
+    expect(await outcomeOf(mediaId, 0)).toBe("unsupported-type");
     expect(await publicKeysOf(mediaId)).toEqual([]);
   });
 
-  it.skipIf(!ffmpegSeven)("fails for good, as corrupt, when ffmpeg runs into its memory cap on the file", async () => {
-    // ffprobe and ffmpeg start within 400 MiB (their libraries need about 280), but a 720p HDR
-    // poster needs about 600: so ffmpeg can't, and the file fails for good rather than retrying.
-    const mediaId = await uploadedVideo(await hlgClip(), "mov");
+  it("runs ffmpeg under the memory cap, and a poster it can't make within it is tried again, never published", async () => {
+    // ffprobe and ffmpeg start within 400 MiB (their libraries need about 280), but a 1080p HDR
+    // poster needs more. Out of memory, ffmpeg fails as a damaged file would (corrupt from the third
+    // attempt); short of a thread, it is the worker's trouble (retried). Either way not at once.
+    const mediaId = await uploadedVideo(await hlgClip("1920x1080", 1.2), "mov");
     const cap = 400 * 1024 * 1024;
 
-    const error = await failureOf(mediaId, posterOptions({ ffmpegMemoryBytes: cap }));
+    const error = await failureOf(mediaId, 0, posterOptions({ ffmpegMemoryBytes: cap }));
 
-    expect(error).toBeInstanceOf(PermanentJobError);
-    expect((error as PermanentJobError).reason).toBe("corrupt");
-    expect(error?.message).toMatch(/^ffmpeg /);
-    expect(runsOf("ffmpeg")).toEqual([expect.arrayContaining(["prlimit", `--as=${cap}`, "--", "ffmpeg"])]);
+    expect(error).not.toBeNull();
+    expect(error).not.toBeInstanceOf(PermanentJobError);
+    expect(error?.message).toMatch(/^ffmpeg .*under a 419430400-byte cap/);
+    expect(runsOf("ffmpeg")[0]).toEqual(expect.arrayContaining(["prlimit", `--as=${cap}`, "--", "ffmpeg"]));
     expect(await readItem(mediaId)).toMatchObject({ status: "uploaded", listedAt: null });
     expect(await publicKeysOf(mediaId)).toEqual([]);
   });
@@ -623,19 +762,20 @@ describe("a file that isn't a video the album takes (Review Focus 5)", () => {
     }
     // ffprobe ends its error with the link it was given: "<link>: Invalid data found…".
     const random = await uploadedVideo(randomBytes(20_000), "mp4");
-    const error = await failureOf(random);
-    expect(error).toBeInstanceOf(PermanentJobError);
-    expect(error?.message).toContain("Invalid data found when processing input");
-    expectNoLink(`${error?.message} ${JSON.stringify(error)} ${String(error?.stack)}`);
+    for (const retryCount of [0, 2]) {
+      const error = await failureOf(random, retryCount);
+      expect(error?.message).toContain("the original: Invalid data found when processing input");
+      expectNoLink(`${error?.message} ${JSON.stringify(error)} ${String(error?.stack)}`);
+    }
     expect(runsOf("ffprobe").flat().join(" ")).toContain("X-Amz-Signature=");
 
     // R2 out of reach: the link's port closed.
     publishing.link = (url) => url.replace(/:\/\/([^/:]+):\d+\//, "://$1:9/");
-    const unreachable = await uploadedVideo(await androidClip(), "mp4");
-    const networkError = await failureOf(unreachable);
+    const unreachable = await uploadedVideo(await androidClip(1), "mp4");
+    const networkError = await failureOf(unreachable, 2);
     expect(networkError).not.toBeNull();
     expect(networkError).not.toBeInstanceOf(PermanentJobError);
-    expect(networkError?.message).toMatch(/Connection refused/);
+    expect(networkError?.message).toMatch(/couldn't read the original from R2: .*Connection refused/);
     expectNoLink(`${networkError?.message} ${JSON.stringify(networkError)} ${String(networkError?.stack)}`);
     expect(networkError?.cause).toBeUndefined();
     expect(await readItem(unreachable)).toMatchObject({ status: "uploaded" });
@@ -644,80 +784,96 @@ describe("a file that isn't a video the album takes (Review Focus 5)", () => {
   });
 });
 
-describe("videoToolFailure: the file's fault, for good, or the worker's or the network's, to try again", () => {
-  const link = "https://account.r2.cloudflarestorage.com/nona-private/originals/x.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=abc%2F20261205%2Fauto%2Fs3%2Faws4_request&X-Amz-Signature=0123456789abcdef";
-  const context = { memoryBytes: 2 * 1024 ** 3, link };
+describe("videoToolFailure: the file's fault for good on the third attempt, the worker's or the network's to try again", () => {
+  // What runProcess hands on: the link already replaced by "the original".
   const ended = (
     stderr: string,
+    retryCount: number,
     ending: ConstructorParameters<typeof ProcessError>[1] = "exit",
     exitCode: number | null = 1,
     exitSignal: NodeJS.Signals | null = null,
-  ) => videoToolFailure("ffprobe", new ProcessError("prlimit", ending, exitCode, stderr, exitSignal), context);
+  ) =>
+    videoToolFailure("ffprobe", new ProcessError("prlimit", ending, exitCode, stderr, exitSignal), {
+      memoryBytes: 2 * 1024 ** 3,
+      retryCount,
+    });
+  const lookLikeTheFile: [string, ConstructorParameters<typeof ProcessError>[1], number | null, NodeJS.Signals | null][] = [
+    ["[mov,mp4,m4a,3gp,3g2,mj2 @ 0x55] moov atom not found\nthe original: Invalid data found when processing input\n", "exit", 1, null],
+    ["[mov,mp4,m4a,3gp,3g2,mj2 @ 0x55] error reading header\nthe original: End of file\n", "exit", 1, null],
+    ["[vist#0:0/h264 @ 0x55] corrupt input packet in stream 0\n", "exit", 183, null],
+    ["[vf#0:0 @ 0x58] Error while filtering: Cannot allocate memory\n", "exit", 244, null],
+    ["", "exit", null, "SIGSEGV"],
+    ["", "exit", null, "SIGABRT"],
+    ["", "too-much-output", null, "SIGKILL"],
+  ];
 
-  it("blames the file when ffprobe or ffmpeg can't read it, dies on it, or prints far too much", () => {
-    const corrupt = [
-      ended(`[mov,mp4,m4a,3gp,3g2,mj2 @ 0x55] moov atom not found\n${link}: Invalid data found when processing input\n`),
-      ended("[hevc @ 0x55] Cannot allocate memory\n"),
-      ended("[in#0/mov @ 0x55] pthread_create() failed: Resource temporarily unavailable\n", "exit", 245),
-      ended("", "exit", null, "SIGSEGV"),
-      ended("", "exit", null, "SIGABRT"),
-      ended("", "too-much-output", null, "SIGKILL"),
-    ];
-    for (const error of corrupt) {
-      expect(error).toBeInstanceOf(PermanentJobError);
-      expect((error as PermanentJobError).reason).toBe("corrupt");
-      expectNoLink(error.message);
+  it("tries again what looks like the file's fault on the first two attempts: over the network a stalled read looks the same", () => {
+    for (const [stderr, ending, exitCode, exitSignal] of lookLikeTheFile) {
+      for (const retryCount of [0, 1]) {
+        const error = ended(stderr, retryCount, ending, exitCode, exitSignal);
+        expect(error, `${stderr || exitSignal} on attempt ${retryCount + 1}`).not.toBeInstanceOf(PermanentJobError);
+        expect(error.message).toMatch(/tried again: a stalled read from R2 looks the same/);
+      }
     }
-    expect(corrupt[0].message).toBe(
+  });
+
+  it("blames the file for it on the third attempt: corrupt, for good", () => {
+    for (const [stderr, ending, exitCode, exitSignal] of lookLikeTheFile) {
+      const error = ended(stderr, 2, ending, exitCode, exitSignal);
+      expect(error, stderr || String(exitSignal)).toBeInstanceOf(PermanentJobError);
+      expect((error as PermanentJobError).reason).toBe("corrupt");
+    }
+    expect(ended(lookLikeTheFile[0][0], 2).message).toBe(
       "ffprobe couldn't read the video, under a 2147483648-byte cap: it exited with 1: the original: Invalid data found when processing input",
     );
   });
 
-  it("calls a format ffmpeg recognised but the album doesn't take unsupported-type", () => {
-    const error = ended(`[jpeg_pipe @ 0x57] Format not on whitelist 'mov,matroska'\n${link}: Invalid argument\n`);
+  it("calls a format ffmpeg recognised but the album doesn't take unsupported-type, at once", () => {
+    const error = ended("[jpeg_pipe @ 0x57] Format not on whitelist 'mov,matroska'\nthe original: Invalid argument\n", 0);
     expect(error).toMatchObject({ reason: "unsupported-type" });
-    expectNoLink(error.message);
+    expect(error.message).toContain("Format not on whitelist");
   });
 
-  it("tries again when R2 or the network failed it: refused, reset, timed out, an HTTP error, DNS or TLS", () => {
+  it("tries again, on every attempt, when R2 or the network failed it: refused, reset, timed out, an HTTP error, DNS or TLS", () => {
     const network = [
-      `${link}: Server returned 404 Not Found`,
-      `${link}: Server returned 5XX Server Error reply`,
-      `${link}: Server returned 403 Forbidden (access denied)`,
-      `[tcp @ 0x56] Connection to tcp://account.r2.cloudflarestorage.com:443 failed: Connection refused\n${link}: Connection refused`,
-      `[tls @ 0x58] Error in the pull function.\n${link}: Input/output error`,
-      `[tcp @ 0x60] Failed to resolve hostname account.r2.cloudflarestorage.com: Temporary failure in name resolution\n${link}: Input/output error`,
-      `${link}: Connection timed out`,
-      `[https @ 0x61] Stream ends prematurely at 1048576, should be 20000000\n${link}: Input/output error`,
-      `${link}: Connection reset by peer`,
+      "the original: Server returned 404 Not Found",
+      "the original: Server returned 5XX Server Error reply",
+      "the original: Server returned 403 Forbidden (access denied)",
+      "[tcp @ 0x56] Connection to a link failed: Connection refused\nthe original: Connection refused",
+      "[tls @ 0x58] Error in the pull function.\nthe original: Input/output error",
+      "[tcp @ 0x60] Failed to resolve hostname the storage host: Temporary failure in name resolution\nthe original: Input/output error",
+      "the original: Connection timed out",
+      "[https @ 0x61] Stream ends prematurely at 1048576, should be 20000000\nthe original: Input/output error",
+      "the original: Connection reset by peer",
     ];
     for (const stderr of network) {
-      const error = ended(stderr);
+      const error = ended(stderr, 2);
       expect(error, stderr).not.toBeInstanceOf(PermanentJobError);
-      expectNoLink(error.message);
+      expect(error.message).toMatch(/couldn't read the original from R2/);
       expect(error.cause, stderr).toBeUndefined();
     }
   });
 
-  it("tries again when the worker, not the file, ended it: a SIGKILL from outside, its time, its job, a stop, or a tool that couldn't run", () => {
-    const spawnError = Object.assign(new Error("spawn prlimit ENOENT"), { code: "ENOENT", spawnargs: ["--", "ffprobe", link] });
+  it("tries again, on every attempt, when the worker, not the file, ended it: no thread, a SIGKILL from outside, its time, its job, a stop, or a tool that couldn't run", () => {
+    const spawnError = Object.assign(new Error("spawn prlimit ENOENT"), { code: "ENOENT" });
     for (const error of [
-      ended("", "exit", null, "SIGKILL"),
-      ended("", "timeout", null, "SIGKILL"),
-      ended("", "aborted", null, "SIGKILL"),
-      ended("", "stopping", null, "SIGKILL"),
-      ended("ffprobe: error while loading shared libraries: libFLAC.so.14: failed to map segment", "exit", 127),
-      ended("", "exit", 126),
-      videoToolFailure("ffprobe", spawnError, context),
+      ended("[in#0/mov @ 0x55] pthread_create() failed: Resource temporarily unavailable\n", 2, "exit", 245),
+      ended("[vf#0:0 @ 0x58] Task finished with error code: -11 (Resource temporarily unavailable)\n", 2, "exit", 245),
+      ended("", 2, "exit", null, "SIGKILL"),
+      ended("", 2, "timeout", null, "SIGKILL"),
+      ended("", 2, "aborted", null, "SIGKILL"),
+      ended("", 2, "stopping", null, "SIGKILL"),
+      ended("ffprobe: error while loading shared libraries: libFLAC.so.14: failed to map segment", 2, "exit", 127),
+      ended("", 2, "exit", 126),
+      videoToolFailure("ffprobe", spawnError, { memoryBytes: 2 * 1024 ** 3, retryCount: 2 }),
     ]) {
       expect(error).not.toBeInstanceOf(PermanentJobError);
-      expectNoLink(`${error.message} ${JSON.stringify(error)}`);
       expect(error.cause).toBeUndefined();
     }
   });
 });
 
-describe("a job delivered twice, or for an item that has moved on (Ruling AG)", () => {
+describe.skipIf(!ffmpegSeven)("a job delivered twice, or for an item that has moved on (Ruling AG)", () => {
   it("does nothing, and runs nothing, for an item no longer uploaded, or hidden, or gone", async () => {
     const mp4 = await androidClip(1);
     const ready = await uploadedVideo(mp4, "mp4", { status: "ready", listedAt: new Date(), thumbhash: "kept" });
@@ -787,7 +943,7 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
   });
 });
 
-describe("the poster's scratch", () => {
+describe.skipIf(!ffmpegSeven)("the poster's scratch", () => {
   it("is removed after the job, however it ends", async () => {
     const mediaId = await uploadedVideo(await androidClip(1), "mp4");
     await processVideo(videoJob(mediaId), posterOptions());

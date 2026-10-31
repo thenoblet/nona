@@ -17,9 +17,11 @@ function videoStream(changes: ProbeStream = {}): ProbeStream {
     codec_type: "video",
     width: 1920,
     height: 1080,
+    level: 40,
     pix_fmt: "yuv420p",
+    avg_frame_rate: "30/1",
     duration: "12.500000",
-    disposition: { attached_pic: 0, timed_thumbnails: 0, still_image: 0 },
+    disposition: { default: 1, attached_pic: 0, timed_thumbnails: 0, still_image: 0 },
     tags: {},
     ...changes,
   };
@@ -62,10 +64,24 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
       width: 1920,
       height: 1080,
       durationSeconds: 12.5,
+      videoStreamSeconds: 12.5,
       hdr: null,
       audioCodecs: ["aac"],
       browserPlayable: true,
+      sdr: { matrix: "bt709", range: "tv" },
       capturedAt: new Date("2026-12-05T10:30:00.000Z"),
+    });
+  });
+
+  it("names the SDR colours only from the ones it knows, BT.709 when the file says none", () => {
+    expect(facts(probe([videoStream({ color_space: "smpte170m", color_range: "pc" })])).sdr).toEqual({
+      matrix: "smpte170m",
+      range: "pc",
+    });
+    expect(facts(probe([videoStream({ color_space: "bt470bg" })])).sdr).toEqual({ matrix: "bt470bg", range: "tv" });
+    expect(facts(probe([videoStream({ color_space: "gbr,scale=1", color_range: "unknown" })])).sdr).toEqual({
+      matrix: "bt709",
+      range: "tv",
     });
   });
 
@@ -133,6 +149,11 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
 
   it("takes the video stream's duration when the container has none, and has none when neither does (a phone's WebM)", () => {
     expect(facts(probe([videoStream({ duration: "4.000000" })], { duration: undefined })).durationSeconds).toBe(4);
+    // The video stream's own duration is kept apart: audio can run on past the last frame.
+    expect(facts(probe([videoStream({ duration: "0.033333" })], { duration: "2.000000" }))).toMatchObject({
+      durationSeconds: 2,
+      videoStreamSeconds: 0.033333,
+    });
     const webm = probe([videoStream({ codec_name: "vp9", duration: undefined })], {
       format_name: "matroska,webm",
       duration: undefined,
@@ -149,12 +170,16 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
 });
 
 describe("videoFactsFrom: which phones can play the original as it is", () => {
-  it("is only H.264, 8-bit 4:2:0, in MP4 or MOV, with AAC or no audio", () => {
+  it("is only H.264, 8-bit 4:2:0, up to 1080p60 and level 4.2, in MP4 or MOV, with AAC or no audio", () => {
     expect(facts(probe([videoStream(), audioStream()])).browserPlayable).toBe(true);
     expect(facts(probe([videoStream()])).browserPlayable).toBe(true);
     expect(facts(probe([videoStream()], { tags: { major_brand: "qt  " } })).browserPlayable).toBe(true);
     // Many Android phones write full-range 8-bit 4:2:0, which every browser plays.
     expect(facts(probe([videoStream({ pix_fmt: "yuvj420p" })])).browserPlayable).toBe(true);
+    // Portrait 1080p, 1080p60 at level 4.2, and an NTSC frame rate.
+    expect(facts(probe([videoStream({ width: 1080, height: 1920 })])).browserPlayable).toBe(true);
+    expect(facts(probe([videoStream({ avg_frame_rate: "60/1", level: 42 })])).browserPlayable).toBe(true);
+    expect(facts(probe([videoStream({ avg_frame_rate: "30000/1001" })])).browserPlayable).toBe(true);
   });
 
   it("isn't HEVC, 10-bit or 4:2:2 H.264, another audio codec, or H.264 in Matroska", () => {
@@ -166,6 +191,14 @@ describe("videoFactsFrom: which phones can play the original as it is", () => {
       ["a second audio stream in MP3", probe([videoStream(), audioStream("aac"), audioStream("mp3", 2)])],
       ["matroska", probe([videoStream()], { format_name: "matroska,webm" })],
       ["no pixel format", probe([videoStream({ pix_fmt: undefined })])],
+      ["3GP", probe([videoStream()], { tags: { major_brand: "3gp4" } })],
+      ["3G2", probe([videoStream()], { tags: { major_brand: "3g2a" } })],
+      ["4K", probe([videoStream({ width: 3840, height: 2160, level: 51 })])],
+      ["4K at level 4.2", probe([videoStream({ width: 3840, height: 2160 })])],
+      ["slow motion", probe([videoStream({ avg_frame_rate: "240/1", level: 42 })])],
+      ["level 5.1", probe([videoStream({ level: 51 })])],
+      ["no level", probe([videoStream({ level: undefined })])],
+      ["no frame rate", probe([videoStream({ avg_frame_rate: "0/0" })])],
     ];
     for (const [what, json] of unplayable) {
       expect(facts(json).browserPlayable, what).toBe(false);
@@ -198,12 +231,34 @@ describe("videoFactsFrom: what isn't a video the album takes (layer 3, Review Fo
     expect(refusal(probe([]))).toBe("corrupt");
   });
 
-  it("refuses more than one video stream, or a still image or thumbnail track standing in for one", () => {
-    expect(refusal(probe([videoStream(), videoStream({ index: 1 })]))).toBe("unsupported-type");
+  it("takes the default video stream among several, else the largest, else the first: a Cinematic clip's disparity track is no second video", () => {
+    const notDefault = { default: 0, attached_pic: 0, timed_thumbnails: 0, still_image: 0 };
+    const disparity = (index: number, isDefault: number) =>
+      videoStream({ index, codec_name: "hevc", width: 480, height: 270, disposition: { ...notDefault, default: isDefault } });
+    // The picture marked default, though a larger one comes first.
+    const marked = probe([videoStream({ index: 0, width: 3840, height: 2160, disposition: notDefault }), videoStream({ index: 1 })]);
+    expect(facts(marked)).toMatchObject({ streamIndex: 1, width: 1920 });
+    // None marked: the largest, wherever it is.
+    const unmarked = probe([disparity(0, 0), videoStream({ index: 1, disposition: notDefault }), audioStream("aac", 2)]);
+    expect(facts(unmarked)).toMatchObject({ streamIndex: 1, width: 1920, codec: "h264" });
+    // Both marked: the larger of them.
+    expect(facts(probe([disparity(0, 1), videoStream({ index: 1 })])).streamIndex).toBe(1);
+    // Two alike: the first.
+    expect(facts(probe([videoStream({ index: 0 }), videoStream({ index: 1 })])).streamIndex).toBe(0);
+    // A video beside a data track and its own thumbnail track.
+    const withThumbnail = probe([
+      { index: 0, codec_type: "data", codec_name: "bin_data" },
+      videoStream({ index: 1, codec_name: "mjpeg", width: 4000, height: 3000, disposition: { timed_thumbnails: 1 } }),
+      videoStream({ index: 2 }),
+    ]);
+    expect(facts(withThumbnail).streamIndex).toBe(2);
+  });
+
+  it("refuses a still image or thumbnail track standing in for a video, and passes over a video stream of no known codec", () => {
     expect(refusal(probe([videoStream({ disposition: { still_image: 1 } })]))).toBe("unsupported-type");
-    // A video beside its own thumbnail track is still one video.
-    const withThumbnail = probe([videoStream(), videoStream({ index: 1, codec_name: "mjpeg", disposition: { timed_thumbnails: 1 } })]);
-    expect(facts(withThumbnail).streamIndex).toBe(0);
+    expect(refusal(probe([videoStream({ disposition: { timed_thumbnails: 1 } })]))).toBe("unsupported-type");
+    const unknownBeside = probe([videoStream({ index: 0, codec_name: undefined, width: 3840, height: 2160 }), videoStream({ index: 1 })]);
+    expect(facts(unknownBeside).streamIndex).toBe(1);
   });
 
   it("calls a video stream ffprobe can't size or name corrupt", () => {

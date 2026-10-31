@@ -45,6 +45,51 @@ describe("runProcess", () => {
     expect(stderrTail.length).toBeLessThanOrEqual(4000);
   });
 
+  it("keeps no link a program printed, the presigned link it was given least of all, nor its host", async () => {
+    const link = "https://account-id.r2.example.com/nona-private/originals/x.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=key%2F20261205&x-amz-signature=0123abcd";
+    const printed = [
+      "[tcp @ 0x56] Connection to tcp://account-id.r2.example.com:443 failed: Connection refused",
+      "[tcp @ 0x56] Failed to resolve hostname account-id.r2.example.com: Temporary failure in name resolution",
+      `${link}: Invalid data found when processing input`,
+      "Error opening input file https://elsewhere.example.com/a.mp4?X-AMZ-SIGNATURE=feed",
+    ].join("\n");
+    const failure = await runProcess("sh", ["-c", 'printf "%s\n" "$1" >&2; exit 1', "sh", printed, link], {
+      signal: NEVER,
+      priority: "foreground",
+      timeoutMilliseconds: MINUTE,
+      redact: { link, as: "the original" },
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ProcessError);
+    const { stderrTail, message } = failure as ProcessError;
+    for (const kept of [stderrTail, message]) {
+      expect(kept).not.toMatch(/x-amz-|signature|credential|https?:\/\/|account-id/i);
+    }
+    expect(stderrTail).toContain("the original: Invalid data found when processing input");
+    expect(stderrTail).toContain("the storage host");
+    expect(message).toBe("sh exited with 1: Error opening input file a link");
+  });
+
+  it("drops the first line of a stderr tail that lost its beginning, which may be part of a link", async () => {
+    const failure = await runProcess(
+      "sh",
+      ["-c", 'printf "%05000d" 0 >&2; printf "?X-Amz-Signature=cut%04000d\nlast line\n" 0 >&2; exit 1'],
+      { signal: NEVER, priority: "foreground", timeoutMilliseconds: MINUTE },
+    ).catch((error: unknown) => error);
+    expect((failure as ProcessError).stderrTail).toBe("last line\n");
+  });
+
+  it("passes on a spawn error without the arguments Node attaches to it", async () => {
+    const failure = await runProcess("nona-no-such-program", ["https://r2.example.com/x?X-Amz-Signature=secret"], {
+      signal: NEVER,
+      priority: "foreground",
+      timeoutMilliseconds: MINUTE,
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "ENOENT" });
+    expect(JSON.stringify(failure)).not.toContain("secret");
+    expect(Object.keys(failure as object)).not.toContain("spawnargs");
+  });
+
   it("records the signal that ended a program something else killed, such as the kernel's OOM killer", async () => {
     const failure = await runProcess("sh", ["-c", "kill -KILL $$"], {
       signal: NEVER,

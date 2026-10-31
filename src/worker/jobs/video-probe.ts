@@ -10,9 +10,10 @@ import { captureTimeFromVideoTags } from "@/lib/media/capture-time";
  *   it before this;
  * - it must not be a photo in an ISO container (HEIC, HEIF, AVIF), which ffmpeg 7 reads as a
  *   one-frame video;
- * - it must hold exactly one video stream (cover art, a still image or a thumbnail track isn't
- *   one); audio is optional;
- * - that stream must have a codec and a size, no bigger than 8K.
+ * - it must hold at least one video stream ffmpeg knows (cover art, a still image or a thumbnail
+ *   track isn't one); audio is optional. With several, the default one is the video, else the
+ *   largest: an iPhone's Cinematic clip carries a smaller disparity track beside its picture;
+ * - that stream must have a size, no bigger than 8K.
  * Anything else fails for good: `unsupported-type`, `corrupt` or `too-large`. Pure, so its test
  * runs anywhere.
  */
@@ -31,8 +32,8 @@ export const VIDEO_DEMUXERS = "mov,matroska";
 export const PROBE_ENTRIES = [
   "format=format_name,duration",
   "format_tags=major_brand,creation_time,com.apple.quicktime.creationdate",
-  "stream=index,codec_type,codec_name,pix_fmt,width,height,color_range,color_space,color_transfer,color_primaries,duration",
-  "stream_disposition=attached_pic,still_image,timed_thumbnails",
+  "stream=index,codec_type,codec_name,level,pix_fmt,width,height,color_range,color_space,color_transfer,color_primaries,avg_frame_rate,duration",
+  "stream_disposition=default,attached_pic,still_image,timed_thumbnails",
   "stream_tags=rotate,creation_time",
   "stream_side_data_list",
 ].join(":");
@@ -47,6 +48,16 @@ const MAX_VIDEO_PIXELS = 8192 * 4352;
 const STILL_IMAGE_BRANDS = new Set(["heic", "heix", "heim", "heis", "hevc", "hevx", "hevm", "hevs", "mif1", "mif2", "msf1", "miaf", "avif", "avis"]);
 // The pixel formats of 8-bit 4:2:0 video: limited range, and the full range many Android phones write.
 const PLAYABLE_PIXEL_FORMATS = new Set(["yuv420p", "yuvj420p"]);
+/**
+ * What every phone decodes, as the original is (ffmpeg notes §4.19): at most 1080p (its long edge),
+ * 60 frames a second and H.264 level 4.2 (ffprobe gives the level times ten). A 4K, slow-motion or
+ * higher-level H.264 video gets a 1080p conversion instead.
+ */
+const PLAYABLE_LONG_EDGE = 1920;
+const PLAYABLE_FRAMES_PER_SECOND = 60;
+const PLAYABLE_H264_LEVEL = 42;
+// 3GPP's brands: a 3GP file isn't an MP4 or MOV, whatever its codecs.
+const THIRD_GENERATION_BRAND = /^3g[p2]/;
 // A codec's name as ffmpeg gives it: anything else is never stored or logged.
 const CODEC_NAME = /^[a-z0-9_]{1,32}$/;
 
@@ -59,9 +70,18 @@ export type HdrColours = {
   range: "tv" | "pc";
 };
 
+/**
+ * The YUV matrix and range an SDR video's picture is turned into RGB with. An untagged phone video
+ * is BT.709 in practice; left to itself, ffmpeg would read an untagged one as BT.601.
+ */
+export type SdrColours = {
+  matrix: "bt709" | "smpte170m" | "bt470bg" | "bt2020nc";
+  range: "tv" | "pc";
+};
+
 /** What the album keeps, and the poster needs, of a video. */
 export type VideoFacts = {
-  /** The video stream's index in the file, for ffmpeg's -map. */
+  /** The video stream's index in the file, for ffmpeg's -map: the video, never a second track. */
   streamIndex: number;
   codec: string;
   /** The size it is shown at: the stored picture turned by its display matrix. */
@@ -69,11 +89,18 @@ export type VideoFacts = {
   height: number;
   /** Null when the container doesn't say (a browser's WebM recording). */
   durationSeconds: number | null;
+  /** The video stream's own duration, which may be shorter than the container's: where a poster can be. */
+  videoStreamSeconds: number | null;
   /** Null for SDR. */
   hdr: HdrColours | null;
   audioCodecs: string[];
-  /** Whether every phone's browser plays the original as it is: H.264, 8-bit 4:2:0, in MP4 or MOV, with AAC or no audio. */
+  /**
+   * Whether every phone's browser plays the original as it is: H.264, 8-bit 4:2:0, at most 1080p,
+   * 60 fps and level 4.2, in MP4 or MOV (not 3GP), with AAC or no audio.
+   */
   browserPlayable: boolean;
+  /** The colours an SDR picture is converted from, only ever values named here. */
+  sdr: SdrColours;
   /** From the container's tags; null when they hold none. */
   capturedAt: Date | null;
 };
@@ -97,6 +124,7 @@ const probeSchema = zod.object({
       index: zod.number().int().min(0),
       codec_type: text,
       codec_name: text,
+      level: zod.number().int().optional(),
       pix_fmt: text,
       width: zod.number().int().optional(),
       height: zod.number().int().optional(),
@@ -104,6 +132,7 @@ const probeSchema = zod.object({
       color_space: text,
       color_transfer: text,
       color_primaries: text,
+      avg_frame_rate: text,
       duration: text,
       disposition: zod.record(zod.string(), zod.number()).optional(),
       tags,
@@ -156,6 +185,28 @@ function isMotionVideo(stream: ProbeStream): boolean {
   );
 }
 
+/** The picture's area, 0 when ffprobe couldn't size it. */
+function areaOf(stream: ProbeStream): number {
+  return Math.max(0, stream.width ?? 0) * Math.max(0, stream.height ?? 0);
+}
+
+/**
+ * The video among several: the default stream (a phone marks its picture so), else the largest,
+ * else the first. An iPhone's Cinematic clip, for one, carries a smaller disparity track beside it.
+ */
+function theVideo(videos: ProbeStream[]): ProbeStream {
+  const defaults = videos.filter((stream) => stream.disposition?.default);
+  const candidates = defaults.length > 0 ? defaults : videos;
+  return candidates.reduce((largest, stream) => (areaOf(stream) > areaOf(largest) ? stream : largest));
+}
+
+/** Frames a second from ffprobe's "30000/1001", or null when it doesn't say ("0/0"). */
+function framesPerSecond(value: string | undefined): number | null {
+  const [numerator, denominator] = (value ?? "").split("/").map(Number);
+  const rate = numerator / denominator;
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
 function refused(reason: "unsupported-type" | "corrupt" | "too-large", found: string): VideoCheck {
   return { ok: false, reason, found };
 }
@@ -174,25 +225,41 @@ export function videoFactsFrom(probeJson: unknown): VideoCheck {
   }
   if (streams.length === 0) return refused("corrupt", "a container with nothing in it");
 
-  const videos = streams.filter(isMotionVideo);
-  if (videos.length === 0) {
+  const motionVideos = streams.filter(isMotionVideo);
+  if (motionVideos.length === 0) {
     const audioOnly = streams.some((stream) => stream.codec_type === "audio");
     return refused("unsupported-type", audioOnly ? "audio with no video" : "a file with no video stream");
   }
-  if (videos.length > 1) return refused("unsupported-type", `a file with ${videos.length} video streams`);
-  const [video] = videos;
-  if (!video.codec_name || !video.width || !video.height || video.width < 1 || video.height < 1) {
-    return refused("corrupt", "a video stream ffprobe couldn't size or name");
+  // Only a stream ffmpeg can name is one it can decode.
+  const videos = motionVideos.filter((stream) => stream.codec_name);
+  if (videos.length === 0) return refused("corrupt", "a video stream of a codec ffprobe doesn't know");
+  const video = theVideo(videos);
+  if (!video.width || !video.height || video.width < 1 || video.height < 1) {
+    return refused("corrupt", "a video stream ffprobe couldn't size");
   }
-  if (video.width * video.height > MAX_VIDEO_PIXELS) return refused("too-large", "a picture larger than 8K");
+  if (areaOf(video) > MAX_VIDEO_PIXELS) return refused("too-large", "a picture larger than 8K");
 
-  const durationSeconds = seconds(format.duration) ?? seconds(video.duration);
+  const videoStreamSeconds = seconds(video.duration);
+  const durationSeconds = seconds(format.duration) ?? videoStreamSeconds;
   // Every QuickTime or MP4 video has a duration; a still image in one (an image item) has none.
   if (container === MOV_FAMILY && durationSeconds === null) return refused("unsupported-type", "a still image");
 
-  const codec = CODEC_NAME.test(video.codec_name) ? video.codec_name : "unknown";
+  const codec = CODEC_NAME.test(video.codec_name ?? "") ? (video.codec_name as string) : "unknown";
   const audioCodecs = streams.filter((stream) => stream.codec_type === "audio").map((stream) => stream.codec_name ?? "unknown");
   const turned = turnedQuarter(video);
+  const rate = framesPerSecond(video.avg_frame_rate);
+  const browserPlayable =
+    container === MOV_FAMILY &&
+    !THIRD_GENERATION_BRAND.test(format.tags?.major_brand ?? "") &&
+    codec === "h264" &&
+    PLAYABLE_PIXEL_FORMATS.has(video.pix_fmt ?? "") &&
+    Math.max(video.width, video.height) <= PLAYABLE_LONG_EDGE &&
+    rate !== null &&
+    rate <= PLAYABLE_FRAMES_PER_SECOND &&
+    video.level !== undefined &&
+    video.level > 0 &&
+    video.level <= PLAYABLE_H264_LEVEL &&
+    audioCodecs.every((audioCodec) => audioCodec === "aac");
   return {
     ok: true,
     facts: {
@@ -201,13 +268,14 @@ export function videoFactsFrom(probeJson: unknown): VideoCheck {
       width: turned ? video.height : video.width,
       height: turned ? video.width : video.height,
       durationSeconds,
+      videoStreamSeconds,
       hdr: hdrColours(video),
       audioCodecs,
-      browserPlayable:
-        container === MOV_FAMILY &&
-        codec === "h264" &&
-        PLAYABLE_PIXEL_FORMATS.has(video.pix_fmt ?? "") &&
-        audioCodecs.every((audioCodec) => audioCodec === "aac"),
+      browserPlayable,
+      sdr: {
+        matrix: oneOf(video.color_space, ["bt709", "smpte170m", "bt470bg", "bt2020nc"]),
+        range: oneOf(video.color_range, ["tv", "pc"]),
+      },
       capturedAt: captureTimeFromVideoTags({
         appleCreationDate: format.tags?.["com.apple.quicktime.creationdate"],
         creationTime: format.tags?.creation_time ?? video.tags?.creation_time,
