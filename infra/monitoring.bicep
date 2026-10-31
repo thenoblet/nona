@@ -24,8 +24,8 @@ param siteUrl string = 'https://nobletxnancy.com'
 @allowed([ 300, 600, 900 ])
 param frequencySeconds int = 600
 
-@description('Off until the media worker is deployed and /api/worker-health exists.')
-param enableWorkerHealthTest bool = false
+@description('On since 31 Oct 2026, when the media worker went live. Set false only if the worker is retired.')
+param enableWorkerHealthTest bool = true
 
 var tags = {
   app: 'nona'
