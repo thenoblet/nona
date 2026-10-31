@@ -26,10 +26,12 @@ import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler 
  *   2. records what it will withdraw on the row (withdrawing_keys): those files, the ones its row
  *      names, any an earlier attempt recorded, and a permanently deleted item's original. A retry
  *      (or the sweeper's job) withdraws them all, the ones the folder no longer lists included;
- *   3. deletes them: the public files, and the original once its lock allows (deletableFrom);
- *   4. purges the public ones' exact URLs from Cloudflare's cache (purge.ts);
- *   5. takes them off withdrawing_keys, and clears the row's derived keys if they are still the
- *      ones withdrawn, so the sweeper stops looking for it;
+ *   3. deletes the public files and purges their exact URLs from Cloudflare's cache (purge.ts),
+ *      then takes them off withdrawing_keys: what anyone can reach comes down first;
+ *   4. deletes a permanently deleted item's original once its lock allows (deletableFrom), then
+ *      takes it off too;
+ *   5. clears the row's derived keys if they are still the ones withdrawn, so the sweeper stops
+ *      looking for it;
  *   6. writes its manifest from the row (a deleted item's is removed).
  *   For an item visible again it withdraws only what is left recorded (an earlier attempt's, or a
  *   processing job's files of an older generation): never its current files, which its unhide made.
@@ -78,13 +80,16 @@ async function withdraw(job: MediaJob, mediaId: string, options: VisibilityOptio
     if (item) await addWithdrawingKeys(mediaId, keys);
     const originals = keys.filter((key) => isOriginalKey(key));
     const publicKeys = keys.filter((key) => !isOriginalKey(key));
-    await deleteOriginals(item, originals, job.signal);
+    // What anyone can reach comes down first: a refused original (its lock, or a passing fault)
+    // fails the job only after the public files are deleted and purged, and the retry does the rest.
     await deletePublicObjects(publicKeys, { signal: job.signal });
     const purge = await purgeUrls(
       publicKeys.map((key) => publicUrl(key)),
       { ...options.purge, signal: job.signal },
     );
-    if (item) await finishWithdrawing(mediaId, keys);
+    if (item) await finishWithdrawing(mediaId, publicKeys);
+    await deleteOriginals(item, originals, job.signal);
+    if (item) await finishWithdrawing(mediaId, originals);
     console.log(
       `[worker] media.visibility media=${mediaId}: withdrew ${publicKeys.length} public file(s)${originals.length > 0 ? " and the original" : ""}` +
         ("skipped" in purge ? "; no purge, as CF_PURGE_TOKEN or CF_ZONE_ID isn't set (allowed outside production only)" : " and purged their URLs"),

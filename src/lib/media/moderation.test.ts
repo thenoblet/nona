@@ -82,6 +82,19 @@ vi.mock("@/lib/storage/manifest", async (importOriginal) => {
   };
 });
 
+// A test can make deleting an original fail, as R2 (or its bucket lock) might.
+const originals = vi.hoisted(() => ({ deleteFails: false }));
+vi.mock("@/lib/storage/objects", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/storage/objects")>();
+  return {
+    ...real,
+    deleteOriginal: async (...args: Parameters<typeof real.deleteOriginal>) => {
+      if (originals.deleteFails) throw Object.assign(new Error("Access Denied: the object is locked"), { name: "AccessDenied" });
+      return real.deleteOriginal(...args);
+    },
+  };
+});
+
 const BOSS_SCHEMA = "pgboss_moderation_test";
 const ADMIN = "couple@example.com";
 const DAY = 24 * 60 * 60 * 1000;
@@ -118,6 +131,7 @@ beforeEach(async () => {
   manifests.failuresLeft = 0;
   manifests.writes = [];
   manifests.beforeNextWrite = null;
+  originals.deleteFails = false;
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
@@ -756,6 +770,23 @@ describe("deleteMediaPermanently", () => {
       thumbhash: null,
       averageColor: null,
     });
+  });
+
+  it("takes down the public files first, so R2 refusing the original after the response leaves nothing reachable", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const mediaId = await addItem({ uploadedAt: new Date(Date.now() - 31 * DAY) });
+    const before = await readItem(mediaId);
+    originals.deleteFails = true;
+
+    expect(await deleteMediaPermanently(mediaId, ADMIN)).toEqual({ ok: true });
+
+    const { privateBucket, publicBucket } = storageConfig();
+    for (const key of Object.values(before.derived)) expect(await exists(publicBucket, key), key).toBe(false);
+    expect(await exists(privateBucket, before.originalKey)).toBe(true);
+    // Recorded, so its visibility job, queued all the same, finishes it.
+    expect((await readItem(mediaId)).withdrawingKeys).toContain(before.originalKey);
+    expect(await jobsOf(MEDIA_QUEUES.visibility, mediaId)).toHaveLength(1);
+    expect(errors.mock.calls.flat().join(" ")).toContain(`media=${mediaId}'s deletion didn't finish here`);
   });
 
   it("is safe twice (Ruling AG): the second finds the tombstone and finishes the same way", async () => {

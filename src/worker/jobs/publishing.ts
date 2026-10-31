@@ -53,24 +53,30 @@ export async function withdrawIfHidden(
 ): Promise<void> {
   const item = await findItemToWithdraw(mediaId);
   if (item?.visible && item.derivedGeneration === options.derivedGeneration) return;
+  // What happened to the item while the job worked, for the log: ids only.
+  const happened = !item
+    ? "is gone"
+    : item.deleted
+      ? "was deleted while it was processed"
+      : item.visible
+        ? "was unhidden into a new generation while it was processed"
+        : "was hidden while it was processed";
+  const subject = `[worker] ${queue} media=${mediaId} ${happened}`;
   try {
     if (item) await addWithdrawingKeys(mediaId, keys);
   } catch (error) {
-    console.error(`[worker] ${queue} media=${mediaId}'s withdrawal couldn't be recorded; the visibility job lists the folder:`, describeError(error));
+    console.error(`${subject}, and the withdrawal of its files couldn't be recorded:`, describeError(error));
   }
   try {
     await deletePublicObjects(keys, { signal: options.signal });
-    console.log(`[worker] ${queue} media=${mediaId} was hidden while it was processed: its files were removed`);
+    console.log(`${subject}: the files it made were removed`);
   } catch (error) {
-    console.error(
-      `[worker] ${queue} media=${mediaId} was hidden while it was processed, and its files could not be removed (${keys.join(", ")}); the visibility job will:`,
-      describeError(error),
-    );
+    console.error(`${subject}, and the files it made could not be removed (${keys.join(", ")}); the visibility job will:`, describeError(error));
   }
   try {
     await sendVisibilityJob(mediaId, "hide", options.jobQueue);
   } catch (error) {
-    console.error(`[worker] ${queue} media=${mediaId} was hidden while it was processed, and its withdrawal wasn't queued:`, describeError(error));
+    console.error(`${subject}, and its withdrawal wasn't queued:`, describeError(error));
   }
 }
 

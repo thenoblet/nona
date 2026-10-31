@@ -58,7 +58,11 @@ export type ModerationOptions = {
    * server action passes Next's after(). They never throw.
    */
   defer: Defer;
-  /** Ends the R2 calls early: a request's signal (each has its own 15 s deadline besides). */
+  /**
+   * Bounds the follow-ups' R2 calls together, beside each call's own 15 s deadline: a budget such
+   * as AbortSignal.timeout(30_000), or none. Never the request's own signal: the follow-ups run in
+   * after(), once the response is sent, when Next has aborted it, so every one would fail.
+   */
   signal?: AbortSignal;
   /** The queue the follow-up jobs go to: the app's own unless a caller passes its own. */
   jobQueue?: () => Promise<Pick<PgBoss, "send">>;
@@ -400,8 +404,9 @@ export async function deleteMediaPermanently(mediaId: string, admin: string, opt
     .where(eq(media.id, mediaId));
   followUp(options, async () => {
     try {
-      await deleteOriginal(item.originalKey, { signal: options.signal });
+      // What anyone can reach first: a refused original never keeps the public files up.
       await deletePublicObjects(Object.values(item.derived), { signal: options.signal });
+      await deleteOriginal(item.originalKey, { signal: options.signal });
       // The row is deleted, so this removes the manifest (and any a racing write put back).
       await syncManifest(mediaId, { signal: options.signal });
     } catch (error) {

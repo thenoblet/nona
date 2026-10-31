@@ -19,6 +19,7 @@ import { derivedKey, manifestKey, originalKey, publicUrl } from "@/lib/storage/k
 import { readManifest } from "@/lib/storage/manifest";
 import { headOriginal } from "@/lib/storage/objects";
 import { resetDb } from "../../../test/db";
+import * as moderation from "@/lib/media/moderation";
 import { deleteMediaPermanently, hideMedia, moveMedia, unhideMedia } from "../../../test/moderation";
 import { dropBossSchema, startTestBoss } from "../../../test/uploads";
 import { workerConfig } from "../config";
@@ -599,6 +600,31 @@ describe("deleting permanently", () => {
     expect(await headOriginal(key)).toBeNull();
     expect(await readItem(mediaId)).toMatchObject({ derived: {}, withdrawingKeys: null });
     expect(await readManifest(mediaId)).toBeNull();
+  });
+
+  it("withdraws and purges the public files before the original, so a refused original leaves nothing reachable", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const mediaId = await readyPhoto({ uploadedAt: new Date(Date.now() - 31 * DAY) });
+    const { originalKey: key, derived } = await readItem(mediaId);
+    const named = Object.values(derived);
+    // The admin's own attempt never ran (its server stopped before after() did): every object is still there.
+    await moderation.deleteMediaPermanently(mediaId, ADMIN, { defer: () => {} });
+    expect(await publicKeysOf(mediaId)).toEqual([...named].sort());
+    deletes.originalFailuresLeft = 1;
+    const job = jobFor(MEDIA_QUEUES.visibility, { mediaId, action: "hide" });
+
+    await expect(runVisibility(job)).rejects.toThrow(/locked/);
+
+    // In that same attempt: the public files gone and purged; only the original is owed.
+    expect(await publicKeysOf(mediaId)).toEqual([]);
+    expect(purge.calls.flatMap((call) => call.files).sort()).toEqual(named.map((name) => publicUrl(name)).sort());
+    expect(await headOriginal(key)).not.toBeNull();
+    expect((await readItem(mediaId)).withdrawingKeys).toEqual([key]);
+
+    await runVisibility({ ...job, retryCount: 1 });
+
+    expect(await headOriginal(key)).toBeNull();
+    expect(await readItem(mediaId)).toMatchObject({ derived: {}, withdrawingKeys: null });
   });
 
   it("is retried by the job while R2 still refuses the original, and finishes once it doesn't", async () => {

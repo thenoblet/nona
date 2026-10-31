@@ -984,6 +984,7 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
   });
 
   it("marks nothing when an unhide raised the generation while it worked: its files are no one's, withdrawn and recorded", async () => {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
     const mediaId = await uploadedPhoto(await png(), "png");
     publishing.afterPut = async () => {
       // Hidden and unhidden while this job worked: a new generation, whose own job makes new files.
@@ -998,6 +999,10 @@ describe("a job delivered twice, or for an item that has moved on (Ruling AG)", 
     expect(await publicKeysOf(mediaId)).toEqual([]);
     expect(item.withdrawingKeys).toHaveLength(2);
     expect(sentJobs).toEqual([{ name: MEDIA_QUEUES.visibility, data: { mediaId, action: "hide" } }]);
+    // Said as it happened: the item is visible, not hidden.
+    const logged = logs.mock.calls.flat().join(" ");
+    expect(logged).toContain(`media=${mediaId} was unhidden into a new generation while it was processed`);
+    expect(logged).not.toContain("was hidden while it was processed");
 
     // The new generation's job makes the item ready, under keys of its own.
     await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
