@@ -190,7 +190,9 @@ jobs:
       # conversion runs) must hold on production's CPUs. A private repo's runner has only 2, which
       # Docker refuses to exceed, so it runs on all of them there: a stricter version of the test.
       - run: docker run --rm --network host nona-worker-test npm run storage:init
-      - run: docker run --rm --network host --cpus="$(( $(nproc) < 3 ? $(nproc) : 3 ))" nona-worker-test
+      - run: |
+          cpu_limit=$(( $(nproc) < 3 ? $(nproc) : 3 ))
+          docker run --rm --network host --cpus="$cpu_limit" nona-worker-test
 
   build:
     needs: test
