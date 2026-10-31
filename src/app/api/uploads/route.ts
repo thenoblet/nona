@@ -6,7 +6,7 @@ import { rateLimitedResponse, takeToken } from "@/lib/guests/rate-limit";
 import { errorResponse, jsonResponse, readJsonBody } from "@/lib/http/json";
 import { describeError } from "@/lib/log-error";
 import { checkUpload } from "@/lib/media/limits";
-import { findResumableUpload, isUnknownGuest } from "@/lib/media/rows";
+import { findResumableUpload, isHiddenByCouple, isUnknownGuest } from "@/lib/media/rows";
 import {
   createUpload,
   mayContinueUpload,
@@ -46,6 +46,8 @@ const startRequest = zod.object({
  *   its existing upload, with the parts already sent.
  * - A browser without a guest (no cookie, or one the server didn't sign): 403 `no-guest`. The phone
  *   awaits POST /api/guest before its first start, so starts never race to make guests.
+ * - The same file (size and fingerprint) as an item the couple hid, from any guest's phone: 409
+ *   `hidden`, and nothing is made (Ruling AX). A guest's own removal doesn't block them.
  * Limited per browser by its own guest (a burst of 100, then 2 a second); never by IP.
  */
 export async function POST(request: Request) {
@@ -64,11 +66,13 @@ export async function POST(request: Request) {
 
   const options = { signal: request.signal, defer: after };
   try {
-    // Both reads at once: a burst of starts shares the database pool.
-    const [uploads, unfinished] = await Promise.all([
+    // The reads at once: a burst of starts shares the database pool.
+    const [uploads, unfinished, hidden] = await Promise.all([
       purpose === "album" ? readUploadsSwitch() : UPLOADS_ALWAYS_OPEN,
       findResumableUpload({ guestId: ownId, purpose, sizeBytes: size, fingerprint }),
+      isHiddenByCouple({ sizeBytes: size, fingerprint }),
     ]);
+    if (hidden) return errorResponse(409, "hidden");
     if (unfinished) {
       if (!mayContinueUpload(unfinished, uploads)) return uploadsClosed();
       const resumed = await resumeUpload(unfinished, options);

@@ -65,6 +65,8 @@ describe("what the server's answers mean for a file", () => {
     expect(probeOutcome({ status: 409, body: { error: "hidden" } })).toEqual(cantAdd);
     expect(completionOutcome({ status: 409, body: { error: "hidden" } })).toEqual(cantAdd);
     expect(probeOutcome({ status: 409, body: { error: "removed" } })).toEqual({ kind: "forget" });
+    // Ruling AX: a start of a file the couple hid, from any phone.
+    expect(startOutcome({ status: 409, body: { error: "hidden" } })).toEqual(cantAdd);
   });
 
   it("starts a session, refuses a file in the API's words, and redoes the guest when the browser has none", () => {

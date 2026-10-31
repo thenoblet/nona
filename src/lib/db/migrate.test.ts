@@ -27,6 +27,10 @@ describe("runMigrations", () => {
     );
     expect(columnLists).toContain("(guest_id)");
     expect(columnLists).toContain("(guest_id, size_bytes, file_fingerprint) WHERE (status = 'uploading'::text)");
+    // Ruling AX: the files the couple hid, by fingerprint.
+    expect(columnLists).toContain(
+      "(file_fingerprint, size_bytes) WHERE ((hidden_at IS NOT NULL) AND (NOT removed_by_uploader) AND (deleted_at IS NULL))",
+    );
   });
 
   it("lets the album read a page after its cursor in order from the index, without sorting", async () => {

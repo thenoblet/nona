@@ -180,6 +180,37 @@ export async function findResumableUpload(key: ResumableUploadKey): Promise<Uplo
 }
 
 /**
+ * The query behind isHiddenByCouple, exported so a test can check its plan. Its conditions are
+ * written as literals, as media_couple_hidden_idx's are, so Postgres can prove the partial index
+ * applies under a generic plan.
+ */
+export function coupleHiddenQuery({ sizeBytes, fingerprint }: { sizeBytes: number; fingerprint: string }) {
+  return getDb()
+    .select({ id: media.id })
+    .from(media)
+    .where(
+      and(
+        eq(media.fileFingerprint, fingerprint),
+        eq(media.sizeBytes, sizeBytes),
+        sql`${media.hiddenAt} is not null and not ${media.removedByUploader} and ${media.deletedAt} is null`,
+      ),
+    )
+    .limit(1);
+}
+
+/**
+ * Ruling AX: whether the couple hid an item of this same file (size and fingerprint), whoever
+ * uploaded it, so a new upload of it can be refused rather than slip past their moderation. An item
+ * its own guest removed doesn't count (they may add it again), nor one deleted for good (its
+ * tombstone keeps no fingerprint). The fingerprint is the phone's own claim, so this is a
+ * moderation convenience, not a security boundary: a file changed by one byte at either end, or a
+ * phone that lies, passes, and the couple moderate it afresh.
+ */
+export async function isHiddenByCouple(key: { sizeBytes: number; fingerprint: string }): Promise<boolean> {
+  return (await coupleHiddenQuery(key)).length > 0;
+}
+
+/**
  * Records the upload's multipart upload id, unless another request recorded one first. Returns
  * the id the row now keeps (the other one, if so), or null when the row is gone or no longer
  * uploading.

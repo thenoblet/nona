@@ -511,6 +511,18 @@ test.describe("uploading from the phone", () => {
       // The removed one went up again as a new upload; the hidden one stayed as it was.
       expect(rows).toHaveLength(3);
       expect(rows.filter((row) => row.hidden_at === null)).toHaveLength(1);
+
+      // Ruling AX: another phone, which never sent it, can't add the hidden file either.
+      const otherPhone = await phone(browser, baseURL);
+      try {
+        const otherPage = await otherPhone.newPage();
+        await openAlbum(otherPage);
+        await picker(otherPage, "Take a photo").setInputFiles(hidden);
+        await expect(otherPage.getByRole("region", { name: "Your photo" }).getByText("This one can't be added to the album")).toBeVisible({ timeout: 60_000 });
+        expect(await mediaOf(await ownGuestId(otherPhone))).toEqual([]);
+      } finally {
+        await otherPhone.close();
+      }
     } finally {
       await context.close();
     }

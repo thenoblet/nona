@@ -23,6 +23,7 @@ import {
   markProcessingFailed,
   markVideoReady,
   releaseConversion,
+  coupleHiddenQuery,
   resumableUploadQuery,
   uploadQuery,
   type ProcessedPhoto,
@@ -527,6 +528,12 @@ describe("the upload API's lookups", () => {
     expect(plan).toContain("media_resume_idx");
     expect(plan).not.toContain("Seq Scan");
     expect(plan).not.toContain("Sort");
+  });
+
+  it("Ruling AX: finds a file the couple hid through its own small partial index, under a generic plan", async () => {
+    const plan = await genericPlan(coupleHiddenQuery({ sizeBytes: 1000, fingerprint: "f".repeat(64) }));
+    expect(plan).toContain("media_couple_hidden_idx");
+    expect(plan).not.toContain("Seq Scan");
   });
 
   it("finds an upload by its id through the primary key", async () => {

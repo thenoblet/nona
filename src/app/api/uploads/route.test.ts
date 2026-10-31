@@ -15,7 +15,7 @@ import { manifestKey, originalKey } from "@/lib/storage/keys";
 import { readManifest } from "@/lib/storage/manifest";
 import { abortMultipart, completeMultipart, headOriginal, listUploadedParts } from "@/lib/storage/objects";
 import { resetDb } from "../../../../test/db";
-import { hideMedia } from "../../../../test/moderation";
+import { deleteMediaPermanently, hideMedia } from "../../../../test/moderation";
 import { asBrowser, browserCookies, newCookieJar, type CookieJar } from "../../../../test/next-cookies";
 import {
   dropBossSchema,
@@ -758,6 +758,56 @@ describe("completing", () => {
     await afterResponse();
     expect((await mediaRow(session.mediaId)).status).toBe("uploaded");
     expect(await jobsFor(MEDIA_QUEUES.photo, session.mediaId)).toHaveLength(0);
+  });
+});
+
+describe("Ruling AX: a file the couple hid", () => {
+  it("can't be started again by any guest's phone: 409 hidden, and no row is made", async () => {
+    await signIn();
+    const body = smallFile();
+    const hidden = await uploadWhole(body);
+    expect(await hideMedia(hidden.mediaId, { admin: "couple@example.com" })).toEqual({ ok: true });
+    const rowsBefore = await mediaCount();
+
+    // Another phone, another guest, the same file renamed.
+    const response = await asBrowser(await otherBrowser(), () => start({ ...body, filename: "IMG_0001 copy.JPG" }));
+    expect(response.status).toBe(409);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ error: "hidden" });
+    expect(await mediaCount()).toBe(rowsBefore);
+    // Its own uploader is refused the same way.
+    expect((await start(body)).status).toBe(409);
+    // Another file of the same size is not.
+    expect((await start({ ...body, fingerprint: newFingerprint() })).status).toBe(200);
+  });
+
+  it("lets a guest send again a file they removed themselves", async () => {
+    const guest = await signIn();
+    const body = smallFile();
+    const removed = await uploadWhole(body);
+    expect(await hideMedia(removed.mediaId, { guestIds: [guest.id] })).toEqual({ ok: true });
+
+    const again = await start(body);
+    expect(again.status).toBe(200);
+    expect((await again.json()).mediaId).not.toBe(removed.mediaId);
+  });
+
+  it("doesn't block once the couple deleted it for good: the tombstone keeps no fingerprint (Ruling AU), and is deleted anyway", async () => {
+    await signIn();
+    const body = smallFile();
+    const deleted = await uploadWhole(body);
+    await hideMedia(deleted.mediaId, { admin: "couple@example.com" });
+    // Past the originals' 30-day lock.
+    await getDb().update(media).set({ uploadedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) }).where(eq(media.id, deleted.mediaId));
+    expect(await deleteMediaPermanently(deleted.mediaId, "couple@example.com")).toEqual({ ok: true });
+    expect((await mediaRow(deleted.mediaId)).fileFingerprint).toBeNull();
+    expect((await start(body)).status).toBe(200);
+
+    // A deleted row that somehow kept its fingerprint doesn't block either.
+    const other = smallFile();
+    const kept = await uploadWhole(other);
+    await getDb().update(media).set({ hiddenAt: new Date(), hiddenBy: "couple@example.com", deletedAt: new Date() }).where(eq(media.id, kept.mediaId));
+    expect((await start(other)).status).toBe(200);
   });
 });
 

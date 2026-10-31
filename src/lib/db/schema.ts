@@ -218,6 +218,11 @@ export const media = pgTable(
     index("media_resume_idx")
       .on(table.guestId, table.sizeBytes, table.fileFingerprint)
       .where(sql`${table.status} = 'uploading'`),
+    // Ruling AX: a start of a file the couple hid is refused, whichever phone sends it. Only the
+    // items they hid (not those a guest removed, nor the deleted): a handful at most.
+    index("media_couple_hidden_idx")
+      .on(table.fileFingerprint, table.sizeBytes)
+      .where(sql`${table.hiddenAt} is not null and not ${table.removedByUploader} and ${table.deletedAt} is null`),
     // The media worker's sweeper (Task 8), every 10 minutes. Each holds only the rows in transit:
     // items waiting to be processed, conversions waiting, and unfinished uploads in the order the
     // sweeper pages through them.
