@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { getSiteContent } from "@/lib/content/get";
+import { scheduleItemPlace } from "@/lib/content/place";
 import { liveStreamState, visibleFaq } from "@/lib/content/live";
 import { isSecondDay, resolveMode, type Mode } from "@/lib/mode";
 import { Autoplay } from "@/components/music/Autoplay";
@@ -60,7 +61,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <HeroBefore />
             <InvitationLetter rsvp={rsvp} />
             <Story story={story} />
-            <Celebrations celebrations={celebrations} />
+            <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Colours />
             <Party party={party} />
@@ -77,14 +78,14 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
           <>
             <HeroDay
               todayLabel={todayLabel}
-              now={current ? { title: current.title, place: current.place.replace(", Tepa", "") } : null}
+              now={current ? { title: current.title, place: scheduleItemPlace(current, venues).replace(", Tepa", "") } : null}
             />
             <LiveAlbum />
             <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule}
-              reception={venues.reception}
+              venues={venues}
               liveUrl={live.show ? live.url : null}
             />
-            <Celebrations celebrations={celebrations} />
+            <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Story story={story} />
             <Party party={party} />

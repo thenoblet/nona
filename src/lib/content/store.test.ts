@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDb } from "../../../test/db";
+import { celebrationsSavedBeforeVenues } from "../../../test/fixtures/saved-before-venues";
 import { dbConfig } from "@/lib/env";
 import { contentDefaults } from "./defaults";
 import { sectionKeys, sectionSchemas } from "./schema";
@@ -43,6 +44,24 @@ describe("readSiteContent", () => {
     expect(content.celebrations).toEqual(contentDefaults.celebrations);
   });
 
+  it("reads celebrations saved before each named its venue, rather than falling back to the built-in text", async () => {
+    // As production saved them, with a dress code the built-in text doesn't have, to tell the two apart.
+    const saved = structuredClone(celebrationsSavedBeforeVenues);
+    saved[1].dress = "Evening glamour, as saved";
+    await sql`insert into site_content (key, version, value, saved_by) values ('celebrations', 3, ${sql.json(saved)}, 'test')`;
+    const { celebrations } = await readSiteContent();
+    expect(console.error).not.toHaveBeenCalled();
+    expect(celebrations.map((celebration) => [celebration.id, celebration.venue, celebration.placeDetail])).toEqual([
+      ["ceremony", "church", undefined],
+      ["reception", "reception", undefined],
+      ["thanks", "church", undefined],
+    ]);
+    expect(celebrations[1].dress).toBe("Evening glamour, as saved");
+    const section = await readSection("celebrations");
+    expect(section.version).toBe(3);
+    expect(section.value).toEqual(celebrations);
+  });
+
   it("falls back to the default for a stored row with a bad shape", async () => {
     await sql`insert into site_content (key, version, value, saved_by) values ('faq', 1, ${sql.json({ nope: 1 })}, 'test')`;
     const content = await readSiteContent();
@@ -63,6 +82,25 @@ describe("versions", () => {
     await saveSection("faq", faqB, "test");
     expect(await restoreVersion("faq", 1, "test")).toEqual({ ok: true, version: 3 });
     expect((await readSiteContent()).faq).toEqual(faqA);
+  });
+
+  it("restores a version saved before the celebrations named their venues, in the new shape", async () => {
+    await sql`insert into site_content (key, version, value, saved_by) values ('celebrations', 1, ${sql.json(celebrationsSavedBeforeVenues)}, 'test')`;
+    expect(await saveSection("celebrations", contentDefaults.celebrations, "test")).toEqual({ ok: true, version: 2 });
+    expect(await restoreVersion("celebrations", 1, "test")).toEqual({ ok: true, version: 3 });
+
+    const [restored] = await sql<{ value: Record<string, unknown>[] }[]>`
+      select value from site_content where key = 'celebrations' and version = 3`;
+    expect(restored.value.map((celebration) => [celebration.id, celebration.venue])).toEqual([
+      ["ceremony", "church"],
+      ["reception", "reception"],
+      ["thanks", "church"],
+    ]);
+    for (const celebration of restored.value) {
+      expect(celebration).not.toHaveProperty("place");
+      expect(celebration).not.toHaveProperty("directionsUrl");
+      expect(celebration).not.toHaveProperty("placeDetail");
+    }
   });
 
   it("refuses to restore a version that does not exist", async () => {

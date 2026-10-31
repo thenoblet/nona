@@ -1,12 +1,100 @@
 import { describe, expect, it } from "vitest";
 import { contentDefaults } from "@/lib/content/defaults";
-import { sectionSpecs, type ListSpec } from "./fields";
+import { VENUE_LABELS } from "@/lib/content/schema";
+import { fieldsInOrder, sectionSpecs, type GroupsSpec, type ListSpec } from "./fields";
 
-const endsField = (sectionSpecs.celebrations as ListSpec).fields.find((field) => field.label === "Ends")!;
+const celebrationFields = (sectionSpecs.celebrations as ListSpec).fields;
+const savedVenues = { venues: contentDefaults.venues };
+const endsField = celebrationFields.find((field) => field.label === "Ends")!;
 const hintFor = (startTime: string | null, endTime: string | null) => {
   const hint = endsField.hint;
-  return typeof hint === "function" ? hint({ ...contentDefaults.celebrations[1], startTime, endTime }) : hint;
+  return typeof hint === "function" ? hint({ ...contentDefaults.celebrations[1], startTime, endTime }, savedVenues) : hint;
 };
+
+const venueField = celebrationFields.find((field) => field.path.join(".") === "venue");
+const venueHint = (venue: string, context = savedVenues) => {
+  const hint = venueField?.hint;
+  return typeof hint === "function" ? hint({ ...contentDefaults.celebrations[0], venue }, context) : hint;
+};
+
+describe("the celebration editor's place", () => {
+  it("is a choice of venue and an extra note, with no place, GPS or directions of its own", () => {
+    expect(venueField).toMatchObject({
+      label: "Venue",
+      kind: "select",
+      options: [
+        { value: "church", label: "Church" },
+        { value: "reception", label: "Reception" },
+      ],
+    });
+    expect(celebrationFields.find((field) => field.path.join(".") === "placeDetail")?.label).toBe("Extra place note");
+    const paths = celebrationFields.map((field) => field.path.join("."));
+    expect(paths).not.toContain("place");
+    expect(paths).not.toContain("directionsUrl");
+    expect(celebrationFields.filter((field) => /gps|direction|^place/i.test(field.label))).toEqual([]);
+  });
+
+  it("says where the place, GPS and directions come from, as guests will see them", () => {
+    expect(venueHint("reception")).toBe(
+      "Place, GPS and directions come from Venues → Reception: BN 111 Katakyie St, Tepa · GhanaPost GPS · AX-0084-3317",
+    );
+    expect(venueHint("church")).toBe(
+      "Place, GPS and directions come from Venues → Church: Assemblies of God, Victory Worship Centre, Tepa (no GPS yet)",
+    );
+  });
+
+  it("shows the venue's saved GPS", () => {
+    const venues = structuredClone(contentDefaults.venues);
+    venues.reception.gps = "AS-1205-2026";
+    expect(venueHint("reception", { venues })).toContain("GhanaPost GPS · AS-1205-2026");
+  });
+
+  it("names each venue as the Venues page heads it", () => {
+    const legends = (sectionSpecs.venues as GroupsSpec).groups.map((group) => [group.key, group.legend]);
+    expect(legends).toEqual(Object.entries(VENUE_LABELS));
+    expect(legends).toEqual([
+      ["church", "Church"],
+      ["reception", "Reception"],
+      ["hotel", "Hotel"],
+    ]);
+  });
+});
+
+describe("the order of the day editor's place", () => {
+  const scheduleSpec = sectionSpecs.schedule as ListSpec;
+  const [guestsArrive] = contentDefaults.schedule;
+  const otherPlace = { ...guestsArrive, venue: undefined, place: "Town park" };
+
+  it("chooses one of the venues, or another place", () => {
+    expect(scheduleSpec.fields.find((field) => field.label === "Venue")).toMatchObject({
+      path: ["venue"],
+      kind: "select",
+      options: [
+        { value: "church", label: "Church" },
+        { value: "reception", label: "Reception" },
+        { value: "hotel", label: "Hotel" },
+        { value: "", label: "Other place" },
+      ],
+    });
+  });
+
+  it("asks for the place only when the item is somewhere other than a venue", () => {
+    const fieldNames = (item: unknown) => fieldsInOrder(scheduleSpec, [item]).map((field) => field.name);
+    expect(fieldNames(guestsArrive)).toEqual([
+      "Guests arrive · Time",
+      "Guests arrive · What happens",
+      "Guests arrive · Venue",
+      "Guests arrive · Day",
+    ]);
+    expect(fieldNames(otherPlace)).toEqual([
+      "Guests arrive · Time",
+      "Guests arrive · What happens",
+      "Guests arrive · Venue",
+      "Guests arrive · Place",
+      "Guests arrive · Day",
+    ]);
+  });
+});
 
 describe("the celebration editor's Ends field", () => {
   it("says when an end before the start means after midnight", () => {

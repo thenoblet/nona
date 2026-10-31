@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { removeAt, setAt } from "@/components/admin/content/editing";
+import { fieldsInOrder, sectionSpecs } from "@/components/admin/content/fields";
 import { contentDefaults } from "@/lib/content/defaults";
 import { listVersions, readSiteContent, saveSection } from "@/lib/content/store";
-import type { SaveState } from "@/lib/admin/content";
+import { parseIssues, type SaveState } from "@/lib/admin/content";
 import { resetDb } from "../../../../test/db";
 
 const cache = vi.hoisted(() => ({ updateTag: vi.fn(), refresh: vi.fn() }));
@@ -92,6 +93,22 @@ describe("saveSectionAction", () => {
     expect(cache.refresh).not.toHaveBeenCalled();
     expect(await listVersions("celebrations")).toEqual([]);
     expect((await readSiteContent()).celebrations).toEqual(contentDefaults.celebrations);
+  });
+
+  it("refuses a GhanaPost GPS typed into a celebration's extra place note, on that field, and saves nothing", async () => {
+    const celebrations = setAt(contentDefaults.celebrations, [1, "placeDetail"], "GhanaPost GPS · AX-1111-2222");
+
+    const result = await saveSectionAction("celebrations", idle, editorForm(celebrations));
+    expect(result).toEqual({
+      status: "error",
+      errors: ["celebrations[1].placeDetail: Put the GPS number in Venues → Reception → GhanaPost GPS"],
+    });
+    // The editor shows it on the reception's Extra place note.
+    const [issue] = parseIssues("celebrations", result.errors);
+    const field = fieldsInOrder(sectionSpecs.celebrations, celebrations).find((entry) => entry.path === issue.path);
+    expect(field?.name).toBe("Reception · Extra place note");
+    expect(await listVersions("celebrations")).toEqual([]);
+    expect(cache.updateTag).not.toHaveBeenCalled();
   });
 
   it("refuses an order of the day with its only Sunday item removed", async () => {

@@ -55,9 +55,9 @@ export default function RsvpPage() {
  */
 async function RsvpFormLoader() {
   await connection();
-  const { celebrations, rsvp } = await getSiteContent();
+  const { celebrations, venues, rsvp } = await getSiteContent();
   if (!rsvp.open) return <RepliesClosed message={rsvp.closedMessage} />;
-  return <RsvpForm celebrations={celebrations} siteUrl={siteUrl()} />;
+  return <RsvpForm celebrations={celebrations} venues={venues} siteUrl={siteUrl()} />;
 }
 
 async function InvitationLoader() {

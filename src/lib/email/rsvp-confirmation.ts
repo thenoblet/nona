@@ -3,6 +3,7 @@ import { render, toPlainText } from "react-email";
 import { unwrapOutlookOnly } from "@/emails/components/OutlookOnly";
 import RsvpConfirmation, { type ConfirmationCelebration } from "@/emails/rsvp-confirmation";
 import { buildIcs, celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
+import { celebrationPlace } from "@/lib/content/place";
 import type { SiteContent } from "@/lib/content/schema";
 import type { RsvpRecord } from "@/lib/data/types";
 
@@ -44,17 +45,19 @@ export async function renderRsvpConfirmation(
   );
   const celebrations: ConfirmationCelebration[] = answered.map((celebration) => {
     const comingTo = rsvp.answers[celebration.id] === "yes";
+    const { place, gpsLine } = celebrationPlace(celebration, content.venues);
     return {
       id: celebration.id,
       name: celebration.name,
       date: `${celebration.weekday} ${dayOfMonth(celebration.day)} ${celebration.month}`,
       stub: stubFor(celebration.weekday, celebration.day, celebration.month),
       time: celebration.time,
-      place: celebration.place,
+      place,
+      gpsLine,
       placeDetail: celebration.placeDetail,
       attending: comingTo,
       googleCalendarUrl: comingTo
-        ? googleCalendarUrl(celebrationEvent(celebration, siteUrl))
+        ? googleCalendarUrl(celebrationEvent(celebration, content.venues, siteUrl))
         : null,
     };
   });
@@ -81,7 +84,7 @@ export async function renderRsvpConfirmation(
   const ics =
     attending.length > 0
       ? buildIcs(
-          attending.map((celebration) => celebrationEvent(celebration, siteUrl)),
+          attending.map((celebration) => celebrationEvent(celebration, content.venues, siteUrl)),
           new Date(rsvp.receivedAt),
         )
       : null;

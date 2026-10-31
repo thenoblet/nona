@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useEffect, useRef } from "react";
 import { couple } from "@/content/wedding";
 import { celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
-import type { Celebration } from "@/lib/content/schema";
+import type { Celebration, SiteContent } from "@/lib/content/schema";
 import { photos } from "@/content/images";
 import { PillAnchor } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
@@ -15,11 +15,13 @@ const statusLabel = { yes: "Attending", no: "Not attending" } as const;
 /** Replaces the form once the reply is saved. */
 export function ReplySent({
   celebrations,
+  venues,
   siteUrl,
   values,
   onChange,
 }: {
   celebrations: Celebration[];
+  venues: SiteContent["venues"];
   siteUrl: string;
   values: RsvpValues;
   onChange: () => void;
@@ -114,7 +116,7 @@ export function ReplySent({
             {accepted.map((celebration) => (
               <li key={celebration.id}>
                 <a
-                  href={googleCalendarUrl(celebrationEvent(celebration, siteUrl))}
+                  href={googleCalendarUrl(celebrationEvent(celebration, venues, siteUrl))}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="ember-link inline-flex min-h-11 items-center py-3 text-xs uppercase tracking-[0.18em] text-cocoa no-underline"

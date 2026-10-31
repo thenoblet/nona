@@ -68,11 +68,16 @@ describe("prepareSection", () => {
     });
   });
 
-  it("trims the directions and maps links", () => {
-    const [ceremony] = prepareSection("celebrations", [
-      { ...contentDefaults.celebrations[0], directionsUrl: "  https://maps.example.com/church\n" },
+  it("leaves out the venue of an order of the day item set to Other place, keeping its typed place", () => {
+    const [atChurch, otherPlace] = prepareSection("schedule", [
+      { ...contentDefaults.schedule[0], venue: "church" },
+      { time: "[Time]", title: "After-party", venue: "", place: "Rexco Junction", day: "sat" },
     ]) as Record<string, unknown>[];
-    expect(ceremony.directionsUrl).toBe("https://maps.example.com/church");
+    expect(atChurch.venue).toBe("church");
+    expect(otherPlace).toEqual({ time: "[Time]", title: "After-party", place: "Rexco Junction", day: "sat" });
+  });
+
+  it("trims the maps links", () => {
     const venues = prepareSection("venues", {
       ...contentDefaults.venues,
       hotel: { ...contentDefaults.venues.hotel, mapsUrl: " https://maps.example.com/hotel " },

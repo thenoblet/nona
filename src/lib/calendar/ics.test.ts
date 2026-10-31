@@ -1,21 +1,26 @@
 import { describe, expect, it } from "vitest";
-import type { Celebration } from "@/lib/content/schema";
+import { contentDefaults } from "@/lib/content/defaults";
+import type { Celebration, SiteContent } from "@/lib/content/schema";
 import { buildIcs, celebrationEvent, googleCalendarUrl } from "./ics";
 
 const base: Celebration = {
   id: "ceremony",
+  venue: "church",
   name: "White wedding",
   weekday: "Saturday",
   weekdayShort: "Sat",
   day: "05",
   month: "December",
   time: "[Start time], please be seated early",
-  place: "Chapel, Tepa",
   dress: "Formal",
-  directionsUrl: "#map",
   date: "2026-12-05",
   startTime: null,
   endTime: null,
+};
+const venues: SiteContent["venues"] = {
+  ...contentDefaults.venues,
+  church: { ...contentDefaults.venues.church, name: "Chapel" },
+  reception: { ...contentDefaults.venues.reception, name: "Garden Hall" },
 };
 const site = "https://example.com";
 const now = new Date("2026-10-29T12:30:45Z");
@@ -23,7 +28,7 @@ const lines = (ics: string) => ics.split("\r\n");
 
 describe("celebrationEvent", () => {
   it("maps a celebration to an event", () => {
-    expect(celebrationEvent(base, site)).toEqual({
+    expect(celebrationEvent(base, venues, site)).toEqual({
       uid: "ceremony@nobletxnancy.com",
       title: "White wedding · Noblet & Nancy",
       date: "2026-12-05",
@@ -33,11 +38,18 @@ describe("celebrationEvent", () => {
       description: "[Start time], please be seated early\nhttps://example.com",
     });
   });
+
+  it("takes its location from the celebration's venue, as edited", () => {
+    expect(celebrationEvent({ ...base, venue: "reception" }, venues, site).location).toBe("Garden Hall, Tepa");
+    const renamed = { ...venues, church: { ...venues.church, name: "Victory Worship Centre" } };
+    const ics = buildIcs([celebrationEvent(base, renamed, site)], now);
+    expect(ics).toContain("LOCATION:Victory Worship Centre\\, Tepa\r\n");
+  });
 });
 
 describe("buildIcs", () => {
   it("writes an all-day event when there is no start time", () => {
-    const ics = buildIcs([celebrationEvent(base, site)], now);
+    const ics = buildIcs([celebrationEvent(base, venues, site)], now);
     const written = lines(ics);
     expect(written[0]).toBe("BEGIN:VCALENDAR");
     expect(written).toContain("X-WR-TIMEZONE:Africa/Accra");
@@ -48,31 +60,32 @@ describe("buildIcs", () => {
   });
 
   it("uses UTC times and defaults the end to three hours later", () => {
-    const ics = buildIcs([celebrationEvent({ ...base, startTime: "10:00" }, site)], now);
+    const ics = buildIcs([celebrationEvent({ ...base, startTime: "10:00" }, venues, site)], now);
     expect(ics).toContain("DTSTART:20261205T100000Z\r\n");
     expect(ics).toContain("DTEND:20261205T130000Z\r\n");
   });
 
   it("uses the end time when given", () => {
-    const ics = buildIcs([celebrationEvent({ ...base, startTime: "10:00", endTime: "12:30" }, site)], now);
+    const ics = buildIcs([celebrationEvent({ ...base, startTime: "10:00", endTime: "12:30" }, venues, site)], now);
     expect(ics).toContain("DTEND:20261205T123000Z\r\n");
   });
 
   it("puts an end before the start on the next day", () => {
-    const ics = buildIcs([celebrationEvent({ ...base, startTime: "18:00", endTime: "02:00" }, site)], now);
+    const ics = buildIcs([celebrationEvent({ ...base, startTime: "18:00", endTime: "02:00" }, venues, site)], now);
     expect(ics).toContain("DTSTART:20261205T180000Z\r\n");
     expect(ics).toContain("DTEND:20261206T020000Z\r\n");
   });
 
   it("carries an end after midnight on 31 December into the new year", () => {
-    const ics = buildIcs([celebrationEvent({ ...base, date: "2026-12-31", startTime: "21:00", endTime: "01:30" }, site)], now);
+    const ics = buildIcs([celebrationEvent({ ...base, date: "2026-12-31", startTime: "21:00", endTime: "01:30" }, venues, site)], now);
     expect(ics).toContain("DTSTART:20261231T210000Z\r\n");
     expect(ics).toContain("DTEND:20270101T013000Z\r\n");
   });
 
   it("ends every line with CRLF and folds at 75 octets, counting bytes", () => {
-    const long = { ...base, place: "Ɛkɔm Ɔdɔ, ".repeat(30), startTime: "10:00" };
-    const ics = buildIcs([celebrationEvent(long, site)], now);
+    const longName = "Ɛkɔm Ɔdɔ, ".repeat(30);
+    const longVenues = { ...venues, church: { ...venues.church, name: longName } };
+    const ics = buildIcs([celebrationEvent({ ...base, startTime: "10:00" }, longVenues, site)], now);
     expect(ics.endsWith("\r\n")).toBe(true);
     expect(ics.replace(/\r\n/g, "")).not.toMatch(/[\r\n]/);
     for (const line of lines(ics.slice(0, -2))) {
@@ -80,18 +93,18 @@ describe("buildIcs", () => {
     }
     // Unfolding restores the escaped text.
     const unfolded = ics.replace(/\r\n /g, "");
-    expect(unfolded).toContain(`LOCATION:${long.place.replace(/,/g, "\\,")}`);
+    expect(unfolded).toContain(`LOCATION:${`${longName}, Tepa`.replace(/,/g, "\\,")}`);
   });
 
   it("escapes commas, semicolons, backslashes and newlines", () => {
-    const event = { ...celebrationEvent(base, site), description: "a,b;c\\d\ne" };
+    const event = { ...celebrationEvent(base, venues, site), description: "a,b;c\\d\ne" };
     expect(buildIcs([event], now)).toContain("DESCRIPTION:a\\,b\\;c\\\\d\\ne\r\n");
   });
 });
 
 describe("googleCalendarUrl", () => {
   it("uses a date range for an all-day event", () => {
-    const url = new URL(googleCalendarUrl(celebrationEvent(base, site)));
+    const url = new URL(googleCalendarUrl(celebrationEvent(base, venues, site)));
     expect(url.origin + url.pathname).toBe("https://calendar.google.com/calendar/render");
     expect(url.searchParams.get("action")).toBe("TEMPLATE");
     expect(url.searchParams.get("dates")).toBe("20261205/20261206");
@@ -100,12 +113,12 @@ describe("googleCalendarUrl", () => {
   });
 
   it("uses UTC times when the start is set", () => {
-    const url = new URL(googleCalendarUrl(celebrationEvent({ ...base, startTime: "10:00" }, site)));
+    const url = new URL(googleCalendarUrl(celebrationEvent({ ...base, startTime: "10:00" }, venues, site)));
     expect(url.searchParams.get("dates")).toBe("20261205T100000Z/20261205T130000Z");
   });
 
   it("ends an overnight celebration on the next day", () => {
-    const url = new URL(googleCalendarUrl(celebrationEvent({ ...base, startTime: "18:00", endTime: "02:00" }, site)));
+    const url = new URL(googleCalendarUrl(celebrationEvent({ ...base, startTime: "18:00", endTime: "02:00" }, venues, site)));
     expect(url.searchParams.get("dates")).toBe("20261205T180000Z/20261206T020000Z");
   });
 });
