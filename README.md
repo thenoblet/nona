@@ -252,6 +252,7 @@ Its environment:
 | `WORKER_X264_THREADS` | 2 | x264's threads in each conversion. |
 | `WORKER_SHARP_THREADS` | 1 | sharp's threads in each photo. |
 | `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job. |
+| `WORKER_HEIF_THREADS` | 1 | `heif-dec`'s codec and tile threads for each HEIC (libheif would otherwise decode 4 tiles at once). |
 | `WORKER_HEIF_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `heif-info` and `heif-dec` may take for one HEIC, at least 256 MiB: a backstop against a crafted file. A 48 MP iPhone photo decodes in about 300 MB; a file that hits the cap fails as `corrupt`. |
 | `WORKER_QUEUE_POOL_SIZE` | 10 | Database connections for the job queue. |
 

@@ -45,6 +45,18 @@ describe("runProcess", () => {
     expect(stderrTail.length).toBeLessThanOrEqual(4000);
   });
 
+  it("records the signal that ended a program something else killed, such as the kernel's OOM killer", async () => {
+    const failure = await runProcess("sh", ["-c", "kill -KILL $$"], {
+      signal: NEVER,
+      priority: "foreground",
+      timeoutMilliseconds: MINUTE,
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ProcessError);
+    const { exitCode, ending, exitSignal, message } = failure as ProcessError;
+    expect({ exitCode, ending, exitSignal }).toEqual({ exitCode: null, ending: "exit", exitSignal: "SIGKILL" });
+    expect(message).toMatch(/sh died on SIGKILL/);
+  });
+
   it("kills a program that runs past its time", async () => {
     const started = Date.now();
     const failure = await runProcess("sleep", ["30"], { signal: NEVER, priority: "foreground", timeoutMilliseconds: 200 }).catch(

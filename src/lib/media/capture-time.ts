@@ -60,6 +60,23 @@ export function captureTimeFromExif(tags: ExifTimes): Date | null {
   return new Date(wallClock - offset * MINUTE_MS);
 }
 
+/** No guest's photo was taken before this: an earlier time is a camera's reset clock (1970, 1980). */
+const EARLIEST_CAPTURE = Date.UTC(2000, 0, 1);
+/** How far past the upload's start a capture time may be: a phone's clock set a few hours ahead, or a wrong zone. */
+const LATEST_AFTER_START_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The capture time, unless it can't be true: before 2000, or more than a day after the upload
+ * started (a clock that is wrong, or was never set). Such a time counts as none, so the photo is
+ * grouped by the next best: the phone's time, then the upload's.
+ */
+export function plausibleCaptureTime(capturedAt: Date | null, startedAt: Date): Date | null {
+  if (!capturedAt) return null;
+  const moment = capturedAt.getTime();
+  if (Number.isNaN(moment) || moment < EARLIEST_CAPTURE || moment > startedAt.getTime() + LATEST_AFTER_START_MS) return null;
+  return capturedAt;
+}
+
 /**
  * The capture time in a photo file's EXIF (JPEG, PNG, HEIC or TIFF), read without loading the
  * file: only the three tags above. Null when the file has none, or has no EXIF a reader knows

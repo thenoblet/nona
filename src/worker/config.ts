@@ -36,6 +36,8 @@ export type WorkerThreads = {
   sharp: number;
   /** ffmpeg's -filter_threads and -filter_complex_threads (scaling, tone-mapping). */
   ffmpegFilters: number;
+  /** heif-dec's --codec-threads and --tile-threads: libheif would otherwise decode 4 tiles at once. */
+  heif: number;
 };
 
 export type WorkerConfig = {
@@ -82,6 +84,7 @@ const schema = zod.object({
   WORKER_X264_THREADS: count(2),
   WORKER_SHARP_THREADS: count(1),
   WORKER_FFMPEG_FILTER_THREADS: count(1),
+  WORKER_HEIF_THREADS: count(1),
   WORKER_QUEUE_POOL_SIZE: count(10, 100),
   // Below 256 MiB heif-dec can't decode even a small photo.
   WORKER_HEIF_MEMORY_BYTES: bytes(2048 * MEBIBYTE, 256 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
@@ -126,6 +129,7 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
       x264: settings.WORKER_X264_THREADS,
       sharp: settings.WORKER_SHARP_THREADS,
       ffmpegFilters: settings.WORKER_FFMPEG_FILTER_THREADS,
+      heif: settings.WORKER_HEIF_THREADS,
     },
     heifMemoryBytes: settings.WORKER_HEIF_MEMORY_BYTES,
     queuePoolSize: settings.WORKER_QUEUE_POOL_SIZE,

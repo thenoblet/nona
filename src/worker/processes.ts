@@ -40,11 +40,20 @@ export class ProcessError extends Error {
     readonly ending: ProcessEnding,
     readonly exitCode: number | null,
     readonly stderrTail: string,
+    /**
+     * The signal that ended it, if one did. With ending "exit", nothing here sent it: the program
+     * died by itself (SIGSEGV, SIGABRT) or something outside killed it (SIGKILL: the kernel's OOM
+     * killer, when the container runs out of memory).
+     */
+    readonly exitSignal: NodeJS.Signals | null = null,
   ) {
+    const lastLine = stderrTail.trim().split("\n").at(-1) ?? "";
     super(
-      ending === "exit"
-        ? `${command} exited with ${exitCode}: ${stderrTail.trim().split("\n").at(-1) ?? ""}`
-        : `${command} was killed: ${ending}`,
+      ending !== "exit"
+        ? `${command} was killed: ${ending}`
+        : exitCode === null && exitSignal
+          ? `${command} died on ${exitSignal}: ${lastLine}`
+          : `${command} exited with ${exitCode}: ${lastLine}`,
     );
   }
 }
@@ -102,12 +111,12 @@ export function runProcess(command: string, args: readonly string[], options: Pr
       stderrTail = (stderrTail + chunk).slice(-STDERR_TAIL_CHARACTERS);
     });
     child.on("error", (error) => finish(() => reject(error)));
-    child.on("close", (exitCode) =>
+    child.on("close", (exitCode, exitSignal) =>
       finish(() => {
         if (exitCode === 0 && killedFor === null) {
           resolve({ stdout: Buffer.concat(stdoutChunks).toString("utf8"), stderrTail });
         } else {
-          reject(new ProcessError(command, killedFor ?? "exit", exitCode, stderrTail));
+          reject(new ProcessError(command, killedFor ?? "exit", exitCode, stderrTail, exitSignal));
         }
       }),
     );

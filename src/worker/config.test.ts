@@ -18,7 +18,7 @@ describe("workerConfig", () => {
   });
 
   it("gives each tool one thread per job, x264 two, and never counts the machine's cores (Ruling R)", () => {
-    expect(workerConfig({ NODE_ENV: "development" }).threads).toEqual({ x264: 2, sharp: 1, ffmpegFilters: 1 });
+    expect(workerConfig({ NODE_ENV: "development" }).threads).toEqual({ x264: 2, sharp: 1, ffmpegFilters: 1, heif: 1 });
   });
 
   it("opens a job-queue pool big enough for every handler at once", () => {
@@ -39,6 +39,7 @@ describe("workerConfig", () => {
       WORKER_X264_THREADS: "4",
       WORKER_SHARP_THREADS: "3",
       WORKER_FFMPEG_FILTER_THREADS: "2",
+      WORKER_HEIF_THREADS: "4",
       WORKER_QUEUE_POOL_SIZE: "20",
     });
     expect(config.concurrency).toEqual({
@@ -51,7 +52,7 @@ describe("workerConfig", () => {
       convertOnDemand: 2,
       convertBacklog: 5,
     });
-    expect(config.threads).toEqual({ x264: 4, sharp: 3, ffmpegFilters: 2 });
+    expect(config.threads).toEqual({ x264: 4, sharp: 3, ffmpegFilters: 2, heif: 4 });
     expect(config.queuePoolSize).toBe(20);
   });
 

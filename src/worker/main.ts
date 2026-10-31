@@ -33,7 +33,7 @@ try {
  * - media.card: Task 19, a site photo's link-preview card.
  */
 const handlers: MediaHandlers = {
-  [MEDIA_QUEUES.photo]: photoHandler({ heifMemoryBytes: config.heifMemoryBytes }),
+  [MEDIA_QUEUES.photo]: photoHandler({ heifMemoryBytes: config.heifMemoryBytes, heifThreads: config.threads.heif }),
 };
 
 // libvips' threads for each image, from WORKER_SHARP_THREADS, never the host's core count (Ruling

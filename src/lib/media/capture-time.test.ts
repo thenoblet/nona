@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { captureTimeFromExif, readPhotoCaptureTime } from "./capture-time";
+import { captureTimeFromExif, plausibleCaptureTime, readPhotoCaptureTime } from "./capture-time";
 
 describe("captureTimeFromExif", () => {
   it("reads DateTimeOriginal with its OffsetTimeOriginal", () => {
@@ -41,6 +41,35 @@ describe("captureTimeFromExif", () => {
     for (const value of [undefined, null, "", "    :  :     :  :  ", "0000:00:00 00:00:00", "2026:02:30 10:00:00", "2026:12:05 24:00:00", "yesterday", 1764930600]) {
       expect(captureTimeFromExif({ DateTimeOriginal: value }), String(value)).toBeNull();
     }
+  });
+});
+
+describe("plausibleCaptureTime", () => {
+  const startedAt = new Date("2026-12-05T20:00:00Z");
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it("keeps a time from 2000 up to a day after the upload started: a phone's clock may run a few hours ahead", () => {
+    for (const moment of [
+      new Date("2000-01-01T00:00:00Z"),
+      new Date("2026-12-05T10:30:00Z"),
+      new Date(startedAt.getTime() + 14 * 60 * 60 * 1000),
+      new Date(startedAt.getTime() + DAY_MS),
+    ]) {
+      expect(plausibleCaptureTime(moment, startedAt), moment.toISOString()).toEqual(moment);
+    }
+  });
+
+  it("drops a time before 2000 or more than a day after the upload started, a reset or wrong clock's, as no time at all", () => {
+    for (const moment of [
+      new Date("1970-01-01T00:00:00Z"),
+      new Date("1999-12-31T23:59:59Z"),
+      new Date(startedAt.getTime() + DAY_MS + 1000),
+      new Date("2099-01-01T00:00:00Z"),
+      new Date(Number.NaN),
+    ]) {
+      expect(plausibleCaptureTime(moment, startedAt), String(moment)).toBeNull();
+    }
+    expect(plausibleCaptureTime(null, startedAt)).toBeNull();
   });
 });
 

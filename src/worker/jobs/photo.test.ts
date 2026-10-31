@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { crc32 } from "node:zlib";
 import {
   DeleteObjectsCommand,
   GetObjectCommand,
@@ -28,7 +29,15 @@ import { dropBossSchema, startTestBoss } from "../../../test/uploads";
 import { workerConfig } from "../config";
 import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
-import { heifImagesIn, photoHandler, processPhoto, type PhotoOptions } from "./photo";
+import { ProcessError } from "../processes";
+import {
+  heifImagesIn,
+  heifToolFailure,
+  photoHandler,
+  processPhoto,
+  sharpFailure,
+  type PhotoOptions,
+} from "./photo";
 
 /*
  * media.photo against the local MinIO and test database (docker compose up -d db minio && npm run
@@ -65,13 +74,32 @@ vi.mock("../processes", async (importOriginal) => {
   };
 });
 
-/** The production defaults: heif-dec capped at WORKER_HEIF_MEMORY_BYTES's default. */
-const PHOTO_OPTIONS: PhotoOptions = { heifMemoryBytes: workerConfig({}).heifMemoryBytes };
+/** The production defaults: heif-dec capped at WORKER_HEIF_MEMORY_BYTES's, on WORKER_HEIF_THREADS's. */
+const PHOTO_OPTIONS: PhotoOptions = {
+  heifMemoryBytes: workerConfig({}).heifMemoryBytes,
+  heifThreads: workerConfig({}).threads.heif,
+};
 
 /** The programs run since the test began whose arguments include `program`. */
 function runsOf(program: string): string[][] {
   return programs.runs.filter((run) => run.includes(program));
 }
+
+// A test can make the manifest's writes fail a few times, as R2 might.
+const manifests = vi.hoisted(() => ({ failuresLeft: 0 }));
+vi.mock("@/lib/storage/manifest", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/storage/manifest")>();
+  return {
+    ...real,
+    writeManifest: async (...args: Parameters<typeof real.writeManifest>) => {
+      if (manifests.failuresLeft > 0) {
+        manifests.failuresLeft -= 1;
+        throw new Error("R2 answered 503 Slow Down");
+      }
+      return real.writeManifest(...args);
+    },
+  };
+});
 
 const runFile = promisify(execFile);
 
@@ -115,6 +143,7 @@ beforeEach(async () => {
   await resetDb();
   publishing.afterPut = null;
   programs.runs = [];
+  manifests.failuresLeft = 0;
 });
 
 afterEach(async () => {
@@ -255,6 +284,17 @@ function claimingSize(heic: Buffer, from: [number, number], to: [number, number]
   throw new Error(`No image of ${from.join(" × ")} in the HEIC`);
 }
 
+/** The HEIC with its primary image (its `pitm` box) changed to the item `itemId`. */
+function withPrimary(heic: Buffer, itemId: number): Buffer {
+  const patched = Buffer.from(heic);
+  const box = patched.indexOf("pitm", 0, "latin1");
+  if (box === -1) throw new Error("No pitm box in the HEIC");
+  // Version 0 holds a 16-bit item id, version 1 a 32-bit one, after the version and flags.
+  if (patched[box + 4] === 0) patched.writeUInt16BE(itemId, box + 8);
+  else patched.writeUInt32BE(itemId, box + 8);
+  return patched;
+}
+
 /**
  * A 12 MP JPEG with as much detail as a busy photo: noise made at a quarter of its size and
  * enlarged, so it survives at the thumbnail's scale instead of averaging out.
@@ -377,6 +417,22 @@ describe("a photo's derived files", () => {
     expect(thumb.length).toBeLessThan(60 * 1024);
     expect(milliseconds).toBeLessThan(10_000);
   });
+
+  it("are made from a 200 MP JPEG, a Galaxy Ultra's high-resolution mode (Ruling AK)", async () => {
+    const jpeg = await sharp({ create: { width: 16_320, height: 12_240, channels: 3, background: "#7a5" } })
+      .composite([{ input: { create: { width: 4_080, height: 12_240, channels: 3, background: "#00f" } }, left: 0, top: 0 }])
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    const mediaId = await uploadedPhoto(jpeg, "jpg");
+
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+    const item = await readItem(mediaId);
+    expect(item).toMatchObject({ status: "ready", width: 16_320, height: 12_240 });
+    const view = (await readPublic(item.derived.view ?? "")).bytes;
+    expect(await sizeOf(view)).toEqual({ width: 1600, height: 1200, format: "webp" });
+    expect(isBlue(await colourAt(view, 0.05, 0.5))).toBe(true);
+  });
 });
 
 describe("a photo's capture time and celebration", () => {
@@ -431,6 +487,38 @@ describe("a photo's capture time and celebration", () => {
     expect(item.celebration).toBe("ceremony");
   });
 
+  it("drop a time from a reset or wrong clock (before 2000, or past the day after the upload), and use the phone's", async () => {
+    // The upload started during the ceremony; the phone sent the time it was taken.
+    const startedAt = new Date("2026-12-05T11:00:00Z");
+    for (const taken of ["1970:01:01 00:00:00", "2099:01:01 12:00:00"]) {
+      const jpeg = await sharp({ create: { width: 640, height: 480, channels: 3, background: "#456" } })
+        .withExif({ IFD2: { DateTimeOriginal: taken } })
+        .jpeg()
+        .toBuffer();
+      const mediaId = await uploadedPhoto(jpeg, "jpg", { startedAt, capturedAt: new Date("2026-12-05T15:00:00Z") });
+
+      await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+      const item = await readItem(mediaId);
+      expect(item.capturedAt?.toISOString(), taken).toBe("2026-12-05T15:00:00.000Z");
+      expect(item.celebration, taken).toBe("reception");
+    }
+  });
+
+  it("drop the phone's time too when its clock is wrong, and group by when the upload started", async () => {
+    const startedAt = new Date("2026-12-05T11:00:00Z");
+    for (const phoneTime of [new Date("1970-01-01T00:00:00Z"), new Date("2099-01-01T12:00:00Z")]) {
+      const png = await sharp({ create: { width: 64, height: 48, channels: 3, background: "#654" } }).png().toBuffer();
+      const mediaId = await uploadedPhoto(png, "png", { startedAt, capturedAt: phoneTime });
+
+      await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+      const item = await readItem(mediaId);
+      expect(item.capturedAt, phoneTime.toISOString()).toBeNull();
+      expect(item.celebration, phoneTime.toISOString()).toBe("ceremony");
+    }
+  });
+
   it("leave an item listed before in its place in the album", async () => {
     const listedAt = new Date("2026-12-05T12:00:00Z");
     const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#123" } }).png().toBuffer();
@@ -468,6 +556,49 @@ describe("heifImagesIn: heif-info's list of a HEIC's images", () => {
     expect(heifImagesIn("image: 4032x3024 (id=49), primary\nimage: lots (id=50)")).toBeNull();
     expect(heifImagesIn("image: 4032x3024 (id=49)\nimage: 800x600 (id=60)")).toBeNull();
     expect(heifImagesIn("image: 4032x3024 (id=49), primary\nimage: 800x600 (id=60), primary")).toBeNull();
+  });
+});
+
+describe("what a failure is: the file's, for good, or the worker's, to try again", () => {
+  const memoryBytes = 2 * 1024 ** 3;
+  const failure = (ending: ConstructorParameters<typeof ProcessError>[1], exitCode: number | null, exitSignal: NodeJS.Signals | null = null) =>
+    heifToolFailure("heif-dec", new ProcessError("prlimit", ending, exitCode, "Could not decode image", exitSignal), memoryBytes);
+
+  it("blames the file when heif-dec refuses it, dies on it, runs past its time or prints far too much", () => {
+    for (const error of [failure("exit", 1), failure("exit", null, "SIGABRT"), failure("exit", null, "SIGSEGV"), failure("timeout", null, "SIGKILL"), failure("too-much-output", null, "SIGKILL")]) {
+      expect(error).toBeInstanceOf(PermanentJobError);
+      expect((error as PermanentJobError).reason).toBe("corrupt");
+    }
+  });
+
+  it("tries again when something else killed heif-dec (an OOM kill from a conversion beside it), the job ended, the worker stopped, or the tool couldn't run", () => {
+    const spawnError = Object.assign(new Error("spawn prlimit ENOENT"), { code: "ENOENT" });
+    for (const error of [
+      failure("exit", null, "SIGKILL"),
+      failure("aborted", null, "SIGKILL"),
+      failure("stopping", null, "SIGKILL"),
+      failure("exit", 127),
+      failure("exit", 126),
+      heifToolFailure("heif-dec", spawnError, memoryBytes),
+    ]) {
+      expect(error).not.toBeInstanceOf(PermanentJobError);
+    }
+  });
+
+  it("blames the file for sharp's decode errors and pixel limit, and the worker for running out of memory, files or disk", () => {
+    expect(sharpFailure("jpeg", new Error("VipsJpeg: premature end of JPEG image"))).toMatchObject({ reason: "corrupt" });
+    expect(sharpFailure("png", new Error("Input image exceeds pixel limit"))).toMatchObject({ reason: "too-large" });
+    for (const message of [
+      "vips_malloc: out of memory --- size == 600MB",
+      "std::bad_alloc",
+      "VipsJpeg: Cannot allocate memory",
+      "unable to open for read: Too many open files",
+      "VipsForeignSaveWebp: write error: No space left on device",
+      "EMFILE: too many open files",
+      "ENOSPC: no space left on device, write",
+    ]) {
+      expect(sharpFailure("jpeg", new Error(message)), message).not.toBeInstanceOf(PermanentJobError);
+    }
   });
 });
 
@@ -514,6 +645,11 @@ describe("HEIC (Review Focus 2)", () => {
     expect(runsOf("heif-dec")).toEqual([
       expect.arrayContaining(["prlimit", `--as=${PHOTO_OPTIONS.heifMemoryBytes}`, "--", "heif-dec"]),
     ]);
+    // On WORKER_HEIF_THREADS threads, never libheif's own count (Ruling R).
+    const [decode] = runsOf("heif-dec");
+    for (const flag of ["--codec-threads", "--tile-threads"]) {
+      expect(decode[decode.indexOf(flag) + 1], flag).toBe(String(PHOTO_OPTIONS.heifThreads));
+    }
   });
 
   it.skipIf(!heicTests)("takes the primary image of a HEIC that holds several", async () => {
@@ -530,12 +666,31 @@ describe("HEIC (Review Focus 2)", () => {
     expect(await sizeOf((await readPublic(item.derived.thumb ?? "")).bytes)).toEqual({ width: 360, height: 480, format: "webp" });
   });
 
+  it.skipIf(!heicTests)("takes the primary image when it isn't the first in the file", async () => {
+    const first = await sharp({ create: { width: 600, height: 400, channels: 3, background: "#f00" } }).jpeg().toBuffer();
+    const second = await sharp({ create: { width: 800, height: 200, channels: 3, background: "#0f0" } }).jpeg().toBuffer();
+    const heic = withPrimary(await heicFrom(first, second), 2);
+    const patched = join(folder, `${randomUUID()}.heic`);
+    await writeFile(patched, heic);
+    expect(heifImagesIn((await runFile("heif-info", [patched], { encoding: "utf8" })).stdout)).toEqual([
+      { width: 600, height: 400, primary: false },
+      { width: 800, height: 200, primary: true },
+    ]);
+    const mediaId = await uploadedPhoto(heic, "heic");
+
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+    const item = await readItem(mediaId);
+    expect(item).toMatchObject({ status: "ready", width: 800, height: 200 });
+    expect(await sizeOf((await readPublic(item.derived.thumb ?? "")).bytes)).toEqual({ width: 480, height: 120, format: "webp" });
+  });
+
   it.skipIf(!heicTests)(
-    "refuses, without decoding anything, a HEIC whose small primary hides a second image over 100 megapixels",
+    "refuses, without decoding anything, a HEIC whose small primary hides a second image past the pixel limit",
     async () => {
       const primary = await sharp({ create: { width: 300, height: 200, channels: 3, background: "#f00" } }).jpeg().toBuffer();
       const hidden = await sharp({ create: { width: 160, height: 120, channels: 3, background: "#0f0" } }).jpeg().toBuffer();
-      const heic = claimingSize(await heicFrom(primary, hidden), [160, 120], [12_000, 9_000]);
+      const heic = claimingSize(await heicFrom(primary, hidden), [160, 120], [15_000, 15_000]);
       // sharp sees only the primary, so its pixel limit can't catch this.
       expect(await sharp(heic).metadata()).toMatchObject({ width: 300, height: 200, pages: 2 });
       const mediaId = await uploadedPhoto(heic, "heic");
@@ -545,6 +700,17 @@ describe("HEIC (Review Focus 2)", () => {
       expect(runsOf("heif-dec")).toEqual([]);
     },
   );
+
+  it.skipIf(!heicTests)("refuses, without decoding anything, a HEIC whose images pass 210 megapixels together, though each is under", async () => {
+    const first = await sharp({ create: { width: 300, height: 200, channels: 3, background: "#f00" } }).jpeg().toBuffer();
+    const second = await sharp({ create: { width: 160, height: 120, channels: 3, background: "#0f0" } }).jpeg().toBuffer();
+    // Two images of 108 MP each: 216 MP for heif-dec to decode.
+    const heic = claimingSize(claimingSize(await heicFrom(first, second), [300, 200], [12_000, 9_000]), [160, 120], [12_000, 9_000]);
+    const mediaId = await uploadedPhoto(heic, "heic");
+
+    expect(await permanentFailure(mediaId)).toBe("too-large");
+    expect(runsOf("heif-dec")).toEqual([]);
+  });
 
   it.skipIf(!heicTests)("refuses, without decoding anything, a HEIC holding more than 8 images", async () => {
     const images = await Promise.all(
@@ -570,14 +736,26 @@ describe("HEIC (Review Focus 2)", () => {
       .jpeg({ quality: 90 })
       .toBuffer();
     const mediaId = await uploadedPhoto(await heicFrom(jpeg), "heic");
-    // 32 MiB: room for heif-dec to start and read the file, not to decode a 4 MP photo.
+    // 32 MiB: room for heif-dec to start and read the file, not to decode a 4 MP photo. Near its
+    // cap heif-dec may exit or may wait forever; either way the file fails for good.
     const tinyCap = 32 * 1024 * 1024;
 
-    const error = await permanentError(mediaId, { heifMemoryBytes: tinyCap });
+    const error = await permanentError(mediaId, { ...PHOTO_OPTIONS, heifMemoryBytes: tinyCap, heifDecodeMilliseconds: 5_000 });
 
     expect(error?.reason).toBe("corrupt");
-    expect(error?.message).toMatch(/heif-dec/);
+    expect(error?.message).toMatch(/heif-dec .*(exited|killed \(timeout\))/);
     expect(runsOf("heif-dec")).toEqual([expect.arrayContaining(["prlimit", `--as=${tinyCap}`, "--", "heif-dec"])]);
+    expect(await publicKeysOf(mediaId)).toEqual([]);
+  });
+
+  it.skipIf(!heicTests)("fails for good when heif-dec runs past its time, and publishes nothing", async () => {
+    const mediaId = await uploadedPhoto(await heicFrom(await phonePhoto(1200, 900).jpeg().toBuffer()), "heic");
+
+    const error = await permanentError(mediaId, { ...PHOTO_OPTIONS, heifDecodeMilliseconds: 1 });
+
+    expect(error?.reason).toBe("corrupt");
+    expect(error?.message).toMatch(/heif-dec .*killed \(timeout\)/);
+    expect(await readItem(mediaId)).toMatchObject({ status: "uploaded", listedAt: null });
     expect(await publicKeysOf(mediaId)).toEqual([]);
   });
 
@@ -679,14 +857,54 @@ describe("a file that isn't a photo the album takes (Review Focus 5)", () => {
     expect(await permanentFailure(brokenHeic)).toBe("corrupt");
   });
 
-  it("fails as too-large when its header claims more than 100 megapixels, before decoding any", async () => {
-    // A small JPEG whose frame header says 12,000 × 9,000: a decompression bomb.
+  it("fails as too-large when a JPEG's header claims more than 210 megapixels, before decoding any", async () => {
+    // A small JPEG whose frame header says 15,000 × 15,000: a decompression bomb.
     const bomb = await sharp({ create: { width: 16, height: 16, channels: 3, background: "#888" } }).jpeg().toBuffer();
     const frame = bomb.indexOf(Buffer.from([0xff, 0xc0]));
-    bomb.writeUInt16BE(9_000, frame + 5);
-    bomb.writeUInt16BE(12_000, frame + 7);
+    bomb.writeUInt16BE(15_000, frame + 5);
+    bomb.writeUInt16BE(15_000, frame + 7);
     const mediaId = await uploadedPhoto(bomb, "jpg");
     expect(await permanentFailure(mediaId)).toBe("too-large");
+  });
+
+  it("fails as too-large when another format's header claims more than 100 megapixels: only JPEG may have more", async () => {
+    // A small PNG whose header (IHDR, with its checksum made again) says 12,000 × 9,000.
+    const bomb = await sharp({ create: { width: 16, height: 16, channels: 3, background: "#888" } }).png().toBuffer();
+    const header = bomb.indexOf("IHDR", 0, "latin1");
+    bomb.writeUInt32BE(12_000, header + 4);
+    bomb.writeUInt32BE(9_000, header + 8);
+    bomb.writeUInt32BE(crc32(bomb.subarray(header, header + 17)), header + 17);
+    const mediaId = await uploadedPhoto(bomb, "png");
+    expect(await permanentFailure(mediaId)).toBe("too-large");
+  });
+});
+
+describe("the manifest, written again after the ready mark", () => {
+  async function png(): Promise<Buffer> {
+    return sharp({ create: { width: 320, height: 240, channels: 3, background: "#963" } }).png().toBuffer();
+  }
+
+  it("is tried again when R2 refuses it once or twice", async () => {
+    const mediaId = await uploadedPhoto(await png(), "png", { capturedAt: new Date("2026-12-05T11:00:00Z") });
+    manifests.failuresLeft = 2;
+
+    await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+    expect(manifests.failuresLeft).toBe(0);
+    expect(await readManifest(mediaId)).toMatchObject({ celebration: "ceremony" });
+  });
+
+  it("is given up after three tries, with the item ready and the failure said in the log", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const mediaId = await uploadedPhoto(await png(), "png");
+    manifests.failuresLeft = 99;
+
+    const report = await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+    expect(manifests.failuresLeft).toBe(96);
+    expect(report).toMatchObject({ kind: "photo/png" });
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready" });
+    expect(errors.mock.calls.flat().join(" ")).toContain(`media=${mediaId} is ready, but its manifest wasn't written`);
   });
 });
 
