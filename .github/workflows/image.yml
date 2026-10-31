@@ -185,11 +185,12 @@ jobs:
           cache-from: type=gha,scope=worker-test
           cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=worker-test,mode=max' || '' }}
 
-      # Creates MinIO's two buckets, then runs npm run test:worker on 3 CPUs, as nona-worker-01's
-      # container has them: Ruling E's test (a photo stays fast while a 4K HDR conversion runs)
-      # holds only on the CPUs production has.
+      # Creates MinIO's two buckets, then runs npm run test:worker on at most 3 CPUs, as
+      # nona-worker-01's container has them: Ruling E's test (a photo stays fast while a 4K HDR
+      # conversion runs) must hold on production's CPUs. A private repo's runner has only 2, which
+      # Docker refuses to exceed, so it runs on all of them there: a stricter version of the test.
       - run: docker run --rm --network host nona-worker-test npm run storage:init
-      - run: docker run --rm --network host --cpus=3 nona-worker-test
+      - run: docker run --rm --network host --cpus="$(( $(nproc) < 3 ? $(nproc) : 3 ))" nona-worker-test
 
   build:
     needs: test
