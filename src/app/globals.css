@@ -280,6 +280,8 @@
   }
   .fold > * { min-height: 0; overflow: hidden; }
   .fold.is-folded { grid-template-rows: 0fr; opacity: 0; }
+  /* A card's own fold clips only while it folds away, never its shadow at rest. */
+  .upload-card-fold:not(.is-folded) > * { overflow: visible; }
 
   .morph { position: relative; display: inline-block; white-space: nowrap; }
   .morph-in { display: inline-block; animation: morph-in 420ms cubic-bezier(0.16, 1, 0.3, 1) 60ms both; }
@@ -320,6 +322,30 @@
   [data-status="failed"] > .upload-badge { background: var(--color-halo); color: var(--color-ember-ink); }
   [data-status="retrying"] > .upload-badge .upload-retry { animation: upload-spin 2400ms linear infinite; }
 
+  /*
+   * The floating progress circle (Ruling BE): it pops in, its ring glides as bytes go, and once
+   * everything has arrived its count gives way to the badge's drawn check with one ember pulse.
+   */
+  .upload-circle { animation: upload-circle-in 320ms cubic-bezier(0.16, 1, 0.3, 1); }
+  .upload-ring { transition: stroke-dashoffset 700ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease; }
+  .upload-circle-count { transition: opacity 220ms ease, transform 380ms cubic-bezier(0.16, 1, 0.3, 1); }
+  .upload-circle-check {
+    opacity: 0;
+    transform: scale(0.5);
+    transition: opacity 220ms ease, transform 380ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  [data-upload-circle][data-state="done"] .upload-circle-count { opacity: 0; transform: scale(0.6); }
+  [data-upload-circle][data-state="done"] .upload-circle-check { opacity: 1; transform: none; }
+  [data-upload-circle][data-state="done"] .upload-tick { opacity: 1; stroke-dashoffset: 0; }
+  [data-upload-circle][data-state="done"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    pointer-events: none;
+    animation: upload-pulse 1600ms ease-out 1;
+  }
+
   @keyframes morph-in {
     from { opacity: 0; transform: translateY(0.5em); }
   }
@@ -333,6 +359,9 @@
     0% { box-shadow: 0 0 0 0 rgb(232 127 57 / 0.45); }
     100% { box-shadow: 0 0 0 18px rgb(232 127 57 / 0); }
   }
+  @keyframes upload-circle-in {
+    from { opacity: 0; scale: 0.6; }
+  }
 }
 
 /*
@@ -342,6 +371,9 @@
 @media (max-width: 639px) {
   #dock-slot:not(:empty) + div .dock-label { display: none; }
   #dock-slot:not(:empty) + div button:has(.dock-label) { padding-right: 0; }
+  /* The album's minimised uploads are a small circle: the music keeps its words beside it, at 320 px too. */
+  #dock-slot:has(> [data-upload-circle]) + div .dock-label { display: flex; }
+  #dock-slot:has(> [data-upload-circle]) + div button:has(.dock-label) { padding-right: 0.375rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

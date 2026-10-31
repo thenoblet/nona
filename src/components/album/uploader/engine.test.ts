@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createApiClient } from "./api";
-import { startEngine, UPLOAD_TIMINGS, type Engine, type EngineEnvironment } from "./engine";
+import { PARTS_IN_FLIGHT, startEngine, UPLOAD_TIMINGS, type Engine, type EngineEnvironment, type UploadTimings } from "./engine";
 import { createPendingCancels, createStartedFiles, type StorageLike } from "./local-records";
 import type { PartPut } from "./part-put";
 import { createSentFiles, fingerprintFile } from "./resume";
@@ -46,6 +46,10 @@ class FakeServer {
   /** Held starts wait for this; `answerStart` answers in the server's place. */
   startGate: Promise<void> | null = null;
   answerStart: (() => Answer) | null = null;
+  /** The guest call waits for this. */
+  guestGate: Promise<void> | null = null;
+  /** Answers a complete in the server's place (a probe the server can't answer, say). */
+  answerComplete: ((mediaId: string) => Answer) | null = null;
   #made = 0;
 
   count(method: string, pattern: RegExp): number {
@@ -67,7 +71,10 @@ class FakeServer {
   }) as typeof fetch;
 
   async #route(method: string, path: string, body: Record<string, unknown> | undefined): Promise<Answer> {
-    if (path === "/api/guest") return { status: 200, body: { guestId: "guest-1", link: "https://example.com/my/token" } };
+    if (path === "/api/guest") {
+      await this.guestGate;
+      return { status: 200, body: { guestId: "guest-1", link: "https://example.com/my/token" } };
+    }
     if (path === "/api/upload-events") return { status: 200, body: { stored: 1 } };
     if (path === "/api/uploads" && method === "POST") {
       await this.startGate;
@@ -99,6 +106,7 @@ class FakeServer {
     if (action === "parts") return { status: 200, body: { parts: this.#partsOf(upload) } };
     if (action === "complete") {
       this.completeCalls += 1;
+      if (this.answerComplete) return this.answerComplete(mediaId);
       if (this.completeCalls >= this.holdCompletesFrom) await this.completeGate;
       if (upload.removed) return { status: 409, body: { error: "removed" } };
       if (upload.hidden) return { status: 409, body: { error: "hidden" } };
@@ -144,19 +152,28 @@ class FakeServer {
   readonly puts: { mediaId: string; partNumber: number; size: number }[] = [];
   failPut: ((partNumber: number, attempt: number) => boolean) | null = null;
   holdPuts: Promise<void> | null = null;
+  /** Part PUTs on their way right now, and the most there have been at once. */
+  putsInFlight = 0;
+  mostPutsInFlight = 0;
   readonly putPart: PartPut = async (request) => {
     const [, mediaId, partText] = new URL(request.signature.url).pathname.split("/");
     const partNumber = Number(partText);
     const attempt = this.puts.filter((put) => put.mediaId === mediaId && put.partNumber === partNumber).length + 1;
     const size = (request.body as Blob).size;
     this.puts.push({ mediaId, partNumber, size });
-    await this.holdPuts;
-    if (request.signal?.aborted) throw new DOMException("stopped", "AbortError");
-    if (this.failPut?.(partNumber, attempt)) throw Object.assign(new Error("The connection dropped"), { source: { status: 0 } });
-    this.uploads.get(mediaId)?.parts.add(partNumber);
-    request.onProgress?.({ loaded: size, lengthComputable: true });
-    request.onComplete?.("");
-    return { ETag: "" };
+    this.putsInFlight += 1;
+    this.mostPutsInFlight = Math.max(this.mostPutsInFlight, this.putsInFlight);
+    try {
+      await this.holdPuts;
+      if (request.signal?.aborted) throw new DOMException("stopped", "AbortError");
+      if (this.failPut?.(partNumber, attempt)) throw Object.assign(new Error("The connection dropped"), { source: { status: 0 } });
+      this.uploads.get(mediaId)?.parts.add(partNumber);
+      request.onProgress?.({ loaded: size, lengthComputable: true });
+      request.onComplete?.("");
+      return { ETag: "" };
+    } finally {
+      this.putsInFlight -= 1;
+    }
   };
 }
 
@@ -176,10 +193,18 @@ function memoryStorage(): StorageLike {
 class FakeNetwork implements EngineEnvironment {
   offline = false;
   readonly #online: (() => void)[] = [];
+  readonly #pageHide: (() => void)[] = [];
   onOnline(listener: () => void) {
     this.#online.push(listener);
   }
-  onPageHide() {}
+  // An arrow: the uploader hands it on unbound, as it does the browser's own.
+  readonly onPageHide = (listener: () => void) => {
+    this.#pageHide.push(listener);
+  };
+  /** The page goes: the events still waiting are sent. */
+  pageHide() {
+    for (const listener of this.#pageHide) listener();
+  }
   isOffline() {
     return this.offline;
   }
@@ -191,11 +216,12 @@ class FakeNetwork implements EngineEnvironment {
 
 const engines: Engine[] = [];
 
-function setUp(options: { storage?: StorageLike; server?: FakeServer } = {}) {
+function setUp(options: { storage?: StorageLike; server?: FakeServer; timings?: Partial<UploadTimings> } = {}) {
   const server = options.server ?? new FakeServer();
   const network = new FakeNetwork();
   const storage = options.storage ?? memoryStorage();
   const store = createUploadStore({ previews: { create: () => null, revoke: () => {} } });
+  const guard = { updates: [] as boolean[], update: (busy: boolean) => guard.updates.push(busy) };
   const engine = startEngine(
     store,
     { guestName: () => "Ama", onPersonalLink: () => {} },
@@ -204,7 +230,14 @@ function setUp(options: { storage?: StorageLike; server?: FakeServer } = {}) {
       putPart: server.putPart,
       storage,
       environment: network,
-      timings: { partRetryDelays: [0, 0, 0], fileRetryDelays: [5, 5, 5], cancelRetryDelays: [5, 5], fingerprintTimeoutMs: 300 },
+      pageGuard: guard,
+      timings: {
+        partRetryDelays: [0, 0, 0],
+        fileRetryDelays: [5, 5, 5],
+        cancelRetryDelays: [5, 5],
+        fingerprintTimeoutMs: 300,
+        ...options.timings,
+      },
     },
   );
   engines.push(engine);
@@ -213,11 +246,37 @@ function setUp(options: { storage?: StorageLike; server?: FakeServer } = {}) {
     engine.pump();
     return queued;
   };
-  return { server, network, storage, store, engine, pick };
+  return { server, network, storage, store, engine, pick, guard };
 }
 
 function video(size: number, name = "clip.mp4", fill = 7): File {
   return new File([new Uint8Array(size).fill(fill)], name, { type: "video/mp4" });
+}
+
+/** The words Chrome gives a File whose bytes changed on disk after it was picked. */
+const STALE_FILE_WORDS =
+  "The requested file could not be read, typically due to permission problems that have occurred after a reference to a file was acquired.";
+
+/**
+ * A picked file whose reads fail from `failFrom` on, as a File gone stale does (WhatsApp finishing
+ * it after the pick): every read, or only the tail's. Counts its reads.
+ */
+function staleFile(options: { name?: string; size?: number; failFrom: "head" | "tail" }) {
+  const reads: number[] = [];
+  const file = {
+    name: options.name ?? "IMG-20261205-WA0007.jpg",
+    type: "image/jpeg",
+    size: options.size ?? 2 * MEBIBYTE,
+    lastModified: 0,
+    slice: (start: number, end: number) => ({
+      arrayBuffer: async () => {
+        reads.push(start);
+        if (options.failFrom === "head" || start > 0) throw new DOMException(STALE_FILE_WORDS, "NotReadableError");
+        return new ArrayBuffer(end - start);
+      },
+    }),
+  } as unknown as File;
+  return { file, reads };
 }
 
 function itemOf(store: UploadStore, id: string): UploadItem | undefined {
@@ -609,5 +668,168 @@ describe("Cancel", () => {
     setup.engine.dismiss(item.id);
     expect(setup.store.get(item.id)).toBeUndefined();
     expect(createPendingCancels(setup.storage).list()).toHaveLength(1);
+  });
+});
+
+describe("Ruling BA: a file that changed after it was picked", () => {
+  it("is read for its fingerprint while the guest call is still on its way, not after", async () => {
+    const server = new FakeServer();
+    let releaseGuest: () => void = () => {};
+    server.guestGate = new Promise((resolve) => {
+      releaseGuest = resolve;
+    });
+    const { store, pick } = setUp({ server });
+    const file = video(3 * MEBIBYTE);
+    const sliced: number[] = [];
+    const slice = file.slice.bind(file);
+    file.slice = ((start?: number, end?: number) => {
+      sliced.push(start ?? 0);
+      return slice(start, end);
+    }) as typeof file.slice;
+
+    const [item] = pick([file]);
+    await until(() => sliced.length >= 2);
+    expect(server.count("POST", /^\/api\/guest$/)).toBe(1);
+    expect(server.count("POST", /^\/api\/uploads$/)).toBe(0);
+    releaseGuest();
+    await until(() => itemOf(store, item.id)?.status === "added");
+  });
+
+  it("says so, with Choose again rather than Try again, and tells the status page which read failed and why, without the file's name", async () => {
+    const { server, store, engine, network, pick } = setUp();
+    const { file, reads } = staleFile({ failFrom: "tail" });
+
+    const [item] = pick([file]);
+    await until(() => itemOf(store, item.id)?.status === "failed");
+    expect(itemOf(store, item.id)?.failure).toEqual({
+      reason: "This photo changed after you chose it",
+      hint: "Choose it again.",
+      canRetry: false,
+      chooseAgain: true,
+    });
+    expect(server.count("POST", /^\/api\/uploads$/)).toBe(0);
+
+    // Try again can't help a file that changed: only choosing it again reads it afresh.
+    engine.retry(item.id);
+    expect(itemOf(store, item.id)?.status).toBe("failed");
+    const readsBefore = reads.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(reads).toHaveLength(readsBefore);
+
+    network.pageHide();
+    await until(() => server.count("POST", /^\/api\/upload-events$/) === 1);
+    const [{ body }] = server.calls.filter((call) => call.path === "/api/upload-events");
+    expect(body).toEqual({
+      events: [
+        {
+          kind: "failed",
+          reason: "file-changed",
+          detail: { online: true, errorName: "NotReadableError", errorMessage: STALE_FILE_WORDS.slice(0, 120), read: "tail" },
+        },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain("WA0007");
+  });
+
+  it("says so as soon as a file changes while it sends, rather than retrying it for minutes", async () => {
+    const { server, store, pick } = setUp({ timings: { fileRetryDelays: [60_000] } });
+    const file = video(12 * MEBIBYTE);
+    let changed = false;
+    const slice = file.slice.bind(file);
+    file.slice = ((start?: number, end?: number) => {
+      const blob = slice(start, end);
+      if (changed) blob.arrayBuffer = () => Promise.reject(new DOMException(STALE_FILE_WORDS, "NotReadableError"));
+      return blob;
+    }) as typeof file.slice;
+    server.failPut = (partNumber) => {
+      if (partNumber === 2) changed = true;
+      return changed;
+    };
+
+    const [item] = pick([file]);
+    await until(() => itemOf(store, item.id)?.status === "failed");
+    expect(itemOf(store, item.id)?.failure).toMatchObject({ reason: "This video changed after you chose it", chooseAgain: true });
+    expect(server.puts.length).toBeLessThan(8);
+  });
+});
+
+describe("Noblet: more parts at once", () => {
+  it("sends six parts at once, never more, across the files on their way", async () => {
+    const { server, store, pick } = setUp();
+    server.partSize = 5 * MEBIBYTE;
+    let release: () => void = () => {};
+    server.holdPuts = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    const items = pick([video(40 * MEBIBYTE, "one.mp4", 1), video(40 * MEBIBYTE, "two.mp4", 2)]);
+    await until(() => server.puts.length >= PARTS_IN_FLIGHT);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(PARTS_IN_FLIGHT).toBe(6);
+    expect(server.puts).toHaveLength(6);
+    release();
+    await until(() => items.every((item) => itemOf(store, item.id)?.status === "added"), 10_000);
+    expect(server.mostPutsInFlight).toBe(6);
+  });
+
+  it("Ruling AY: asks the server to sign only the parts it sends at once to begin with, then the rest in bigger batches", async () => {
+    const { server, store, pick } = setUp();
+    server.partSize = 5 * MEBIBYTE;
+
+    const [item] = pick([video(16 * 5 * MEBIBYTE)]);
+    await until(() => itemOf(store, item.id)?.status === "added", 10_000);
+    const signed = server.calls
+      .filter((call) => call.method === "POST" && /\/parts$/.test(call.path))
+      .map((call) => (call.body as { partNumbers: number[] }).partNumbers);
+    expect(signed).toEqual([
+      [1, 2, 3, 4, 5, 6],
+      [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    ]);
+  });
+});
+
+describe("Ruling BE: while files send", () => {
+  it("keeps the page guarded (the screen awake, a warning before leaving) while files send, and lets it go after", async () => {
+    const { store, pick, guard } = setUp();
+    const [item] = pick([video(MEBIBYTE)]);
+    await until(() => itemOf(store, item.id)?.status === "added");
+    await until(() => guard.updates.at(-1) === false);
+    expect(guard.updates).toEqual([true, false]);
+  });
+
+  it("remembers what each started upload is, for the notice on return", async () => {
+    const { server, storage, pick } = setUp();
+    let release: () => void = () => {};
+    server.holdPuts = new Promise((resolve) => {
+      release = resolve;
+    });
+    pick([video(MEBIBYTE)]);
+    await until(() => server.puts.length > 0);
+    expect(createStartedFiles(storage).unfinished().map((entry) => entry.kind)).toEqual(["video"]);
+    release();
+  });
+});
+
+describe("Task 13's parked minor: Cancel while a re-picked file's question goes unanswered", () => {
+  it("only stops this copy when the server couldn't answer (5xx), never removing the photo already in the album", async () => {
+    const server = new FakeServer();
+    const storage = memoryStorage();
+    const file = video(MEBIBYTE);
+    const fingerprint = await fingerprintFile(file);
+    server.uploads.set("media-sent", { mediaId: "media-sent", uploadId: "u", size: file.size, fingerprint, parts: new Set([1]), status: "uploaded" });
+    createSentFiles(storage).remember(file.size, fingerprint, "media-sent");
+    server.answerComplete = () => ({ status: 503, body: { error: "unavailable" } });
+    const { store, engine, pick } = setUp({ server, storage, timings: { fileRetryDelays: [60_000] } });
+
+    const [item] = pick([file]);
+    // The question and the API client's three tries all answered 503: it waits to ask again.
+    await until(() => itemOf(store, item.id)?.status === "retrying");
+    engine.cancel(item.id);
+
+    await until(() => store.get(item.id) === undefined);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(server.count("DELETE", /./)).toBe(0);
+    expect(server.count("POST", /\/remove$/)).toBe(0);
+    expect(server.uploads.get("media-sent")?.removed).toBeUndefined();
   });
 });

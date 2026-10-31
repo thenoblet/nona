@@ -19,6 +19,10 @@ export type UploadEvent = {
     online?: boolean;
     elapsedMs?: number;
     errorName?: string;
+    /** Why the phone couldn't read a file: the browser's short words, with no file name or path. */
+    errorMessage?: string;
+    /** Which of the fingerprint's reads failed. */
+    read?: "head" | "tail";
   };
 };
 

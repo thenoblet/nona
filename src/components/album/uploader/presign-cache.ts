@@ -1,9 +1,11 @@
 /*
  * The presigned part URLs of one upload. The upload API signs up to 20 parts a call, so one call
- * serves the next 20 parts, and parts asked for at once (four are in flight) share it. Each link
- * is handed out once: a part asked for again is retrying (its connection dropped, or its link
- * expired), so it gets a fresh one. A link is valid for an hour; one fetched more than fifty
- * minutes ago is fetched again rather than risked.
+ * serves the next 20 parts, and parts asked for at once (six are in flight) share it. The first
+ * call asks only for the parts sent at once (`firstBatch`, Ruling AY): it follows the start, so a
+ * burst of starts after the speeches signs a few parts each rather than twenty. Each link is handed
+ * out once: a part asked for again is retrying (its connection dropped, or its link expired), so it
+ * gets a fresh one. A link is valid for an hour; one fetched more than fifty minutes ago is fetched
+ * again rather than risked.
  */
 
 export type PartUrl = { partNumber: number; url: string };
@@ -21,17 +23,22 @@ export class PartUrlCache {
   readonly #now: () => number;
   readonly #urls = new Map<number, CachedUrl>();
   readonly #pending = new Map<number, Promise<void>>();
+  /** How many parts the next call asks for: `firstBatch` the first time, then PARTS_PER_PRESIGN. */
+  #batchSize: number;
 
   constructor(options: {
     partCount: number;
     /** The parts R2 already holds: never asked for. */
     uploadedParts: Iterable<number>;
     fetchUrls: (partNumbers: number[], signal?: AbortSignal) => Promise<PartUrl[]>;
+    /** The first call's parts: those sent at once. Twenty when not given. */
+    firstBatch?: number;
     now?: () => number;
   }) {
     this.#partCount = options.partCount;
     this.#uploaded = new Set(options.uploadedParts);
     this.#fetchUrls = options.fetchUrls;
+    this.#batchSize = Math.min(PARTS_PER_PRESIGN, Math.max(1, options.firstBatch ?? PARTS_PER_PRESIGN));
     this.#now = options.now ?? (() => Date.now());
   }
 
@@ -60,7 +67,9 @@ export class PartUrlCache {
   /** Fetches this part and the next ones that have no fresh link, aren't being fetched and aren't in R2. */
   #fetchFrom(partNumber: number, signal?: AbortSignal): Promise<void> {
     const batch = [partNumber];
-    for (let next = partNumber + 1; next <= this.#partCount && batch.length < PARTS_PER_PRESIGN; next += 1) {
+    const batchSize = this.#batchSize;
+    this.#batchSize = PARTS_PER_PRESIGN;
+    for (let next = partNumber + 1; next <= this.#partCount && batch.length < batchSize; next += 1) {
       if (!this.#uploaded.has(next) && !this.#pending.has(next) && !this.#fresh(next)) batch.push(next);
     }
     const fetching = this.#fetchUrls(batch, signal).then((urls) => {

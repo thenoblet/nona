@@ -145,7 +145,10 @@ export function PersonalLinkOffer({ link, onHidden }: { link: string; onHidden?:
   return (
     <section
       aria-labelledby={titleId}
-      className={`relative flex animate-rise flex-col gap-3 rounded-[var(--radius-paper)] bg-white p-4 shadow-[var(--shadow-paper)] transition-[opacity,translate,scale] duration-200 ${leaving ? "-translate-y-1.5 scale-98 opacity-0" : ""}`}
+      // Focus can land here once the upload card above tidies itself away.
+      data-link-offer
+      tabIndex={-1}
+      className={`relative flex animate-rise flex-col gap-3 rounded-[var(--radius-paper)] bg-white p-4 shadow-[var(--shadow-paper)] outline-none transition-[opacity,translate,scale] duration-200 ${leaving ? "-translate-y-1.5 scale-98 opacity-0" : ""}`}
     >
       <div className="flex items-center gap-3 pr-8">
         <Halo icon="link" size="md" />

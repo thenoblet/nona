@@ -1,0 +1,1 @@
+ALTER TABLE "media" ADD COLUMN "part_size_bytes" integer DEFAULT 8388608 NOT NULL;

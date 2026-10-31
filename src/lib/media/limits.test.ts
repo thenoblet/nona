@@ -4,10 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   ALBUM_PICKER_ACCEPT,
   checkUpload,
+  LARGE_FILE_BYTES,
+  LARGE_PART_SIZE_BYTES,
   MAX_PART_COUNT,
   normalizeContentType,
   PART_SIZE_BYTES,
   partCount,
+  partSizeFor,
   partSizeOf,
   SIZE_LIMITS,
   type UploadCheck,
@@ -31,30 +34,55 @@ function refusal(result: UploadCheck): { error: string; message: string } {
 }
 
 describe("the limits", () => {
-  it("are the plan's: photos 50 MB, videos 2 GB, voice wishes 20 MB, video wishes 200 MB, in 8 MiB parts", () => {
+  it("are the plan's: photos 50 MB, videos 2 GB, voice wishes 20 MB, video wishes 200 MB", () => {
     expect(SIZE_LIMITS).toEqual({
       photo: 50 * MEBIBYTE,
       video: 2 * 1024 * MEBIBYTE,
       voiceWish: 20 * MEBIBYTE,
       videoWish: 200 * MEBIBYTE,
     });
-    expect(PART_SIZE_BYTES).toBe(8_388_608);
   });
 
-  it("count a file's parts as its size over 8 MiB, rounded up", () => {
-    expect(partCount(1)).toBe(1);
-    expect(partCount(PART_SIZE_BYTES)).toBe(1);
-    expect(partCount(PART_SIZE_BYTES + 1)).toBe(2);
-    expect(partCount(SIZE_LIMITS.video)).toBe(256);
+  it("send a file under 256 MiB in 8 MiB parts, and one of 256 MiB or more in 16 MiB parts", () => {
+    expect(PART_SIZE_BYTES).toBe(8_388_608);
+    expect(LARGE_PART_SIZE_BYTES).toBe(16_777_216);
+    expect(LARGE_FILE_BYTES).toBe(256 * MEBIBYTE);
+    expect(partSizeFor(1)).toBe(PART_SIZE_BYTES);
+    expect(partSizeFor(SIZE_LIMITS.photo)).toBe(PART_SIZE_BYTES);
+    expect(partSizeFor(LARGE_FILE_BYTES - 1)).toBe(PART_SIZE_BYTES);
+    expect(partSizeFor(LARGE_FILE_BYTES)).toBe(LARGE_PART_SIZE_BYTES);
+    expect(partSizeFor(300_000_000)).toBe(LARGE_PART_SIZE_BYTES);
+    expect(partSizeFor(SIZE_LIMITS.video)).toBe(LARGE_PART_SIZE_BYTES);
+  });
+
+  it("stay within R2's multipart limits for every size the album takes: parts of 5 MiB or more, at most 10,000 of them", () => {
+    for (const size of [1, 5 * MEBIBYTE, SIZE_LIMITS.photo, LARGE_FILE_BYTES - 1, LARGE_FILE_BYTES, 300_000_000, SIZE_LIMITS.video]) {
+      const partSize = partSizeFor(size);
+      expect(partSize, String(size)).toBeGreaterThanOrEqual(5 * MEBIBYTE);
+      expect(partCount(size, partSize), String(size)).toBeLessThanOrEqual(10_000);
+    }
+  });
+
+  it("count a file's parts as its size over its part size, rounded up", () => {
+    expect(partCount(1, PART_SIZE_BYTES)).toBe(1);
+    expect(partCount(PART_SIZE_BYTES, PART_SIZE_BYTES)).toBe(1);
+    expect(partCount(PART_SIZE_BYTES + 1, PART_SIZE_BYTES)).toBe(2);
+    expect(partCount(LARGE_FILE_BYTES - 1, PART_SIZE_BYTES)).toBe(32);
+    expect(partCount(300_000_000, LARGE_PART_SIZE_BYTES)).toBe(18);
+    expect(partCount(SIZE_LIMITS.video, LARGE_PART_SIZE_BYTES)).toBe(128);
+    // Uploads started in 8 MiB parts before big files took 16 MiB ones keep theirs: up to 256.
+    expect(partCount(SIZE_LIMITS.video, PART_SIZE_BYTES)).toBe(256);
     expect(MAX_PART_COUNT).toBe(256);
   });
 
-  it("give every part 8 MiB but the last, which takes the remainder", () => {
-    expect(partSizeOf(PART_SIZE_BYTES + 1000, 1)).toBe(PART_SIZE_BYTES);
-    expect(partSizeOf(PART_SIZE_BYTES + 1000, 2)).toBe(1000);
-    expect(partSizeOf(2 * PART_SIZE_BYTES, 2)).toBe(PART_SIZE_BYTES);
-    expect(partSizeOf(4000, 1)).toBe(4000);
-    expect(partSizeOf(SIZE_LIMITS.video, 256)).toBe(PART_SIZE_BYTES);
+  it("give every part the upload's part size but the last, which takes the remainder", () => {
+    expect(partSizeOf(PART_SIZE_BYTES + 1000, 1, PART_SIZE_BYTES)).toBe(PART_SIZE_BYTES);
+    expect(partSizeOf(PART_SIZE_BYTES + 1000, 2, PART_SIZE_BYTES)).toBe(1000);
+    expect(partSizeOf(2 * PART_SIZE_BYTES, 2, PART_SIZE_BYTES)).toBe(PART_SIZE_BYTES);
+    expect(partSizeOf(4000, 1, PART_SIZE_BYTES)).toBe(4000);
+    expect(partSizeOf(SIZE_LIMITS.video, 256, PART_SIZE_BYTES)).toBe(PART_SIZE_BYTES);
+    expect(partSizeOf(300_000_000, 1, LARGE_PART_SIZE_BYTES)).toBe(LARGE_PART_SIZE_BYTES);
+    expect(partSizeOf(300_000_000, 18, LARGE_PART_SIZE_BYTES)).toBe(300_000_000 - 17 * LARGE_PART_SIZE_BYTES);
   });
 });
 
@@ -65,6 +93,7 @@ describe("checkUpload", () => {
       kind: "photo",
       contentType: "image/jpeg",
       extension: "jpg",
+      partSize: PART_SIZE_BYTES,
       partCount: 1,
     });
     expect(check({ filename: "scan.JPEG" })).toMatchObject({ ok: true, extension: "jpeg" });
@@ -111,6 +140,7 @@ describe("checkUpload", () => {
       kind: "audio",
       contentType: "audio/webm",
       extension: "webm",
+      partSize: PART_SIZE_BYTES,
       partCount: 1,
     });
   });
@@ -160,6 +190,7 @@ describe("checkUpload", () => {
       kind: "photo",
       contentType: "image/heic",
       extension: "heic",
+      partSize: PART_SIZE_BYTES,
       partCount: 1,
     });
     expect(check({ contentType: "application/octet-stream", filename: "photo.heif" })).toMatchObject({
@@ -209,7 +240,7 @@ describe("checkUpload", () => {
       message: "This photo is over 50 MB, the most the album takes.",
     });
     const video = { contentType: "video/mp4", filename: "clip.mp4" };
-    expect(check({ ...video, size: SIZE_LIMITS.video })).toMatchObject({ ok: true, partCount: 256 });
+    expect(check({ ...video, size: SIZE_LIMITS.video })).toMatchObject({ ok: true, partSize: LARGE_PART_SIZE_BYTES, partCount: 128 });
     expect(refusal(check({ ...video, size: SIZE_LIMITS.video + 1 }))).toEqual({
       error: "too-large",
       message: "This video is over 2 GB, the most the album takes. Please send a shorter clip.",

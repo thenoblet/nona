@@ -2,12 +2,14 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "@/components/ui/Icon";
-import { isBusy, UPLOAD_WORDS, type UploadItem, type UploadStatus, type UploadView } from "./uploader/state";
+import { isBusy, thumbOf, UPLOAD_WORDS, type UploadItem, type UploadStatus, type UploadView } from "./uploader/state";
 
 /*
  * The cards under the album's header while a guest shares (gate A): the camera card for one shot,
  * and the gallery batch, a row for each file. Every word and state comes from the uploader's
- * store; only the server's answer to a complete ever turns a file to Added.
+ * store; only the server's answer to a complete ever turns a file to Added. Once finished, a card
+ * fades and tidies itself away (Ruling BC); while files send, Minimise hands it to the floating
+ * circle, and a big or slow upload says so calmly, with the time left (Ruling BE).
  *
  * Every × names its file ("Cancel photo 3", "Dismiss video"): Cancel while a file is on its way,
  * Dismiss once it has failed. Each carries data-item-action, and Try again data-item-retry, so the
@@ -61,9 +63,9 @@ export function MorphText({ text, animate = true }: { text: string; animate?: bo
 }
 
 /** Grows and shrinks a block's height smoothly; folded, it is gone for screen readers and focus too. */
-function Fold({ open, children }: { open: boolean; children: ReactNode }) {
+function Fold({ open, children, className = "" }: { open: boolean; children: ReactNode; className?: string }) {
   return (
-    <div className={`fold ${open ? "" : "is-folded"}`} inert={!open} aria-hidden={!open}>
+    <div className={`fold ${open ? "" : "is-folded"} ${className}`} inert={!open} aria-hidden={!open}>
       <div>{children}</div>
     </div>
   );
@@ -100,17 +102,46 @@ function Track({
   );
 }
 
-/** The guest's own file, small: its picture, or a video's first frame; the tile colour where neither shows. */
-function Preview({ item, className }: { item: UploadItem; className: string }) {
-  const [broken, setBroken] = useState(false);
-  if (!item.previewUrl || broken) return <span className={className} />;
-  if (item.kind === "video") {
+/**
+ * The guest's own file, small: its picture, or a video's first frame. Where the phone can't draw it
+ * (a HEIC on Android, a video it can't decode), a small photo or video icon on blush (Ruling BB);
+ * once the server has made its own thumbnail (Task 15), that.
+ */
+function Preview({ item, className, iconSize }: { item: UploadItem; className: string; iconSize: number }) {
+  const [localFailed, setLocalFailed] = useState(false);
+  const thumb = thumbOf(item, localFailed);
+  if (thumb.kind === "icon") {
+    return (
+      <span data-thumb="icon" className={`${className} grid place-items-center bg-blush text-mocha/60`}>
+        <Icon name={thumb.icon} size={iconSize} strokeWidth={1.6} />
+      </span>
+    );
+  }
+  if (thumb.kind === "local" && item.kind === "video") {
     // #t=0.1 makes iPhones draw the first frame instead of a blank box.
-    return <video src={`${item.previewUrl}#t=0.1`} muted playsInline preload="metadata" className={className} onError={() => setBroken(true)} />;
+    return (
+      <video
+        data-thumb="local"
+        src={`${thumb.url}#t=0.1`}
+        muted
+        playsInline
+        preload="metadata"
+        className={`${className} bg-tile`}
+        onError={() => setLocalFailed(true)}
+      />
+    );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- a local preview of the guest's own file
-    <img src={item.previewUrl} alt="" decoding="async" loading="lazy" className={className} onError={() => setBroken(true)} />
+    // eslint-disable-next-line @next/next/no-img-element -- a preview of the guest's own file (or the server's thumbnail of it)
+    <img
+      data-thumb={thumb.kind}
+      src={thumb.url}
+      alt=""
+      decoding="async"
+      loading="lazy"
+      className={`${className} bg-tile`}
+      onError={thumb.kind === "local" ? () => setLocalFailed(true) : undefined}
+    />
   );
 }
 
@@ -123,7 +154,8 @@ function Thumb({ item, variant }: { item: UploadItem; variant: "camera" | "row" 
     <span data-status={status} className={`relative shrink-0 ${camera ? "-mb-1.5 size-[62px]" : "-mb-[5px] size-[49px]"}`}>
       <Preview
         item={item}
-        className={`absolute rounded-[3px] bg-tile object-cover transition-opacity duration-300 ${camera ? "inset-[0_6px_6px_0] size-[56px]" : "inset-[0_5px_5px_0] size-[44px]"} ${status === "queued" && !camera ? "opacity-55" : ""}`}
+        iconSize={camera ? 22 : 18}
+        className={`absolute rounded-[3px] object-cover transition-opacity duration-300 ${camera ? "inset-[0_6px_6px_0] size-[56px]" : "inset-[0_5px_5px_0] size-[44px]"} ${status === "queued" && !camera ? "opacity-55" : ""}`}
       />
       {item.kind === "video" && !camera ? (
         <span aria-hidden className="absolute bottom-1 left-1 grid size-4 place-items-center rounded-full bg-white/95 text-cocoa">
@@ -187,178 +219,262 @@ function ItemButton({
   );
 }
 
-const emberButton =
+export const emberButton =
   "press flex min-h-11 shrink-0 cursor-pointer items-center rounded-full border-0 bg-ember px-4 text-[11px] font-medium uppercase tracking-[0.14em] text-cocoa";
 const outlineButton =
   "press flex min-h-10 shrink-0 cursor-pointer items-center rounded-full border border-ember/55 bg-transparent px-3 text-[11px] font-medium uppercase tracking-[0.14em] text-cocoa";
+
+/**
+ * Minimise: the card gives way to the floating progress circle while its files send (Ruling BE). A
+ * 44 px tap target; at the card's edge (`edge`), its chevron lines up with the rows' × below.
+ */
+function MinimiseButton({ onClick, edge = false, className = "" }: { onClick: () => void; edge?: boolean; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Minimise"
+      data-minimise
+      className={`grid size-11 shrink-0 cursor-pointer items-center rounded-full border-0 bg-transparent p-0 text-mocha ${edge ? "justify-items-end" : "justify-items-center"} ${className}`}
+    >
+      <Icon name="chevron" size={18} />
+    </button>
+  );
+}
+
+/** A big or slow upload's notice (Ruling BE): calm, and never promising it sends once the page is closed. */
+function SlowNotice({ notice, className = "" }: { notice: string; className?: string }) {
+  return (
+    <p className={`m-0 flex gap-2.5 rounded-[3px] bg-halo px-3 py-2.5 text-xs leading-[1.5] text-mocha ${className}`}>
+      <Icon name="clock" size={15} className="mt-px shrink-0 text-ember-ink" />
+      <span>{notice}</span>
+    </p>
+  );
+}
+
+/** "about 2 minutes left", as the first words of a line. */
+function capitalised(words: string): string {
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
 
 export type ItemActions = {
   onRetry: (itemId: string) => void;
   onCancel: (itemId: string) => void;
   onDismiss: (itemId: string) => void;
+  /** A file that changed after it was picked: opens the picker for it again (Ruling BA). */
+  onChooseAgain: (itemId: string) => void;
+};
+
+/** The card's own controls and words beyond its files (Ruling BE). */
+export type CardExtras = {
+  /** Null until the circle that stands in for the card has loaded (with the uploader). */
+  onMinimise: (() => void) | null;
+  notice: string | null;
+  timeLeft: string | null;
 };
 
 /** One shot from the camera: "Sending to the album" with the guest's own picture, then "Added". */
-export function CameraCard({ item, onRetry, onCancel, onDismiss, onTakeAnother }: { item: UploadItem; onTakeAnother: () => void } & ItemActions) {
+export function CameraCard({
+  item,
+  onRetry,
+  onCancel,
+  onDismiss,
+  onChooseAgain,
+  onTakeAnother,
+  onMinimise,
+  notice,
+  timeLeft,
+}: { item: UploadItem; onTakeAnother: () => void } & ItemActions & CardExtras) {
   const { status, failure, kind, percent } = item;
   const added = status === "added";
   const busy = isBusy(item);
-  const caption = failure ? failure.hint : CAMERA_CAPTIONS[status];
+  // A big or slow upload: the time left takes the place of "for a moment", and the notice says the rest.
+  const caption = failure ? failure.hint : notice ? (timeLeft ? capitalised(timeLeft) : null) : CAMERA_CAPTIONS[status];
   const noun = nounOf(item);
   return (
-    <section
-      aria-label={`Your ${noun}`}
-      data-upload-card
-      tabIndex={-1}
-      className="relative flex animate-rise flex-col gap-3 rounded-[var(--radius-paper)] bg-white p-3 shadow-[var(--shadow-paper)] outline-none"
-    >
-      <div className={`flex items-center gap-2 ${busy || failure ? "pr-9" : ""}`}>
-        <Thumb item={item} variant="camera" />
-        <div className="flex min-w-0 flex-col gap-0.5" aria-live="polite">
-          <p className="m-0 font-serif text-xl leading-[1.2] italic">
-            {failure ? (
-              failure.reason
-            ) : (
-              <>
-                <MorphText text={added ? "Added" : "Sending"} /> to the album
-              </>
+    <Fold open={!item.leaving} className="upload-card-fold">
+      <section
+        aria-label={`Your ${noun}`}
+        data-upload-card
+        tabIndex={-1}
+        className="relative flex animate-rise flex-col gap-3 rounded-[var(--radius-paper)] bg-white p-3 shadow-[var(--shadow-paper)] outline-none"
+      >
+        <div className={`flex items-center gap-2 ${busy && onMinimise ? "pr-[84px]" : busy || failure ? "pr-9" : ""}`}>
+          <Thumb item={item} variant="camera" />
+          <div className="flex min-w-0 flex-col gap-0.5" aria-live="polite">
+            <p className="m-0 font-serif text-xl leading-[1.2] italic">
+              {failure ? (
+                failure.reason
+              ) : (
+                <>
+                  <MorphText text={added ? "Added" : "Sending"} /> to the album
+                </>
+              )}
+            </p>
+            {caption ? <p className="m-0 text-xs leading-[1.45] text-mocha">{caption}</p> : null}
+          </div>
+        </div>
+        {notice && busy ? <SlowNotice notice={notice} /> : null}
+        {/* Sharing closed: nothing to try again or take another of. */}
+        {failure?.closed ? null : (
+          <div className="flex min-h-11 items-center gap-3">
+            {failure ? null : (
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <Track
+                  percent={percent}
+                  waiting={status === "retrying"}
+                  label={added ? undefined : `Sending your ${noun}`}
+                  className="flex-1"
+                />
+                <span className={`min-w-[4ch] text-right text-xs font-medium tabular-nums transition-colors duration-300 ${added ? "text-ember-ink" : "text-mocha"}`}>
+                  <MorphText text={added ? "Sent" : `${percent}%`} animate={added} />
+                </span>
+              </div>
             )}
-          </p>
-          {caption ? <p className="m-0 text-xs leading-[1.45] text-mocha">{caption}</p> : null}
-        </div>
-      </div>
-      {/* Sharing closed: nothing to try again or take another of. */}
-      {failure?.closed ? null : (
-        <div className="flex min-h-11 items-center gap-3">
-          {failure ? null : (
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <Track
-                percent={percent}
-                waiting={status === "retrying"}
-                label={added ? undefined : `Sending your ${noun}`}
-                className="flex-1"
-              />
-              <span className={`min-w-[4ch] text-right text-xs font-medium tabular-nums transition-colors duration-300 ${added ? "text-ember-ink" : "text-mocha"}`}>
-                <MorphText text={added ? "Sent" : `${percent}%`} animate={added} />
-              </span>
-            </div>
-          )}
-          {failure?.canRetry ? (
-            <button type="button" onClick={() => onRetry(item.id)} data-item-retry={item.id} className={`${emberButton} ml-auto`}>
-              Try again
-            </button>
-          ) : (
-            <button type="button" onClick={onTakeAnother} className={`${emberButton} ml-auto`}>
-              {kind === "video" ? "Record another" : "Take another"}
-            </button>
-          )}
-        </div>
-      )}
-      {busy ? (
-        <ItemButton item={item} action="cancel" label={`Cancel ${noun}`} onClick={() => onCancel(item.id)} className="absolute top-1.5 right-1.5" />
-      ) : failure ? (
-        <ItemButton item={item} action="dismiss" label={`Dismiss ${noun}`} onClick={() => onDismiss(item.id)} className="absolute top-1.5 right-1.5" />
-      ) : null}
-    </section>
+            {failure?.chooseAgain ? (
+              <button type="button" onClick={() => onChooseAgain(item.id)} data-item-retry={item.id} className={`${emberButton} ml-auto`}>
+                Choose again
+              </button>
+            ) : failure?.canRetry ? (
+              <button type="button" onClick={() => onRetry(item.id)} data-item-retry={item.id} className={`${emberButton} ml-auto`}>
+                Try again
+              </button>
+            ) : (
+              <button type="button" onClick={onTakeAnother} className={`${emberButton} ml-auto`}>
+                {kind === "video" ? "Record another" : "Take another"}
+              </button>
+            )}
+          </div>
+        )}
+        {busy ? (
+          <div className="absolute top-1.5 right-1.5 flex">
+            {onMinimise ? <MinimiseButton onClick={onMinimise} /> : null}
+            <ItemButton item={item} action="cancel" label={`Cancel ${noun}`} onClick={() => onCancel(item.id)} />
+          </div>
+        ) : failure ? (
+          <ItemButton item={item} action="dismiss" label={`Dismiss ${noun}`} onClick={() => onDismiss(item.id)} className="absolute top-1.5 right-1.5" />
+        ) : null}
+      </section>
+    </Fold>
   );
 }
 
-function BatchRow({ item, position, onRetry, onCancel, onDismiss }: { item: UploadItem; position: number } & ItemActions) {
+function BatchRow({ item, position, onRetry, onCancel, onDismiss, onChooseAgain }: { item: UploadItem; position: number } & ItemActions) {
   const { status, failure, percent } = item;
   const label = failure ? failure.reason : ROW_WORDS[status as keyof typeof ROW_WORDS];
   const sending = status === "sending" || status === "confirming";
   const labelColour = failure ? "text-ember-ink" : status === "queued" || status === "retrying" ? "text-mocha" : "text-cocoa";
   const noun = nounOf(item, position);
   return (
-    <li
-      aria-label={`${noun.charAt(0).toUpperCase()}${noun.slice(1)}`}
-      className="grid grid-cols-[49px_minmax(0,1fr)_auto] items-center gap-x-3 border-t border-hairline py-2.5"
-    >
-      <Thumb item={item} variant="row" />
-      <div className="flex min-w-0 flex-col">
-        <p className="m-0 flex items-baseline gap-2">
-          <span className={`min-w-0 text-[13px] leading-[1.35] transition-colors duration-300 ${labelColour}`}>{label}</span>
-          {sending ? <span className="ml-auto text-xs font-medium text-mocha tabular-nums">{percent}%</span> : null}
-        </p>
-        <Fold open={sending || status === "retrying"}>
-          <Track percent={percent} thin waiting={status === "retrying"} className="mt-[7px]" />
-        </Fold>
-        {failure?.hint ? <p className="m-0 mt-0.5 text-xs leading-[1.45] text-mocha">{failure.hint}</p> : null}
-        {failure?.canRetry ? (
-          <button type="button" onClick={() => onRetry(item.id)} data-item-retry={item.id} className={`${outlineButton} mt-1.5 self-start`}>
-            Try again
-          </button>
-        ) : null}
-      </div>
-      {isBusy(item) ? (
-        <ItemButton item={item} action="cancel" label={`Cancel ${noun}`} onClick={() => onCancel(item.id)} edge className="-my-2" />
-      ) : failure ? (
-        <ItemButton item={item} action="dismiss" label={`Dismiss ${noun}`} onClick={() => onDismiss(item.id)} edge className="-my-2" />
-      ) : (
-        <span />
-      )}
+    <li aria-label={`${noun.charAt(0).toUpperCase()}${noun.slice(1)}`}>
+      {/* Added and tidied away, it fades and folds (Ruling BC). */}
+      <Fold open={!item.leaving}>
+        <div className="grid grid-cols-[49px_minmax(0,1fr)_auto] items-center gap-x-3 border-t border-hairline py-2.5">
+          <Thumb item={item} variant="row" />
+          <div className="flex min-w-0 flex-col">
+            <p className="m-0 flex items-baseline gap-2">
+              <span className={`min-w-0 text-[13px] leading-[1.35] transition-colors duration-300 ${labelColour}`}>{label}</span>
+              {sending ? <span className="ml-auto text-xs font-medium text-mocha tabular-nums">{percent}%</span> : null}
+            </p>
+            <Fold open={sending || status === "retrying"}>
+              <Track percent={percent} thin waiting={status === "retrying"} className="mt-[7px]" />
+            </Fold>
+            {failure?.hint ? <p className="m-0 mt-0.5 text-xs leading-[1.45] text-mocha">{failure.hint}</p> : null}
+            {failure?.chooseAgain ? (
+              <button type="button" onClick={() => onChooseAgain(item.id)} data-item-retry={item.id} className={`${outlineButton} mt-1.5 self-start`}>
+                Choose again
+              </button>
+            ) : failure?.canRetry ? (
+              <button type="button" onClick={() => onRetry(item.id)} data-item-retry={item.id} className={`${outlineButton} mt-1.5 self-start`}>
+                Try again
+              </button>
+            ) : null}
+          </div>
+          {isBusy(item) ? (
+            <ItemButton item={item} action="cancel" label={`Cancel ${noun}`} onClick={() => onCancel(item.id)} edge className="-my-2" />
+          ) : failure ? (
+            <ItemButton item={item} action="dismiss" label={`Dismiss ${noun}`} onClick={() => onDismiss(item.id)} edge className="-my-2" />
+          ) : (
+            <span />
+          )}
+        </div>
+      </Fold>
     </li>
   );
 }
 
 /** Several files from the gallery: "Sending to the album · N of M sent", a row for each file. */
-export function BatchCard({ view, ...actions }: { view: Extract<UploadView, { kind: "batch" }> } & ItemActions) {
+export function BatchCard({
+  view,
+  onMinimise,
+  notice,
+  timeLeft,
+  ...actions
+}: { view: Extract<UploadView, { kind: "batch" }> } & ItemActions & CardExtras) {
   const { items, sent, total, busy, percent } = view;
   const verb = busy ? "Sending" : sent > 0 ? "Added" : "Not added";
+  // Every file on the card added and tidying away: the whole card fades and folds.
+  const leaving = items.every((item) => item.leaving);
   return (
-    <section
-      aria-label="Your photos and videos"
-      data-upload-card
-      tabIndex={-1}
-      className="flex animate-rise flex-col rounded-[var(--radius-paper)] bg-white p-4 shadow-[var(--shadow-paper)] outline-none"
-    >
-      <div className="flex items-center gap-3.5">
-        <span
-          aria-hidden
-          className={`relative grid size-10 shrink-0 place-items-center rounded-full transition-colors duration-300 ${busy ? "bg-halo text-ember" : "bg-ember text-white"}`}
-        >
-          <Icon
-            name="upload"
-            size={17}
-            className={`col-start-1 row-start-1 transition-[opacity,transform] duration-300 ${busy ? "" : "-translate-y-1.5 opacity-0"}`}
-          />
-          <Icon
-            name="check"
-            size={17}
-            strokeWidth={2.2}
-            className={`col-start-1 row-start-1 transition-[opacity,transform] duration-300 ${busy ? "scale-50 opacity-0" : ""}`}
-          />
-        </span>
-        <div className="flex min-w-0 flex-col gap-0.5" aria-live="polite">
-          <p className="m-0 font-serif text-xl leading-[1.2] italic">
-            <MorphText text={verb} /> to the album
-          </p>
-          <p className="m-0 text-[13px] font-medium tabular-nums">
-            {sent} of {total} sent
-          </p>
-        </div>
-      </div>
-      <Fold open={busy}>
-        <Track percent={percent} label="All files" className="mt-3.5" />
-      </Fold>
-      <ul className="m-0 mt-3.5 list-none p-0">
-        {items.map((item, index) => (
-          <BatchRow key={item.id} item={item} position={index + 1} {...actions} />
-        ))}
-      </ul>
-      <Fold open={busy}>
-        <p className="m-0 border-t border-hairline pt-3 text-xs leading-[1.45] text-mocha">Keep this page open while they send.</p>
-      </Fold>
-      {/* Each row's failure, told politely as it happens. */}
-      <div className="sr-only" aria-live="polite">
-        {items.map((item, index) =>
-          item.failure ? (
-            <p key={item.id}>
-              {nounOf(item, index + 1)}: {item.failure.reason}
+    <Fold open={!leaving} className="upload-card-fold">
+      <section
+        aria-label="Your photos and videos"
+        data-upload-card
+        tabIndex={-1}
+        className="flex animate-rise flex-col rounded-[var(--radius-paper)] bg-white p-4 shadow-[var(--shadow-paper)] outline-none"
+      >
+        <div className="flex items-center gap-3.5">
+          <span
+            aria-hidden
+            className={`relative grid size-10 shrink-0 place-items-center rounded-full transition-colors duration-300 ${busy ? "bg-halo text-ember" : "bg-ember text-white"}`}
+          >
+            <Icon
+              name="upload"
+              size={17}
+              className={`col-start-1 row-start-1 transition-[opacity,transform] duration-300 ${busy ? "" : "-translate-y-1.5 opacity-0"}`}
+            />
+            <Icon
+              name="check"
+              size={17}
+              strokeWidth={2.2}
+              className={`col-start-1 row-start-1 transition-[opacity,transform] duration-300 ${busy ? "scale-50 opacity-0" : ""}`}
+            />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5" aria-live="polite">
+            <p className="m-0 font-serif text-xl leading-[1.2] italic">
+              <MorphText text={verb} /> to the album
             </p>
-          ) : null,
-        )}
-      </div>
-    </section>
+            <p className="m-0 text-[13px] font-medium tabular-nums">
+              {sent} of {total} sent
+              {busy && timeLeft ? <span className="font-normal text-mocha"> · {timeLeft}</span> : null}
+            </p>
+          </div>
+          {busy && onMinimise ? <MinimiseButton onClick={onMinimise} edge className="-my-1.5" /> : null}
+        </div>
+        <Fold open={busy}>
+          <Track percent={percent} label="All files" className="mt-3.5" />
+        </Fold>
+        {notice && busy ? <SlowNotice notice={notice} className="mt-3.5" /> : null}
+        <ul className="m-0 mt-3.5 list-none p-0">
+          {items.map((item, index) => (
+            <BatchRow key={item.id} item={item} position={index + 1} {...actions} />
+          ))}
+        </ul>
+        {/* The notice, when there is one, already says to keep the page open. */}
+        <Fold open={busy && !notice}>
+          <p className="m-0 border-t border-hairline pt-3 text-xs leading-[1.45] text-mocha">Keep this page open while they send.</p>
+        </Fold>
+        {/* Each row's failure, told politely as it happens. */}
+        <div className="sr-only" aria-live="polite">
+          {items.map((item, index) =>
+            item.failure ? (
+              <p key={item.id}>
+                {nounOf(item, index + 1)}: {item.failure.reason}
+              </p>
+            ) : null,
+          )}
+        </div>
+      </section>
+    </Fold>
   );
 }

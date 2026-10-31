@@ -21,6 +21,10 @@ const eventDetail = zod.object({
   online: zod.boolean().optional(),
   elapsedMs: zod.number().int().min(0).max(24 * 60 * 60 * 1000).optional(),
   errorName: zod.string().max(100).optional(),
+  // Why the phone couldn't read a file (Ruling BA): the browser's own short words, with the file's
+  // name and any path taken out on the phone, and which of the fingerprint's two reads failed.
+  errorMessage: zod.string().max(200).optional(),
+  read: zod.enum(["head", "tail"]).optional(),
 });
 
 const uploadEvent = zod.object({

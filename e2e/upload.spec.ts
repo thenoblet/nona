@@ -601,6 +601,197 @@ test.describe("uploading from the phone", () => {
   });
 });
 
+test.describe("what a real phone taught the uploader (Task 14b)", () => {
+  test.describe.configure({ timeout: 180_000 });
+
+  test("Ruling BC: a finished batch tidies itself away, and the personal link stays", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      await picker(page, "Choose photos & videos").setInputFiles([await photoOnDisk("tidy-1.jpg", 300, 200), await photoOnDisk("tidy-2.jpg", 300, 200)]);
+
+      const batch = page.getByRole("region", { name: "Your photos and videos" });
+      await expect(batch.getByText("2 of 2 sent")).toBeVisible({ timeout: 60_000 });
+      await expect(batch.getByText("Added to the album")).toBeVisible();
+      // About 5 s later it fades and goes; the offer of the personal link stays until hidden.
+      await expect(batch).toHaveCount(0, { timeout: 10_000 });
+      await expect(page.getByRole("region", { name: "Your personal link" })).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("Ruling BB: a photo the phone can't preview shows a photo icon in its place", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      // Chromium, like Chrome on Android, can't draw a HEIC.
+      await picker(page, "Choose photos & videos").setInputFiles(await bytesOnDisk("IMG_4021.HEIC", 300_000));
+
+      const row = page.getByRole("region", { name: "Your photos and videos" }).getByRole("listitem", { name: "Photo 1" });
+      await expect(row.locator('[data-thumb="icon"]')).toBeVisible({ timeout: 15_000 });
+      await expect(row.locator('[data-thumb="icon"] svg')).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("Ruling BA: a photo that changed after it was chosen says so, and Choose again opens the picker; chosen again, it goes up", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      // The File the picker handed over goes stale, as one WhatsApp finishes after the pick does:
+      // every read of it fails as Chrome's do. The same photo picked again is a fresh File, and reads.
+      await page.addInitScript(() => {
+        const stale = new WeakSet<Blob>();
+        const goingStale = new Set(["IMG-20261205-WA0007.jpg"]);
+        const slice = Blob.prototype.slice;
+        Blob.prototype.slice = function (this: Blob, ...args: Parameters<Blob["slice"]>) {
+          const name = this instanceof File ? this.name : "";
+          if (goingStale.delete(name)) stale.add(this);
+          const part = slice.apply(this, args);
+          if (stale.has(this)) {
+            part.arrayBuffer = () =>
+              Promise.reject(
+                new DOMException(
+                  "The requested file could not be read, typically due to permission problems that have occurred after a reference to a file was acquired.",
+                  "NotReadableError",
+                ),
+              );
+          }
+          return part;
+        };
+      });
+      await openAlbum(page);
+      const photo = await photoOnDisk("IMG-20261205-WA0007.jpg", 400, 300);
+      await picker(page, "Choose photos & videos").setInputFiles(photo);
+
+      const batch = page.getByRole("region", { name: "Your photos and videos" });
+      await expect(batch.getByText("This photo changed after you chose it", { exact: true })).toBeVisible({ timeout: 30_000 });
+      await expect(batch.getByText("Choose it again.", { exact: true })).toBeVisible();
+      await expect(batch.getByRole("button", { name: "Try again" })).toHaveCount(0);
+
+      const chooser = page.waitForEvent("filechooser");
+      await batch.getByRole("button", { name: "Choose again" }).click();
+      await (await chooser).setFiles(photo);
+      await expect(batch.getByText("1 of 1 sent")).toBeVisible({ timeout: 60_000 });
+      await expect(batch.getByText("This photo changed after you chose it")).toHaveCount(0);
+
+      // The status page heard why: the error's name and which read, never the file's name.
+      const guestId = await ownGuestId(context);
+      await expect
+        .poll(async () => sql`select reason, detail from upload_events where guest_id = ${guestId} and kind = 'failed'`, { timeout: 20_000 })
+        .toEqual([
+          {
+            reason: "file-changed",
+            detail: expect.objectContaining({ errorName: "NotReadableError", read: "head", errorMessage: expect.stringContaining("could not be read") }),
+          },
+        ]);
+      const [{ detail }] = await sql`select detail from upload_events where guest_id = ${guestId} and kind = 'failed'`;
+      expect(JSON.stringify(detail)).not.toContain("WA0007");
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("Ruling BE: a big video says it may take a while; minimised, a floating circle carries its progress, opens the card again when tapped, and turns to a check and fades once sent", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      // A size of its own, so no earlier run's upload of it is carried on.
+      const size = 300_000_000 + Math.floor(Math.random() * 1_000_000);
+      const video = await sparseOnDisk("VID_speeches.mp4", size);
+      const requests = { starts: 0, presigns: [] as number[][], puts: 0, completes: 0 };
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (request.method() === "PUT" && url.pathname.includes("/nona-private/originals/")) requests.puts += 1;
+        else if (request.method() === "POST" && url.pathname === "/api/uploads") requests.starts += 1;
+        else if (request.method() === "POST" && url.pathname.endsWith("/parts")) requests.presigns.push(JSON.parse(request.postData() ?? "{}").partNumbers);
+        else if (url.pathname.endsWith("/complete")) requests.completes += 1;
+      });
+      // Mobile data: about 12 MB/s out, so it takes a while.
+      const network = await context.newCDPSession(page);
+      await network.send("Network.enable");
+      await network.send("Network.emulateNetworkConditions", { offline: false, latency: 40, downloadThroughput: -1, uploadThroughput: 12_000_000 });
+
+      await picker(page, "Choose photos & videos").setInputFiles(video);
+      const batch = page.getByRole("region", { name: "Your photos and videos" });
+      await expect(
+        batch.getByText(
+          "This is a big video, so it may take a few minutes on mobile data. You can minimise this and keep looking through the album; just keep this page open.",
+        ),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(batch.getByText(/(about .+|less than a minute) left/)).toBeVisible({ timeout: 30_000 });
+
+      await batch.getByRole("button", { name: "Minimise" }).click();
+      await expect(batch).toHaveCount(0);
+      const circle = page.getByRole("button", { name: /^Show uploads/ });
+      await expect(circle).toBeVisible();
+      await expect(circle).toBeFocused();
+      const percentOf = async () => Number(/(\d+)% sent/.exec((await circle.getAttribute("aria-label")) ?? "")?.[1] ?? -1);
+      const first = await percentOf();
+      expect(first).toBeGreaterThanOrEqual(0);
+      await expect.poll(percentOf, { timeout: 30_000 }).toBeGreaterThan(first);
+      // The ring follows: its stroke shows the same share sent.
+      await expect(circle.locator("[data-ring]")).toHaveAttribute("data-percent", /\d+/);
+
+      await circle.click();
+      await expect(batch).toBeVisible();
+      await expect(batch).toBeFocused();
+      await batch.getByRole("button", { name: "Minimise" }).click();
+      await expect(circle).toBeFocused();
+
+      // The connection opens up and the rest goes: a check, then the circle fades away.
+      await network.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+      await expect(page.locator('[data-upload-circle][data-state="done"]')).toBeVisible({ timeout: 90_000 });
+      await expect(page.locator("[data-upload-circle]")).toHaveCount(0, { timeout: 10_000 });
+
+      // 16 MiB parts for a file this big, the first presign only the six sent at once.
+      const parts = Math.ceil(size / (16 * MEBIBYTE));
+      console.info(`[measure] ${size} B: ${requests.starts} start, ${requests.presigns.length} presigns (${requests.presigns.map((numbers) => numbers.length).join(" + ")} parts), ${requests.puts} part PUTs, ${requests.completes} complete`);
+      expect(parts).toBe(18);
+      expect(requests.puts).toBe(parts);
+      expect(requests.presigns[0]).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(requests.presigns.flat().sort((first, second) => first - second)).toEqual(Array.from({ length: parts }, (_slot, index) => index + 1));
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("Ruling BE: back after a reload mid-upload, the album says the video didn't finish, and Choose carries it on from where it stopped", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      const video = await bytesOnDisk("IMG_0533.MOV", 30 * MEBIBYTE);
+      let reloaded = false;
+      const puts = await watchPartPuts(page, (partNumber) => (reloaded || partNumber === 1 ? "send" : "hold"));
+      await picker(page, "Record video").setInputFiles(video);
+      await expect.poll(() => puts.finished, { timeout: 30_000 }).toEqual([1]);
+
+      reloaded = true;
+      await page.reload();
+      await Promise.all(puts.held.splice(0).map((route) => route.abort().catch(() => {})));
+      const notice = inMain(page).getByText("Your video didn't finish sending. Choose it again and it'll carry on from where it stopped.");
+      await expect(notice).toBeVisible();
+
+      const sentBefore = puts.sent.length;
+      const chooser = page.waitForEvent("filechooser");
+      await inMain(page).getByRole("button", { name: "Choose", exact: true }).click();
+      await (await chooser).setFiles(video);
+      await expect(page.getByRole("region", { name: "Your photos and videos" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
+      // Part 1 wasn't sent again.
+      expect(ascending(puts.sent.slice(sentBefore))).toEqual([2, 3, 4]);
+      await expect(notice).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+});
+
 test.describe("when sharing isn't open", () => {
   test("before it opens, and once it has closed, the album says so plainly instead of offering buttons", async ({ page }) => {
     await saveSetting("uploads_open", false);

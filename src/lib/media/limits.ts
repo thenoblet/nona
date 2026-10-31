@@ -25,21 +25,42 @@ export const SIZE_LIMITS = {
   videoWish: 200 * MEBIBYTE,
 } as const;
 
-/** Every upload goes up in parts of 8 MiB, the last one smaller. */
+/** A file under 256 MiB goes up in parts of 8 MiB, the last one smaller. */
 export const PART_SIZE_BYTES = 8 * MEBIBYTE;
 
-/** How many parts a file of this size takes. */
-export function partCount(sizeBytes: number): number {
-  return Math.ceil(sizeBytes / PART_SIZE_BYTES);
+/**
+ * A file of LARGE_FILE_BYTES or more goes up in parts of 16 MiB (Noblet, 31 Oct): half the
+ * requests for a big video, each part still small enough to send again quickly on mobile data.
+ * Both sizes are within R2's multipart rules: every part but the last at least 5 MiB, and at most
+ * 10,000 parts (a 2 GB video takes 128).
+ */
+export const LARGE_PART_SIZE_BYTES = 16 * MEBIBYTE;
+export const LARGE_FILE_BYTES = 256 * MEBIBYTE;
+
+/**
+ * The part size a new upload of this size takes. An upload keeps the part size it started with
+ * (the media row's part_size_bytes), so one started before big files took 16 MiB parts carries on
+ * in 8 MiB ones.
+ */
+export function partSizeFor(sizeBytes: number): number {
+  return sizeBytes >= LARGE_FILE_BYTES ? LARGE_PART_SIZE_BYTES : PART_SIZE_BYTES;
 }
 
-/** The size of one part of a file this size: 8 MiB, or what is left for the last one. */
-export function partSizeOf(sizeBytes: number, partNumber: number): number {
-  return Math.min(PART_SIZE_BYTES, sizeBytes - (partNumber - 1) * PART_SIZE_BYTES);
+/** How many parts a file of this size takes, in parts of `partSizeBytes`. */
+export function partCount(sizeBytes: number, partSizeBytes: number): number {
+  return Math.ceil(sizeBytes / partSizeBytes);
 }
 
-/** The most parts any upload has: a 2 GB video's. */
-export const MAX_PART_COUNT = partCount(SIZE_LIMITS.video);
+/** The size of one part of a file this size: `partSizeBytes`, or what is left for the last one. */
+export function partSizeOf(sizeBytes: number, partNumber: number, partSizeBytes: number): number {
+  return Math.min(partSizeBytes, sizeBytes - (partNumber - 1) * partSizeBytes);
+}
+
+/**
+ * The most parts any upload has: a 2 GB video's in 8 MiB parts, as an upload started before big
+ * files took 16 MiB parts may still be carried on (a new one has at most 128).
+ */
+export const MAX_PART_COUNT = partCount(SIZE_LIMITS.video, PART_SIZE_BYTES);
 
 /**
  * The declared content types each upload accepts, each with the filename extensions that agree
@@ -169,6 +190,8 @@ export type UploadCheck =
       contentType: string;
       /** The extension for the original's key. */
       extension: string;
+      /** The part size a new upload of it takes, and how many parts that makes. */
+      partSize: number;
       partCount: number;
     }
   | { ok: false; error: UploadRefusal; message: string };
@@ -177,7 +200,7 @@ export type UploadCheck =
  * Whether a guest may upload this file, before any bytes are sent: an accepted type for the
  * purpose, a name that isn't a document or program, and a size from 1 byte to the kind's limit.
  * Accepted, it says how to store it: the kind, the content type, the key's extension (the
- * filename's when it agrees with the type, else the type's own) and the number of parts.
+ * filename's when it agrees with the type, else the type's own) and its parts.
  */
 export function checkUpload(upload: {
   purpose: GuestUploadPurpose;
@@ -203,11 +226,13 @@ export function checkUpload(upload: {
   if (size > accepted.maxBytes) return { ok: false, error: "too-large", message: accepted.tooLarge };
 
   const agrees = SAFE_EXTENSION.test(extension) && accepted.extensions.includes(extension);
+  const partSize = partSizeFor(size);
   return {
     ok: true,
     kind: accepted.kind,
     contentType,
     extension: agrees ? extension : accepted.extensions[0],
-    partCount: partCount(size),
+    partSize,
+    partCount: partCount(size, partSize),
   };
 }

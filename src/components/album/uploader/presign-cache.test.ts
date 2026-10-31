@@ -26,6 +26,24 @@ describe("the part URL cache", () => {
     expect(calls).toEqual([range(1, 20), range(21, 30)]);
   });
 
+  it("Ruling AY: signs only the parts sent at once on its first call, then twenty at a time", async () => {
+    const { calls, fetchUrls } = signer();
+    const cache = new PartUrlCache({ partCount: 40, uploadedParts: [], fetchUrls, firstBatch: 6 });
+
+    const first = await Promise.all(range(1, 6).map((partNumber) => cache.urlFor(partNumber)));
+    expect(first).toEqual(range(1, 6).map((partNumber) => `https://r2.example/part-${partNumber}?call=1`));
+    expect(await cache.urlFor(7)).toBe("https://r2.example/part-7?call=2");
+    expect(calls).toEqual([range(1, 6), range(7, 26)]);
+  });
+
+  it("skips the parts R2 holds in its first, trimmed call too", async () => {
+    const { calls, fetchUrls } = signer();
+    const cache = new PartUrlCache({ partCount: 40, uploadedParts: [1, 2, 3], fetchUrls, firstBatch: 6 });
+
+    await cache.urlFor(4);
+    expect(calls).toEqual([range(4, 9)]);
+  });
+
   it("shares one call between parts asked for at once, as four parts in flight are", async () => {
     const { calls, fetchUrls } = signer();
     const cache = new PartUrlCache({ partCount: 4, uploadedParts: [], fetchUrls });

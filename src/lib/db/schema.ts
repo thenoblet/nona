@@ -149,6 +149,12 @@ export const media = pgTable(
     /** sha-256 of the size, the first MB and the last MB, so a re-picked file resumes its upload. */
     fileFingerprint: text("file_fingerprint"),
     multipartUploadId: text("multipart_upload_id"),
+    /**
+     * The size of the upload's parts, every one but the last, kept from its start: a file of 256 MiB
+     * or more starts in 16 MiB parts, a smaller one in 8 MiB (partSizeFor). An upload started before
+     * part sizes grew with the file is 8 MiB, the default, and carries on so.
+     */
+    partSizeBytes: integer("part_size_bytes").notNull().default(8 * 1024 * 1024),
     startedAt: timestamp("started_at", withTimezone).notNull().defaultNow(),
     /** When the upload completed, which starts the original's 30-day lock. */
     uploadedAt: timestamp("uploaded_at", withTimezone),

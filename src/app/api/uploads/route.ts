@@ -37,8 +37,10 @@ const startRequest = zod.object({
  * Starts an upload, or resumes this browser's unfinished upload of the same file.
  *
  * Body: `{ purpose: "album" | "wish", filename, size, contentType, fingerprint, capturedAt?, uploaderName? }`.
- * Answers `{ mediaId, uploadId, key, partSize, partCount, uploadedParts }`; the phone then asks
- * /api/uploads/[id]/parts for part URLs and sends the bytes straight to R2.
+ * Answers `{ mediaId, uploadId, key, partSize, partCount, uploadedParts }`: parts of 8 MiB, or 16
+ * MiB for a file of 256 MiB or more, kept by an upload carried on. The phone then asks
+ * /api/uploads/[id]/parts for part URLs and sends the bytes straight to R2. The upload's manifest
+ * is written after the answer (Ruling AY).
  * - A file of the wrong type, empty or over its limit: 400 `{ error, message }` in plain words.
  * - Album uploads while the couple have them closed: 403 `uploads-closed`, unless it resumes an
  *   upload started before the close, within 24 hours of it. Wishes are never closed.

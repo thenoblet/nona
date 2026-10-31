@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./api";
+import { FileReadError } from "./fingerprint";
 import { completionOutcome, errorOutcome, probeOutcome, startOutcome } from "./outcomes";
 import { UPLOAD_WORDS } from "./state";
 
@@ -94,17 +95,46 @@ describe("what the server's answers mean for a file", () => {
     }
   });
 
-  it("carries on after a dropped connection, and fails a file the phone can't read with Try again", () => {
+  it("carries on after a dropped connection", () => {
     expect(errorOutcome(new ApiError("network", "Failed to fetch"))).toEqual({ kind: "retry", code: "network-error" });
     expect(errorOutcome(new ApiError("timeout", "timed out"))).toEqual({ kind: "retry", code: "timeout" });
     // A part's PUT that Uppy gave up on: the XHR's status rides on the error.
     expect(errorOutcome(Object.assign(new Error("Non 2xx"), { source: { status: 500 } }))).toEqual({ kind: "retry", code: "http-500" });
     expect(errorOutcome(Object.assign(new Error("Unknown error"), { source: { status: 0 } }))).toEqual({ kind: "retry", code: "network-error" });
-    expect(errorOutcome(new DOMException("The file could not be read", "NotReadableError"))).toEqual({
-      kind: "failed",
-      code: "unreadable",
-      failure: { reason: UPLOAD_WORDS.unreadable, hint: null, canRetry: true },
-    });
     expect(errorOutcome(new DOMException("Aborted", "AbortError"))).toEqual({ kind: "cancelled" });
+  });
+
+  it("Ruling BA: says a file the phone can no longer read changed after it was chosen, with Choose again rather than Try again", () => {
+    const stale = new DOMException(
+      "The requested file could not be read, typically due to permission problems that have occurred after a reference to a file was acquired.",
+      "NotReadableError",
+    );
+    expect(errorOutcome(new FileReadError("tail", stale), { kind: "photo", name: "IMG-20261205-WA0007.jpg" })).toEqual({
+      kind: "failed",
+      code: "file-changed",
+      failure: { reason: "This photo changed after you chose it", hint: "Choose it again.", canRetry: false, chooseAgain: true },
+      detail: {
+        errorName: "NotReadableError",
+        errorMessage: "The requested file could not be read, typically due to permission problems that have occurred after a reference to a file was acquired.".slice(0, 120),
+        read: "tail",
+      },
+    });
+    expect(errorOutcome(new DOMException("Gone", "NotFoundError"), { kind: "video", name: "clip.mp4" })).toMatchObject({
+      code: "file-changed",
+      failure: { reason: "This video changed after you chose it", chooseAgain: true },
+      detail: { errorName: "NotFoundError", errorMessage: "Gone" },
+    });
+  });
+
+  it("never sends a file's name or path with why it couldn't be read", () => {
+    const named = new DOMException(
+      "A requested file or directory could not be found at the time an operation was processed: /storage/emulated/0/WhatsApp/Media/IMG-20261205-WA0007.jpg (content://media/external/images/media/42)",
+      "NotFoundError",
+    );
+    const outcome = errorOutcome(new FileReadError("head", named), { kind: "photo", name: "IMG-20261205-WA0007.jpg" });
+    const message = outcome.kind === "failed" ? (outcome.detail?.errorMessage ?? "") : "";
+    expect(message).toContain("A requested file or directory could not be found");
+    expect(message).not.toMatch(/IMG-20261205|WhatsApp|emulated|content:|\//);
+    expect(message.length).toBeLessThanOrEqual(120);
   });
 });

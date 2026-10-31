@@ -4,7 +4,9 @@ import { checkUpload } from "@/lib/media/limits";
  * What the album page shows of the guest's uploads, framework-free and small: it ships with the
  * page, so a pick shows at once (and a file over its limit is turned away at once) while the
  * uploader itself (engine.ts, with Uppy) loads. The engine moves each file through its states;
- * the cards render the snapshot.
+ * the cards render the snapshot. Once a card has finished, it tidies itself away (Ruling BC); while
+ * files send, it can be minimised to a floating circle, and a big or slow upload says so calmly
+ * (Ruling BE).
  */
 
 /** Where a file comes from: the phone's camera (a photo or a video) or its gallery. */
@@ -32,6 +34,11 @@ export type UploadFailure = {
   closed?: boolean;
   /** The guest's Cancel never got an answer: Try again sends the Cancel again. */
   cancelFailed?: boolean;
+  /**
+   * The file changed on the phone after it was picked (Ruling BA), so the browser can't read it any
+   * more: only picking it again can help, and its button opens the picker.
+   */
+  chooseAgain?: boolean;
 };
 
 export type UploadItem = {
@@ -47,13 +54,23 @@ export type UploadItem = {
   readonly percent: number;
   readonly mediaId: string | null;
   readonly failure: UploadFailure | null;
+  /** Fading away once the card has finished with it (Ruling BC). */
+  readonly leaving: boolean;
+  /**
+   * The server's own thumbnail, for a file the phone can't preview (a HEIC on Android). Null until
+   * Task 15's GET /api/media/[id] gives it once the item is ready: the seam for swapping it in.
+   */
+  readonly serverThumbUrl: string | null;
 };
 
 export type UploadView =
   | { kind: "none" }
   /** One shot from the camera: the camera card. */
   | { kind: "camera"; item: UploadItem }
-  /** Anything else: the gallery batch, "N of M sent", with an overall bar by bytes. */
+  /**
+   * Anything else: the gallery batch, "N of M sent", with an overall bar by bytes. N and M still
+   * count the added files that have tidied away from it while others wait for Try again.
+   */
   | { kind: "batch"; items: readonly UploadItem[]; sent: number; total: number; busy: boolean; percent: number };
 
 export type UploadSnapshot = {
@@ -61,9 +78,15 @@ export type UploadSnapshot = {
   readonly view: UploadView;
   /** Whether a file has been added on this page yet: the personal link is offered from then on. */
   readonly showLinkOffer: boolean;
+  /** The card is minimised to the floating progress circle (Ruling BE). */
+  readonly minimised: boolean;
+  /** For a big or slow upload, the calm words that say so (Ruling BE); null otherwise. */
+  readonly notice: string | null;
+  /** With that notice, the time left in words, once it has been measured. */
+  readonly timeLeft: string | null;
 };
 
-export type ItemPatch = Partial<Pick<UploadItem, "status" | "percent" | "mediaId" | "failure">>;
+export type ItemPatch = Partial<Pick<UploadItem, "status" | "percent" | "mediaId" | "failure" | "serverThumbUrl">>;
 
 /** Gate A's words, and the few the design needed beyond them. */
 export const UPLOAD_WORDS = {
@@ -91,7 +114,22 @@ export const UPLOAD_WORDS = {
   cantAdd: "This one can't be added to the album",
   /** A Cancel the server never answered, kept and sent again on the next visit. */
   cancelUnanswered: "We couldn't remove this one yet",
+  /** Ruling BA: a file the phone can no longer read, as it changed after the pick; the button opens the picker. */
+  photoChanged: "This photo changed after you chose it",
+  videoChanged: "This video changed after you chose it",
+  chooseItAgain: "Choose it again.",
+  /** Ruling BE: a big or slow upload, said calmly; a page can't send once it closes, so never promise that. */
+  bigVideo: "This is a big video, so it may take a few minutes on mobile data.",
+  bigVideoAmong: "There's a big video in these, so they may take a few minutes on mobile data.",
+  slowOne: "This may take a few minutes on mobile data.",
+  slowSeveral: "These may take a few minutes on mobile data.",
+  keepLooking: "You can minimise this and keep looking through the album; just keep this page open.",
 } as const;
+
+/** A file over this (about 100 MB) is big: the card says it may take a few minutes, whatever the time left. */
+export const BIG_FILE_BYTES = 100 * 1024 * 1024;
+/** Past this many seconds left, measured, the card says so too. */
+export const SLOW_SECONDS = 60;
 
 const BUSY: ReadonlySet<UploadStatus> = new Set(["queued", "sending", "retrying", "confirming"]);
 
@@ -159,11 +197,11 @@ function refusal(file: File, contentType: string, kind: UploadItem["kind"]): Upl
   return { reason: checked.message, hint: null, canRetry: false };
 }
 
-function viewOf(allItems: readonly UploadItem[]): UploadView {
+function viewOf(allItems: readonly UploadItem[], tidied: number): UploadView {
   // A file being cancelled has left the card already.
   const items = allItems.filter((item) => item.status !== "cancelling");
   if (items.length === 0) return { kind: "none" };
-  if (items.length === 1 && items[0].source !== "gallery") return { kind: "camera", item: items[0] };
+  if (items.length === 1 && items[0].source !== "gallery" && tidied === 0) return { kind: "camera", item: items[0] };
   // The overall bar counts only what is still to arrive: a failed file (over its limit, or waiting
   // for Try again) would hold it short of the end for ever. "N of M sent" still counts every file.
   const sending = items.filter((item) => item.status !== "failed");
@@ -172,11 +210,53 @@ function viewOf(allItems: readonly UploadItem[]): UploadView {
   return {
     kind: "batch",
     items,
-    sent: items.filter((item) => item.status === "added").length,
-    total: items.length,
+    sent: items.filter((item) => item.status === "added").length + tidied,
+    total: items.length + tidied,
     busy: items.some(isBusy),
     percent: totalBytes === 0 ? 0 : Math.round((sentBytes / totalBytes) * 100),
   };
+}
+
+/**
+ * The calm notice for a big or slow upload (Ruling BE): a file over about 100 MB is sending, or the
+ * measured time left has passed about a minute (`slow`, kept until the files have sent).
+ */
+function noticeOf(items: readonly UploadItem[], slow: boolean): string | null {
+  const busy = items.filter((item) => item.status !== "cancelling" && isBusy(item));
+  if (busy.length === 0) return null;
+  const big = busy.some((item) => item.file.size > BIG_FILE_BYTES);
+  if (!big && !slow) return null;
+  const one = busy.length === 1;
+  const lead = big ? (one ? UPLOAD_WORDS.bigVideo : UPLOAD_WORDS.bigVideoAmong) : one ? UPLOAD_WORDS.slowOne : UPLOAD_WORDS.slowSeveral;
+  return `${lead} ${UPLOAD_WORDS.keepLooking}`;
+}
+
+/** What a file's thumbnail shows (Ruling BB). */
+export type ThumbSource = { kind: "local" | "server"; url: string } | { kind: "icon"; icon: "image" | "video" };
+
+/**
+ * The guest's own picture while the phone can draw it; else the server's thumbnail once there is
+ * one (Task 15); else a small photo or video icon, never an empty tile.
+ */
+export function thumbOf(item: Pick<UploadItem, "kind" | "previewUrl" | "serverThumbUrl">, localFailed: boolean): ThumbSource {
+  if (item.previewUrl && !localFailed) return { kind: "local", url: item.previewUrl };
+  if (item.serverThumbUrl) return { kind: "server", url: item.serverThumbUrl };
+  return { kind: "icon", icon: item.kind === "video" ? "video" : "image" };
+}
+
+/**
+ * The notice on return (Ruling BE), for the uploads this phone started and didn't finish: what
+ * didn't finish sending, and that choosing it again carries it on. Null for none.
+ */
+export function returnNoticeWords(unfinished: readonly { kind: "photo" | "video" | null }[]): string | null {
+  if (unfinished.length === 0) return null;
+  if (unfinished.length === 1) {
+    const [{ kind }] = unfinished;
+    const what = kind === "video" ? "Your video" : kind === "photo" ? "Your photo" : "One of your files";
+    return `${what} didn't finish sending. Choose it again and it'll carry on from where it stopped.`;
+  }
+  const noun = unfinished.every(({ kind }) => kind === "video") ? "videos" : unfinished.every(({ kind }) => kind === "photo") ? "photos" : "files";
+  return `${unfinished.length} of your ${noun} didn't finish sending. Choose them again and they'll carry on from where they stopped.`;
 }
 
 export type PreviewUrls = { create: (file: File) => string | null; revoke: (url: string) => void };
@@ -186,34 +266,127 @@ const browserPreviews: PreviewUrls = {
   revoke: (url) => URL.revokeObjectURL(url),
 };
 
+/** How long a finished card shows before it tidies itself away, and how long it takes to fade (Ruling BC). */
+export type TidyTimings = { batchMs: number; cameraMs: number; fadeMs: number };
+
+// The fade is the cards' fold (420 ms in globals.css), with a moment to spare.
+export const TIDY_TIMINGS: TidyTimings = { batchMs: 5_000, cameraMs: 15_000, fadeMs: 450 };
+
+/** The guest asked for less motion: a finished card goes without its fade. */
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+}
+
 export type UploadStore = {
   /**
    * Adds the picked files, each queued, or failed at once when the album can't take it, and returns
    * the queued ones. A pick while nothing is sending starts afresh: the added files and the ones
-   * that can't be tried again leave the card; the ones to try again stay.
+   * that can't be tried again leave the card; the ones to try again stay. `replacing` names a file
+   * that changed after it was picked (Ruling BA), whose place these take.
    */
-  add(files: readonly File[], source: UploadSource): UploadItem[];
+  add(files: readonly File[], source: UploadSource, options?: { replacing?: string }): UploadItem[];
   update(id: string, patch: ItemPatch): void;
   remove(id: string): void;
   get(id: string): UploadItem | undefined;
+  /** Minimises the card to the floating circle, or opens it again (Ruling BE). */
+  setMinimised(minimised: boolean): void;
+  /** The measured time left (from the uploader), for a slow upload's notice. */
+  setTimeLeft(timeLeft: { seconds: number; words: string } | null): void;
   getSnapshot(): UploadSnapshot;
   subscribe(listener: () => void): () => void;
 };
 
-export function createUploadStore(options: { previews?: PreviewUrls; newId?: () => string } = {}): UploadStore {
+export function createUploadStore(
+  options: {
+    previews?: PreviewUrls;
+    newId?: () => string;
+    tidy?: Partial<TidyTimings>;
+    reducedMotion?: () => boolean;
+  } = {},
+): UploadStore {
   const previews = options.previews ?? browserPreviews;
+  const tidyTimings = { ...TIDY_TIMINGS, ...options.tidy };
+  const reducedMotion = options.reducedMotion ?? prefersReducedMotion;
   let made = 0;
   const newId = options.newId ?? (() => `upload-${Date.now().toString(36)}-${(made += 1)}`);
   const listeners = new Set<() => void>();
   let items: readonly UploadItem[] = [];
   let showLinkOffer = false;
-  let snapshot: UploadSnapshot = { items, view: viewOf(items), showLinkOffer };
+  /** Added files of this batch that have tidied away, still counted in its "N of M sent". */
+  let tidied = 0;
+  let minimised = false;
+  let timeLeft: { seconds: number; words: string } | null = null;
+  /** The measured time left has passed SLOW_SECONDS while these files send. */
+  let slow = false;
+  let tidyTimer: ReturnType<typeof setTimeout> | undefined;
+  let snapshot: UploadSnapshot = snapshotOf();
+
+  function snapshotOf(): UploadSnapshot {
+    const notice = noticeOf(items, slow);
+    return {
+      items,
+      view: viewOf(items, tidied),
+      showLinkOffer,
+      minimised,
+      notice,
+      timeLeft: notice && timeLeft ? timeLeft.words : null,
+    };
+  }
 
   function commit(next: readonly UploadItem[]): void {
     items = next;
     showLinkOffer ||= items.some((item) => item.status === "added");
-    snapshot = { items, view: viewOf(items), showLinkOffer };
+    const onCard = items.filter((item) => item.status !== "cancelling");
+    if (onCard.length === 0) {
+      // The card has gone: the next one starts its own count, open.
+      tidied = 0;
+      minimised = false;
+    }
+    if (!onCard.some(isBusy)) {
+      slow = false;
+      timeLeft = null;
+    }
+    snapshot = snapshotOf();
+    planTidy();
     for (const listener of listeners) listener();
+  }
+
+  /**
+   * Once nothing on the card is on its way and something has been added, the added files tidy
+   * away after a while: a batch's after about 5 s, the camera card's after about 15 s. Failed files
+   * stay until dismissed or tried again; trying again stops the clock.
+   */
+  function planTidy(): void {
+    const onCard = items.filter((item) => item.status !== "cancelling");
+    const waiting = onCard.some((item) => item.status === "added" && !item.leaving);
+    if (onCard.some(isBusy) || !waiting) {
+      clearTimeout(tidyTimer);
+      tidyTimer = undefined;
+      return;
+    }
+    if (tidyTimer !== undefined) return;
+    const camera = snapshot.view.kind === "camera";
+    tidyTimer = setTimeout(tidyAway, camera ? tidyTimings.cameraMs : tidyTimings.batchMs);
+  }
+
+  function tidyAway(): void {
+    tidyTimer = undefined;
+    const going = items.filter((item) => item.status === "added" && !item.leaving).map((item) => item.id);
+    if (going.length === 0) return;
+    if (reducedMotion()) {
+      removeTidied(going);
+      return;
+    }
+    commit(items.map((item) => (going.includes(item.id) ? { ...item, leaving: true } : item)));
+    setTimeout(() => removeTidied(going), tidyTimings.fadeMs);
+  }
+
+  function removeTidied(ids: readonly string[]): void {
+    const going = items.filter((item) => ids.includes(item.id) && item.status === "added");
+    if (going.length === 0) return;
+    going.forEach(forget);
+    tidied += going.length;
+    commit(items.filter((item) => !going.includes(item)));
   }
 
   function forget(item: UploadItem): void {
@@ -221,14 +394,20 @@ export function createUploadStore(options: { previews?: PreviewUrls; newId?: () 
   }
 
   return {
-    add(files, source) {
+    add(files, source, addOptions = {}) {
       let kept = items;
-      if (!items.some(isBusy)) {
-        const leaving = items.filter(
+      const replaced = addOptions.replacing ? items.find((item) => item.id === addOptions.replacing) : undefined;
+      if (replaced) {
+        forget(replaced);
+        kept = kept.filter((item) => item !== replaced);
+      }
+      if (!kept.some(isBusy)) {
+        const leaving = kept.filter(
           (item) => item.status !== "cancelling" && (item.status === "added" || !item.failure?.canRetry),
         );
         leaving.forEach(forget);
-        kept = items.filter((item) => !leaving.includes(item));
+        kept = kept.filter((item) => !leaving.includes(item));
+        tidied = 0;
       }
       const added = files.map((file): UploadItem => {
         const contentType = declaredType(file);
@@ -245,8 +424,12 @@ export function createUploadStore(options: { previews?: PreviewUrls; newId?: () 
           percent: 0,
           mediaId: null,
           failure,
+          leaving: false,
+          serverThumbUrl: null,
         };
       });
+      // A new pick is something the guest wants to see: the card opens again.
+      minimised = false;
       commit([...kept, ...added]);
       return added.filter((item) => item.status === "queued");
     },
@@ -261,6 +444,17 @@ export function createUploadStore(options: { previews?: PreviewUrls; newId?: () 
       commit(items.filter((item) => item.id !== id));
     },
     get: (id) => items.find((item) => item.id === id),
+    setMinimised(value) {
+      const next = value && snapshot.view.kind !== "none";
+      if (next === minimised) return;
+      minimised = next;
+      commit(items);
+    },
+    setTimeLeft(value) {
+      timeLeft = value;
+      if (value && value.seconds > SLOW_SECONDS) slow = true;
+      commit(items);
+    },
     getSnapshot: () => snapshot,
     subscribe(listener) {
       listeners.add(listener);

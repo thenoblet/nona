@@ -2,13 +2,14 @@ import { after, connection } from "next/server";
 import * as zod from "zod";
 import { jsonResponse, readJsonBody } from "@/lib/http/json";
 import { describeError } from "@/lib/log-error";
-import { MAX_PART_COUNT, partCount } from "@/lib/media/limits";
+import { MAX_PART_COUNT } from "@/lib/media/limits";
 import {
   isVisibleUpload,
   listUploadParts,
   mayContinueUpload,
   presignUploadParts,
   readUploadsSwitch,
+  uploadPartCount,
 } from "@/lib/media/uploads";
 import { MAX_PARTS_PER_PRESIGN } from "@/lib/storage/objects";
 import {
@@ -58,9 +59,10 @@ export async function GET(request: Request, { params }: UploadContext) {
 
 /**
  * Presigned PUT URLs for 1 to 20 of this browser's upload's parts, `{ urls: [{ partNumber, url }] }`,
- * each valid for an hour (the phone asks again on a 403) and bound to its part's size (8 MiB, the
- * last part the remainder): R2 refuses a PUT of any other length, so no one can store more than
- * the upload declared. Body: `{ partNumbers }`. Reads only: the upload's row and the uploads
+ * each valid for an hour (the phone asks again on a 403) and bound to its part's size (the upload's
+ * own 8 or 16 MiB, the last part the remainder): R2 refuses a PUT of any other length, so no one can
+ * store more than the upload declared. The phone's first call asks only for the parts it sends at
+ * once, so a burst of starts signs little (Ruling AY). Body: `{ partNumbers }`. Reads only: the upload's row and the uploads
  * switch, then signs locally, with no write and no network call.
  */
 export async function POST(request: Request, { params }: UploadContext) {
@@ -77,7 +79,7 @@ export async function POST(request: Request, { params }: UploadContext) {
     if (!upload || !isVisibleUpload(upload)) return forbidden();
     if (upload.status !== "uploading") return alreadyUploaded();
     if (!mayContinueUpload(upload, uploads)) return uploadsClosed();
-    const parts = partCount(upload.sizeBytes);
+    const parts = uploadPartCount(upload);
     const partNumbers = [...new Set(parsed.data.partNumbers)];
     if (partNumbers.some((partNumber) => partNumber > parts)) {
       return badRequest(`This upload's parts run from 1 to ${parts}.`);

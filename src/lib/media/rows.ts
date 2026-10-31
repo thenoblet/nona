@@ -64,6 +64,7 @@ const uploadColumns = {
   sizeBytes: media.sizeBytes,
   contentType: media.contentType,
   multipartUploadId: media.multipartUploadId,
+  partSizeBytes: media.partSizeBytes,
   startedAt: media.startedAt,
   status: media.status,
   failureReason: media.failureReason,
@@ -85,6 +86,8 @@ export type UploadRow = {
   sizeBytes: number;
   contentType: string;
   multipartUploadId: string | null;
+  /** Its parts' size, kept from its start (partSizeFor). */
+  partSizeBytes: number;
   startedAt: Date;
   status: MediaStatus;
   /** Why processing failed (`corrupt`, `unsupported-type`…), shown to its uploader; null otherwise. */
@@ -109,6 +112,8 @@ export type NewUpload = {
   sizeBytes: number;
   contentType: string;
   fileFingerprint: string | null;
+  /** The part size it goes up in (partSizeFor its size). */
+  partSizeBytes: number;
   startedAt: Date;
   capturedAt: Date | null;
 };

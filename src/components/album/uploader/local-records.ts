@@ -1,8 +1,10 @@
 /*
  * What this phone remembers of its uploads between visits, in localStorage, small enough to ship
  * with the album page (which reads it before the uploader loads):
- * - the uploads it started and hasn't finished, so once the couple close sharing, during the 24
- *   hours an unfinished upload may still finish, the page can offer to finish them;
+ * - the uploads it started and hasn't finished, and whether each was a photo or a video: back on
+ *   the album, the page says what didn't finish sending and how to carry it on (Ruling BE), and
+ *   once the couple close sharing, during the 24 hours an unfinished upload may still finish, it
+ *   offers to finish them;
  * - the Cancels it couldn't get the server to answer, sent again on the next visit, so a guest's
  *   Cancel is never dropped.
  * Storage blocked or full only means nothing is remembered.
@@ -43,28 +45,61 @@ function writeRecord<TEntry>(storage: StorageLike | null, key: string, entries: 
   } catch {
     // Full or blocked: not remembered.
   }
+  if (key === STARTED_KEY) for (const listener of [...startedListeners]) listener();
 }
 
-type StartedEntry = { mediaId: string; at: number };
+const startedListeners = new Set<() => void>();
+
+/**
+ * Hears each change this page makes to the uploads it started (one starting, finishing, cancelled),
+ * and those another tab of the album makes; returns what stops it.
+ */
+export function subscribeToStartedFiles(listener: () => void): () => void {
+  startedListeners.add(listener);
+  const fromAnotherTab = (event: StorageEvent) => {
+    if (event.key === STARTED_KEY || event.key === null) listener();
+  };
+  if (typeof window !== "undefined") window.addEventListener("storage", fromAnotherTab);
+  return () => {
+    startedListeners.delete(listener);
+    if (typeof window !== "undefined") window.removeEventListener("storage", fromAnotherTab);
+  };
+}
+
+/** What a started upload was; null for one recorded before the page kept that. */
+export type StartedKind = "photo" | "video";
+
+type StartedEntry = { mediaId: string; at: number; kind?: StartedKind };
+
+export type UnfinishedUpload = { mediaId: string; kind: StartedKind | null; at: number };
 
 export type StartedFiles = {
-  /** An upload this phone started (newest last). */
-  record(size: number, fingerprint: string, mediaId: string, now?: number): void;
+  /** An upload this phone started (newest last), and whether it is a photo or a video. */
+  record(size: number, fingerprint: string, mediaId: string, details?: { kind?: StartedKind; now?: number }): void;
   /** The file's upload finished, failed for good or was cancelled: nothing left to finish. */
   finish(size: number, fingerprint: string): void;
   /** Forgets every record of this upload. */
   forgetMedia(mediaId: string): void;
-  /** Whether this phone has an upload it started within the last seven days and hasn't finished. */
+  /** The uploads this phone started within the last seven days and hasn't finished, oldest first. */
+  unfinished(now?: number): UnfinishedUpload[];
+  /** Whether there is any. */
   hasUnfinished(now?: number): boolean;
 };
 
 export function createStartedFiles(storage: StorageLike | null): StartedFiles {
   const keyOf = (size: number, fingerprint: string) => `${size}:${fingerprint}`;
+  function unfinished(now = Date.now()): UnfinishedUpload[] {
+    return Object.values(readRecord<StartedEntry>(storage, STARTED_KEY)).flatMap((entry) =>
+      typeof entry?.at === "number" && typeof entry.mediaId === "string" && now - entry.at < UNFINISHED_FOR_MILLISECONDS
+        ? [{ mediaId: entry.mediaId, kind: entry.kind === "photo" || entry.kind === "video" ? entry.kind : null, at: entry.at }]
+        : [],
+    );
+  }
   return {
-    record(size, fingerprint, mediaId, now = Date.now()) {
+    record(size, fingerprint, mediaId, details = {}) {
       const entries = readRecord<StartedEntry>(storage, STARTED_KEY);
       delete entries[keyOf(size, fingerprint)];
-      entries[keyOf(size, fingerprint)] = { mediaId, at: now };
+      entries[keyOf(size, fingerprint)] = { mediaId, at: details.now ?? Date.now(), ...(details.kind ? { kind: details.kind } : {}) };
       writeRecord(storage, STARTED_KEY, entries);
     },
     finish(size, fingerprint) {
@@ -78,10 +113,9 @@ export function createStartedFiles(storage: StorageLike | null): StartedFiles {
       const kept = Object.fromEntries(Object.entries(entries).filter(([, entry]) => entry?.mediaId !== mediaId));
       if (Object.keys(kept).length !== Object.keys(entries).length) writeRecord(storage, STARTED_KEY, kept);
     },
+    unfinished,
     hasUnfinished(now = Date.now()) {
-      return Object.values(readRecord<StartedEntry>(storage, STARTED_KEY)).some(
-        (entry) => typeof entry?.at === "number" && now - entry.at < UNFINISHED_FOR_MILLISECONDS,
-      );
+      return unfinished(now).length > 0;
     },
   };
 }

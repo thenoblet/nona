@@ -1,4 +1,5 @@
 import { ApiError, type ApiAnswer } from "./api";
+import type { FileRead } from "./fingerprint";
 import { UPLOAD_WORDS, type UploadFailure } from "./state";
 
 /*
@@ -8,10 +9,16 @@ import { UPLOAD_WORDS, type UploadFailure } from "./state";
  * (/api/upload-events takes [a-z0-9-] only) and plain words for the guest.
  */
 
+/**
+ * Why the phone couldn't read a file, for the status page (Ruling BA): the browser's error name, its
+ * own words (short, with the file's name and any path taken out) and which read failed.
+ */
+export type ReadFailureDetail = { errorName: string; errorMessage: string; read?: FileRead };
+
 export type Outcome =
   | { kind: "added" }
   /** Settled: show `failure`; Try again only where it can help. */
-  | { kind: "failed"; code: string; failure: UploadFailure }
+  | { kind: "failed"; code: string; failure: UploadFailure; detail?: ReadFailureDetail }
   /** Passing trouble (a dropped connection, a server briefly down, parts still arriving): carry on by itself. */
   | { kind: "retry"; code: string };
 
@@ -146,17 +153,75 @@ export class OutcomeError extends Error {
   }
 }
 
+/** The most of the browser's words kept with a read failure. */
+const MESSAGE_LENGTH = 120;
+
+/**
+ * The browser's words for a failed read, safe to send: the file's name, any path or URI and any
+ * file-like name taken out, then cut short. Chrome's own words name no file, but a phone's may.
+ */
+function scrubbedMessage(message: string, fileName: string): string {
+  let scrubbed = message;
+  if (fileName) scrubbed = scrubbed.split(fileName).join("");
+  scrubbed = scrubbed
+    // URIs (content://, file://, blob:) and paths, Android's and Windows' alike.
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, "")
+    .replace(/\bblob:\S*/gi, "")
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s)]*/g, "")
+    // Anything left that looks like a file's name.
+    .replace(/\S+\.[A-Za-z0-9]{2,5}\b/g, "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s+([:,.)])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[\s(]+$/, "")
+    .trim();
+  return scrubbed.slice(0, MESSAGE_LENGTH);
+}
+
+/**
+ * A file the phone can no longer read (Ruling BA): Chrome's File is a snapshot, and once the file
+ * changes on disk after the pick (WhatsApp or the phone finishing it) every read fails, as the File
+ * API asks. Reading the same File again can't help; picking it again does, so the failure offers
+ * Choose again rather than Try again.
+ */
+function fileChangedOutcome(error: unknown, file: { kind: "photo" | "video"; name: string } | undefined): Outcome {
+  const original = error as { name?: unknown; message?: unknown; read?: unknown } | null;
+  const read = original?.read === "head" || original?.read === "tail" ? original.read : undefined;
+  return {
+    kind: "failed",
+    code: "file-changed",
+    failure: {
+      reason: file?.kind === "video" ? UPLOAD_WORDS.videoChanged : UPLOAD_WORDS.photoChanged,
+      hint: UPLOAD_WORDS.chooseItAgain,
+      canRetry: false,
+      chooseAgain: true,
+    },
+    detail: {
+      errorName: String(original?.name ?? "Error").slice(0, 100),
+      errorMessage: scrubbedMessage(typeof original?.message === "string" ? original.message : "", file?.name ?? ""),
+      ...(read ? { read } : {}),
+    },
+  };
+}
+
+/** Whether an error says the phone couldn't read the file (it changed, moved or went). */
+export function isUnreadable(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null)?.name;
+  return name === "NotReadableError" || name === "NotFoundError";
+}
+
 /**
  * What an error means: the guest cancelled; an outcome a callback carried out; a call that got no
- * answer or a part whose PUT failed past its retries (carry on by itself); a file the phone can't
- * read (it moved, or lives in a cloud the phone can't reach now), which Try again reads afresh.
+ * answer or a part whose PUT failed past its retries (carry on by itself); a file the phone can no
+ * longer read (it changed after it was picked), which only choosing it again can help. `file` says
+ * which file, for the words and to keep its name out of what is reported.
  */
-export function errorOutcome(error: unknown): Outcome | { kind: "cancelled" } {
+export function errorOutcome(error: unknown, file?: { kind: "photo" | "video"; name: string }): Outcome | { kind: "cancelled" } {
   if (error instanceof OutcomeError) return error.outcome;
   if (error instanceof ApiError) return { kind: "retry", code: error.kind === "timeout" ? "timeout" : "network-error" };
   const name = (error as { name?: unknown } | null)?.name;
   if (name === "AbortError") return { kind: "cancelled" };
-  if (name === "NotReadableError" || name === "NotFoundError") return failed("unreadable", UPLOAD_WORDS.unreadable, true);
+  if (isUnreadable(error)) return fileChangedOutcome(error, file);
   const status = (error as { source?: { status?: unknown } } | null)?.source?.status;
   if (typeof status === "number" && status > 0) return { kind: "retry", code: `http-${status}` };
   return { kind: "retry", code: "network-error" };

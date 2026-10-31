@@ -9,7 +9,7 @@ import { getDb } from "@/lib/db/client";
 import { guests, media, uploadEvents } from "@/lib/db/schema";
 import { storageConfig } from "@/lib/env";
 import { MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
-import { PART_SIZE_BYTES, SIZE_LIMITS } from "@/lib/media/limits";
+import { LARGE_FILE_BYTES, LARGE_PART_SIZE_BYTES, PART_SIZE_BYTES, SIZE_LIMITS } from "@/lib/media/limits";
 import { createStorageClient, storageClient } from "@/lib/storage/client";
 import { manifestKey, originalKey } from "@/lib/storage/keys";
 import { readManifest } from "@/lib/storage/manifest";
@@ -30,11 +30,13 @@ import {
 
 vi.mock("next/headers", () => import("../../../../test/next-cookies"));
 
-// after() runs its task once the response is sent; the tests wait for exactly those tasks.
+// after() runs its task once the response is sent; the tests wait for exactly those tasks. A test
+// can hold them (afterGate) to see what the response alone has done.
 const afterTasks = vi.hoisted(() => [] as Promise<unknown>[]);
+const afterGate = vi.hoisted(() => ({ held: null as Promise<void> | null }));
 vi.mock("next/server", () => ({
   after: (task: () => unknown) => {
-    afterTasks.push(Promise.resolve().then(task));
+    afterTasks.push(Promise.resolve(afterGate.held).then(task));
   },
   connection: async () => {},
 }));
@@ -320,6 +322,48 @@ describe("an upload, start to finish", () => {
     expect(await eventsFor(session.mediaId)).toEqual([{ kind: "completed", guestId: guest.id }]);
   });
 
+  it("Ruling AY: answers a start before its manifest is written, and writes the manifest after the response", async () => {
+    await signIn();
+    let release: () => void = () => {};
+    afterGate.held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const session = await startSession(smallFile({ capturedAt: "2026-12-05T11:00:00Z" }));
+      expect(await readManifest(session.mediaId)).toBeNull();
+      release();
+      await afterResponse();
+      expect(await readManifest(session.mediaId)).toMatchObject({
+        celebration: "ceremony",
+        celebrationSetByAdmin: false,
+        hiddenAt: null,
+        removedByUploader: false,
+        deletedAt: null,
+      });
+    } finally {
+      afterGate.held = null;
+      release();
+    }
+  });
+
+  it("leaves no manifest behind for an upload cancelled before its after-response write ran", async () => {
+    await signIn();
+    let release: () => void = () => {};
+    afterGate.held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const session = await startSession(smallFile());
+      expect((await cancel(session.mediaId)).status).toBe(200);
+      release();
+      await afterResponse();
+      expect(await readManifest(session.mediaId)).toBeNull();
+    } finally {
+      afterGate.held = null;
+      release();
+    }
+  });
+
   it("queues a video for its poster and a wish's recording for the wish job", async () => {
     await signIn();
     const cases: [StartBody, MediaQueueName, string][] = [
@@ -344,6 +388,7 @@ describe("an upload, start to finish", () => {
     expect((await mediaRow(ceremony.mediaId)).celebration).toBe("ceremony");
     expect((await mediaRow(thanks.mediaId)).celebration).toBe("thanks");
     expect((await mediaRow(today.mediaId)).celebration).toBe("more");
+    await afterResponse();
     expect((await readManifest(thanks.mediaId))?.celebration).toBe("thanks");
   });
 
@@ -466,6 +511,7 @@ describe("resuming", () => {
     const session = await startSession(body);
     expect(session).toMatchObject({ mediaId, uploadedParts: [], partCount: 1 });
     expect((await mediaRow(mediaId)).multipartUploadId).toBe(session.uploadId);
+    await afterResponse();
     expect(await readManifest(mediaId)).toMatchObject({ celebration: "more" });
     const parts = await sendParts(session, randomBytes(body.size), [1]);
     expect((await complete(mediaId, parts)).status).toBe(200);
@@ -1146,6 +1192,61 @@ describe("part URLs", () => {
       `[uploads] ${completing.mediaId} holds more than it declared; aborting it`,
       `[uploads] ${listing.mediaId} holds more than it declared; aborting it`,
     ]);
+  });
+});
+
+describe("part size by file size", () => {
+  const video = (size: number) => photo({ contentType: "video/mp4", filename: "VID_0001.mp4", size });
+
+  it("sends a file of 256 MiB or more in 16 MiB parts, and a smaller one in 8 MiB parts", async () => {
+    await signIn();
+    expect(await startSession(video(LARGE_FILE_BYTES - 1))).toMatchObject({ partSize: PART_SIZE_BYTES, partCount: 32 });
+    expect(await startSession(video(LARGE_FILE_BYTES))).toMatchObject({ partSize: LARGE_PART_SIZE_BYTES, partCount: 16 });
+    const big = await startSession(video(300_000_000));
+    expect(big).toMatchObject({ partSize: LARGE_PART_SIZE_BYTES, partCount: 18 });
+    expect((await mediaRow(big.mediaId)).partSizeBytes).toBe(LARGE_PART_SIZE_BYTES);
+  });
+
+  it("binds a big upload's part URLs to its own 16 MiB parts, the last taking the remainder", async () => {
+    await signIn();
+    const session = await startSession(video(LARGE_FILE_BYTES + 5));
+    expect(session).toMatchObject({ partSize: LARGE_PART_SIZE_BYTES, partCount: 17 });
+    const presigned = await presign(session.mediaId, [1, 17]);
+    expect(presigned.status).toBe(200);
+    const { urls } = (await presigned.json()) as { urls: { partNumber: number; url: string }[] };
+
+    // 8 MiB, a small file's part, is refused for a part of 16 MiB; 16 MiB goes in; the last is the 5 bytes over.
+    expect((await fetch(urls[0].url, { method: "PUT", body: new Uint8Array(PART_SIZE_BYTES) })).status).toBe(403);
+    await putPart(urls[0].url, new Uint8Array(LARGE_PART_SIZE_BYTES));
+    await putPart(urls[1].url, new Uint8Array(5));
+    expect((await listUploadedParts(session.key, session.uploadId)).map((part) => [part.partNumber, part.size])).toEqual([
+      [1, LARGE_PART_SIZE_BYTES],
+      [17, 5],
+    ]);
+    expect((await presign(session.mediaId, [18])).status).toBe(400);
+  });
+
+  it("carries on an upload started in 8 MiB parts in 8 MiB parts, whatever its size", async () => {
+    await signIn();
+    const body = video(300_000_000);
+    const first = await startSession(body);
+    // As an upload started before big files took 16 MiB parts.
+    await getDb().update(media).set({ partSizeBytes: PART_SIZE_BYTES }).where(eq(media.id, first.mediaId));
+
+    const again = await startSession({ ...body, filename: "renamed.mp4" });
+    expect(again).toMatchObject({ mediaId: first.mediaId, partSize: PART_SIZE_BYTES, partCount: 36 });
+    expect((await presign(first.mediaId, [36])).status).toBe(200);
+    expect((await presign(first.mediaId, [37])).status).toBe(400);
+    const { urls } = (await (await presign(first.mediaId, [1])).json()) as { urls: { url: string }[] };
+    expect((await fetch(urls[0].url, { method: "PUT", body: new Uint8Array(LARGE_PART_SIZE_BYTES) })).status).toBe(403);
+    await putPart(urls[0].url, new Uint8Array(PART_SIZE_BYTES));
+    expect(await listUploadedParts(first.key, first.uploadId)).toEqual([expect.objectContaining({ partNumber: 1, size: PART_SIZE_BYTES })]);
+
+    // Once finished, it lists every one of its own parts.
+    await getDb().update(media).set({ status: "uploaded" }).where(eq(media.id, first.mediaId));
+    const { parts } = (await (await listParts(first.mediaId)).json()) as { parts: Session["uploadedParts"] };
+    expect(parts).toHaveLength(36);
+    expect(parts[35]).toEqual({ partNumber: 36, etag: "", size: 300_000_000 - 35 * PART_SIZE_BYTES });
   });
 });
 

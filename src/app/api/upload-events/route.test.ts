@@ -93,6 +93,42 @@ describe("POST /api/upload-events", () => {
     ]);
   });
 
+  it("Ruling BA: stores why a file couldn't be read, the error's name and short message and which read failed", async () => {
+    const guest = await signIn();
+    const response = await post({
+      events: [
+        {
+          kind: "failed",
+          reason: "file-changed",
+          detail: {
+            online: true,
+            errorName: "NotReadableError",
+            errorMessage: "The requested file could not be read, typically due to permission problems.",
+            read: "tail",
+          },
+        },
+      ],
+    });
+    expect(response.status).toBe(200);
+    expect(await storedEvents()).toEqual([
+      {
+        guestId: guest.id,
+        mediaId: null,
+        kind: "failed",
+        reason: "file-changed",
+        detail: {
+          online: true,
+          errorName: "NotReadableError",
+          errorMessage: "The requested file could not be read, typically due to permission problems.",
+          read: "tail",
+        },
+      },
+    ]);
+    // Only the two reads there are, and a message no longer than a short sentence.
+    expect((await post({ events: [{ kind: "failed", detail: { read: "middle" } }] })).status).toBe(400);
+    expect((await post({ events: [{ kind: "failed", detail: { errorMessage: "x".repeat(201) } }] })).status).toBe(400);
+  });
+
   it("refuses a batch with an event about another guest's upload with 403, storing nothing", async () => {
     const guest = await signIn();
     const stranger = await createGuest("Kofi");
