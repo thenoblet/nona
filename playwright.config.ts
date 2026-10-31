@@ -16,7 +16,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: "list",
-  use: { baseURL: "http://localhost:3100" },
+  // A failed test keeps its trace (CI uploads test-results/), so a flaky one can be read afterwards.
+  use: { baseURL: "http://localhost:3100", trace: "retain-on-failure" },
   webServer: [
     {
       command: "node e2e/cloudflare-access-server.mts",

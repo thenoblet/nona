@@ -122,6 +122,16 @@ jobs:
         env:
           E2E_WORKER_IMAGE: nona-worker-e2e
 
+      # A failed e2e run keeps what the page showed (error-context.md), its trace and the worker's
+      # log, so a failure can be read without running it again.
+      - name: Keep the e2e failure details
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-test-results
+          path: test-results/
+          retention-days: 14
+
   # The media worker's tests need ffmpeg and libheif, so they run in its image: the test target,
   # on the host's network against this job's Postgres and MinIO (test/env.ts's localhost settings).
   worker:

@@ -82,7 +82,18 @@ async function openAlbum(page: Page): Promise<void> {
     }).observe(document, { childList: true, subtree: true, characterData: true });
   });
   await page.goto("/album?mode=before");
+  await untilPickersWork(page);
+}
+
+/**
+ * Waits until the share buttons are revealed and hydrated. A file picked before React hydrates
+ * them changes an input nothing listens to yet, so the uploader never sees it and nothing appears.
+ * As in the admin's tests, the page has hydrated once its scripts have all loaded (the album keeps
+ * no connection open, so the network goes quiet).
+ */
+async function untilPickersWork(page: Page): Promise<void> {
   await expect(inMain(page).getByText("Choose photos & videos")).toBeVisible();
+  await page.waitForLoadState("networkidle");
 }
 
 /**
@@ -91,13 +102,13 @@ async function openAlbum(page: Page): Promise<void> {
  */
 const inMain = (page: Page) => page.getByRole("main");
 
-/** A share button's file input, in <main>: the one React has revealed and hydrated. */
+/** A share button's file input, in <main>: the one React reveals. Pick only after untilPickersWork. */
 const picker = (page: Page, name: string) => inMain(page).getByLabel(name);
 
 /** Reloads, and waits until the share buttons are revealed and working again. */
 async function reloadAlbum(page: Page): Promise<void> {
   await page.reload();
-  await expect(inMain(page).getByText("Choose photos & videos")).toBeVisible();
+  await untilPickersWork(page);
 }
 
 const addedSeen = (page: Page) => page.evaluate(() => (window as unknown as { addedSeen: boolean }).addedSeen);
@@ -646,6 +657,8 @@ test.describe("when sharing isn't open", () => {
       const finish = inMain(page).getByText("Finish sending what you started");
       await expect(finish).toBeVisible();
       await expect(page.getByText(/Live album/)).toHaveCount(0);
+      // Hydrated before the pick, as in untilPickersWork (this closed album has no gallery button).
+      await page.waitForLoadState("networkidle");
       await picker(page, "Finish sending what you started").setInputFiles(video);
       await expect(page.getByRole("region", { name: "Your photos and videos" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
       expect(ascending(puts.sent)).toEqual([1, 2, 3]);
