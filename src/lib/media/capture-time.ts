@@ -6,6 +6,9 @@ import exifr from "exifr";
  * zone; OffsetTimeOriginal (or OffsetTime) says which, when the phone wrote one. A time without an
  * offset is read as Accra's, which is UTC all year: the wedding's, so a guest's camera at home
  * time is the likeliest. No location or other tag is ever read.
+ *
+ * A video's time comes from its container's tags instead (captureTimeFromVideoTags), which the
+ * worker's probe reads with nothing else of its metadata.
  */
 
 /** The EXIF tags a capture time comes from, as an EXIF reader gives them: raw text, or anything. */
@@ -58,6 +61,38 @@ export function captureTimeFromExif(tags: ExifTimes): Date | null {
   if (!realDate) return null;
   const offset = offsetMinutes(tags.OffsetTimeOriginal) ?? offsetMinutes(tags.OffsetTime) ?? 0;
   return new Date(wallClock - offset * MINUTE_MS);
+}
+
+/** The tags a video's capture time comes from, as ffprobe gives them. */
+export type VideoTimes = {
+  /** Apple's `com.apple.quicktime.creationdate`: the local time with its offset, "2026-12-06T01:00:00+0200". */
+  appleCreationDate?: unknown;
+  /** `creation_time`, in UTC: "2026-12-05T23:00:00.000000Z". */
+  creationTime?: unknown;
+};
+
+// "2026-12-06T01:00:00+0200", "2026-12-05T23:00:00.000000Z" or "2026-12-05 23:00:00".
+const ISO_DATE_TIME = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?$/;
+
+/**
+ * The moment an ISO 8601 date and time stands for, at its own offset (with or without the colon),
+ * or in UTC when it has none. Null when it isn't one, or its offset makes no sense.
+ */
+function captureTimeFromIso(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const parts = ISO_DATE_TIME.exec(value.trim());
+  if (!parts) return null;
+  const offset = (parts[2] ?? "Z").replace(/^([+-]\d{2})(\d{2})$/, "$1:$2");
+  if (offsetMinutes(offset) === null) return null;
+  return captureTimeFromExif({ DateTimeOriginal: parts[1], OffsetTimeOriginal: offset });
+}
+
+/**
+ * When a video was taken, from its container's tags: Apple's creationdate, which an iPhone writes
+ * with its offset, else creation_time, which is UTC. Null when neither is a time.
+ */
+export function captureTimeFromVideoTags(tags: VideoTimes): Date | null {
+  return captureTimeFromIso(tags.appleCreationDate) ?? captureTimeFromIso(tags.creationTime);
 }
 
 /** No guest's photo was taken before this: an earlier time is a camera's reset clock (1970, 1980). */

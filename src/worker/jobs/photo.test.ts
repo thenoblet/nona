@@ -30,14 +30,8 @@ import { workerConfig } from "../config";
 import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
 import { ProcessError } from "../processes";
-import {
-  heifImagesIn,
-  heifToolFailure,
-  photoHandler,
-  processPhoto,
-  sharpFailure,
-  type PhotoOptions,
-} from "./photo";
+import { heifImagesIn, heifToolFailure, photoHandler, processPhoto, type PhotoOptions } from "./photo";
+import { sharpFailure } from "./stills";
 
 /*
  * media.photo against the local MinIO and test database (docker compose up -d db minio && npm run

@@ -38,6 +38,8 @@ export type WorkerThreads = {
   ffmpegFilters: number;
   /** heif-dec's --codec-threads and --tile-threads: libheif would otherwise decode 4 tiles at once. */
   heif: number;
+  /** ffmpeg's -threads when it decodes a video's poster frame (and writes it). */
+  poster: number;
 };
 
 export type WorkerConfig = {
@@ -50,6 +52,12 @@ export type WorkerConfig = {
    * against a crafted file, far above a real photo's needs (a 48 MP HEIC decodes in about 300 MB).
    */
   heifMemoryBytes: number;
+  /**
+   * The most memory (address space) ffprobe and ffmpeg may take for one video's probe and poster:
+   * a backstop against a crafted file. Measured in the worker image on one thread, a 4K HDR
+   * poster needs about 830 MiB and an 8K one about 980 MiB.
+   */
+  ffmpegMemoryBytes: number;
   /** Connections in the job queue's pool: room for every handler's polling and heartbeats at once. */
   queuePoolSize: number;
 };
@@ -85,9 +93,13 @@ const schema = zod.object({
   WORKER_SHARP_THREADS: count(1),
   WORKER_FFMPEG_FILTER_THREADS: count(1),
   WORKER_HEIF_THREADS: count(1),
+  WORKER_POSTER_THREADS: count(1),
   WORKER_QUEUE_POOL_SIZE: count(10, 100),
   // Below 256 MiB heif-dec can't decode even a small photo.
   WORKER_HEIF_MEMORY_BYTES: bytes(2048 * MEBIBYTE, 256 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
+  // About twice an 8K poster's need. Below 1 GiB a 4K HDR poster can't be made: ffmpeg's libraries
+  // alone take about 280 MiB of address space, and each of its threads a stack and a heap of its own.
+  WORKER_FFMPEG_MEMORY_BYTES: bytes(2048 * MEBIBYTE, 1024 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
 });
 
 /**
@@ -130,8 +142,10 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
       sharp: settings.WORKER_SHARP_THREADS,
       ffmpegFilters: settings.WORKER_FFMPEG_FILTER_THREADS,
       heif: settings.WORKER_HEIF_THREADS,
+      poster: settings.WORKER_POSTER_THREADS,
     },
     heifMemoryBytes: settings.WORKER_HEIF_MEMORY_BYTES,
+    ffmpegMemoryBytes: settings.WORKER_FFMPEG_MEMORY_BYTES,
     queuePoolSize: settings.WORKER_QUEUE_POOL_SIZE,
   };
 }

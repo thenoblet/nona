@@ -309,6 +309,47 @@ export type ProcessedPhoto = {
   celebration: EventId | "more";
 };
 
+/** What processing made of a video, for markVideoReady: its poster (as a photo's files) and what its probe found. */
+export type ProcessedVideo = ProcessedPhoto & {
+  /** Null when the container doesn't say (a browser's WebM recording). */
+  durationSeconds: number | null;
+  videoCodec: string;
+  /** Whether every phone's browser plays the original as it is. */
+  browserPlayable: boolean;
+  /** Whether it gets a backlog conversion: it isn't playable everywhere, or is long. */
+  needsConversion: boolean;
+};
+
+/** What an item's ready mark leaves in its manifest: the facts the update returns. */
+const manifestColumns = {
+  celebration: media.celebration,
+  celebrationSetByAdmin: media.celebrationSetByAdmin,
+  hiddenAt: media.hiddenAt,
+  hiddenBy: media.hiddenBy,
+  removedByUploader: media.removedByUploader,
+  deletedAt: media.deletedAt,
+};
+
+/**
+ * The columns every ready mark sets: `ready` and listed now (or keeping its place if it was listed
+ * before), with what processing made, in the celebration its capture time falls in unless the
+ * couple moved it.
+ */
+function readyColumns(item: ProcessedPhoto) {
+  return {
+    status: "ready" as const,
+    failureReason: null,
+    listedAt: sql`coalesce(${media.listedAt}, now())`,
+    derived: item.derived,
+    width: item.width,
+    height: item.height,
+    thumbhash: item.thumbhash,
+    averageColor: item.averageColor,
+    capturedAt: item.capturedAt,
+    celebration: sql`case when ${media.celebrationSetByAdmin} then ${media.celebration} else ${item.celebration} end`,
+  };
+}
+
 /**
  * Marks a processed photo `ready` with what its processing made, in one statement and only while a
  * job still has work to do for it (awaitsProcessing): a second delivery that finished first, or a
@@ -320,28 +361,55 @@ export async function markPhotoReady(mediaId: string, photo: ProcessedPhoto): Pr
   if (!isUuid(mediaId)) return null;
   const [row] = await getDb()
     .update(media)
+    .set(readyColumns(photo))
+    .where(awaitsProcessing(mediaId))
+    .returning(manifestColumns);
+  return row ?? null;
+}
+
+/** What markVideoReady did. */
+export type VideoReadyMark = {
+  /** The facts the item's manifest holds as the mark left them. */
+  manifest: MediaManifest;
+  /**
+   * Whether this mark queued the video's conversion (from `none`): only then is its job to be sent,
+   * so no conversion is ever sent twice. The sweeper sends it if that send fails.
+   */
+  conversionQueued: boolean;
+};
+
+/**
+ * Marks a probed video `ready` with its poster and probe, as markPhotoReady does a photo, in one
+ * statement under the same condition. A video that needs a conversion has it `queued` in the same
+ * statement, unless its conversion is past `none` already. Null when it changed nothing.
+ */
+export async function markVideoReady(mediaId: string, video: ProcessedVideo): Promise<VideoReadyMark | null> {
+  if (!isUuid(mediaId)) return null;
+  const conversion = video.needsConversion
+    ? { conversion: sql`case when ${media.conversion} = 'none' then 'queued' else ${media.conversion} end` }
+    : {};
+  const [row] = await getDb()
+    .update(media)
     .set({
-      status: "ready",
-      failureReason: null,
-      listedAt: sql`coalesce(${media.listedAt}, now())`,
-      derived: photo.derived,
-      width: photo.width,
-      height: photo.height,
-      thumbhash: photo.thumbhash,
-      averageColor: photo.averageColor,
-      capturedAt: photo.capturedAt,
-      celebration: sql`case when ${media.celebrationSetByAdmin} then ${media.celebration} else ${photo.celebration} end`,
+      ...readyColumns(video),
+      durationSeconds: video.durationSeconds,
+      videoCodec: video.videoCodec,
+      browserPlayable: video.browserPlayable,
+      ...conversion,
     })
     .where(awaitsProcessing(mediaId))
     .returning({
-      celebration: media.celebration,
-      celebrationSetByAdmin: media.celebrationSetByAdmin,
-      hiddenAt: media.hiddenAt,
-      hiddenBy: media.hiddenBy,
-      removedByUploader: media.removedByUploader,
-      deletedAt: media.deletedAt,
+      ...manifestColumns,
+      conversion: media.conversion,
+      // A subquery in RETURNING reads the snapshot the statement started from: the row as it was.
+      conversionBefore: sql<string>`(select previous.conversion from ${media} as previous where previous.id = ${mediaId})`,
     });
-  return row ?? null;
+  if (!row) return null;
+  const { conversion: conversionAfter, conversionBefore, ...manifest } = row;
+  return {
+    manifest,
+    conversionQueued: video.needsConversion && conversionBefore === "none" && conversionAfter === "queued",
+  };
 }
 
 /** Where a sweep through unfinished uploads stopped: the last row it looked at. */

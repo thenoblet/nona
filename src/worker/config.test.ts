@@ -18,7 +18,13 @@ describe("workerConfig", () => {
   });
 
   it("gives each tool one thread per job, x264 two, and never counts the machine's cores (Ruling R)", () => {
-    expect(workerConfig({ NODE_ENV: "development" }).threads).toEqual({ x264: 2, sharp: 1, ffmpegFilters: 1, heif: 1 });
+    expect(workerConfig({ NODE_ENV: "development" }).threads).toEqual({
+      x264: 2,
+      sharp: 1,
+      ffmpegFilters: 1,
+      heif: 1,
+      poster: 1,
+    });
   });
 
   it("opens a job-queue pool big enough for every handler at once", () => {
@@ -40,6 +46,7 @@ describe("workerConfig", () => {
       WORKER_SHARP_THREADS: "3",
       WORKER_FFMPEG_FILTER_THREADS: "2",
       WORKER_HEIF_THREADS: "4",
+      WORKER_POSTER_THREADS: "2",
       WORKER_QUEUE_POOL_SIZE: "20",
     });
     expect(config.concurrency).toEqual({
@@ -52,7 +59,7 @@ describe("workerConfig", () => {
       convertOnDemand: 2,
       convertBacklog: 5,
     });
-    expect(config.threads).toEqual({ x264: 4, sharp: 3, ffmpegFilters: 2, heif: 4 });
+    expect(config.threads).toEqual({ x264: 4, sharp: 3, ffmpegFilters: 2, heif: 4, poster: 2 });
     expect(config.queuePoolSize).toBe(20);
   });
 
@@ -67,6 +74,23 @@ describe("workerConfig", () => {
     (value) => {
       expect(() => workerConfig({ NODE_ENV: "development", WORKER_HEIF_MEMORY_BYTES: value })).toThrow(
         /WORKER_HEIF_MEMORY_BYTES/,
+      );
+    },
+  );
+
+  it("caps ffprobe's and ffmpeg's memory at 2 GiB unless WORKER_FFMPEG_MEMORY_BYTES says otherwise", () => {
+    expect(workerConfig({ NODE_ENV: "development" }).ffmpegMemoryBytes).toBe(2 * 1024 ** 3);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_FFMPEG_MEMORY_BYTES: "" }).ffmpegMemoryBytes).toBe(2 * 1024 ** 3);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_FFMPEG_MEMORY_BYTES: "4294967296" }).ffmpegMemoryBytes).toBe(
+      4 * 1024 ** 3,
+    );
+  });
+
+  it.each(["536870912", "2GB", "-1", "1.5", String(128 * 1024 ** 3)])(
+    "refuses %j as ffmpeg's memory cap: bytes, from 1 GiB (below that a 4K HDR poster can't be made) to 64 GiB",
+    (value) => {
+      expect(() => workerConfig({ NODE_ENV: "development", WORKER_FFMPEG_MEMORY_BYTES: value })).toThrow(
+        /WORKER_FFMPEG_MEMORY_BYTES/,
       );
     },
   );

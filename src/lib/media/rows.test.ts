@@ -16,9 +16,11 @@ import {
   markConversionFailed,
   markPhotoReady,
   markProcessingFailed,
+  markVideoReady,
   resumableUploadQuery,
   uploadQuery,
   type ProcessedPhoto,
+  type ProcessedVideo,
 } from "./rows";
 
 /** A finished album photo from a new guest, with any of its columns changed. */
@@ -182,6 +184,101 @@ describe("markPhotoReady", () => {
       expect(await readRow(id), id).toEqual(before);
     }
     expect(await markPhotoReady(randomUUID(), processed)).toBeNull();
+  });
+});
+
+describe("markVideoReady", () => {
+  beforeEach(resetDb);
+
+  const processed: ProcessedVideo = {
+    derived: { "poster-thumb": "derived/a/b/poster-thumb.webp", "poster-view": "derived/a/b/poster-view.webp" },
+    width: 1080,
+    height: 1920,
+    thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+    averageColor: "#8a7f74",
+    capturedAt: new Date("2026-12-05T23:00:00Z"),
+    celebration: "reception",
+    durationSeconds: 12.5,
+    videoCodec: "hevc",
+    browserPlayable: false,
+    needsConversion: true,
+  };
+
+  function addVideo(changes: Partial<typeof media.$inferInsert> = {}) {
+    return addPhoto({ kind: "video", contentType: "video/quicktime", status: "uploaded", listedAt: null, ...changes });
+  }
+
+  async function readRow(id: string) {
+    const [row] = await getDb().select().from(media).where(eq(media.id, id));
+    return row;
+  }
+
+  it("marks an uploaded video ready with its poster and probe, listed now, and queues its conversion", async () => {
+    const id = await addVideo({ celebration: "more" });
+    const before = Date.now();
+
+    const marked = await markVideoReady(id, processed);
+
+    expect(marked).toEqual({
+      manifest: {
+        celebration: "reception",
+        celebrationSetByAdmin: false,
+        hiddenAt: null,
+        hiddenBy: null,
+        removedByUploader: false,
+        deletedAt: null,
+      },
+      conversionQueued: true,
+    });
+    const { needsConversion, ...columns } = processed;
+    expect(needsConversion).toBe(true);
+    const row = await readRow(id);
+    expect(row).toMatchObject({ ...columns, status: "ready", failureReason: null, conversion: "queued" });
+    expect(row.listedAt?.getTime()).toBeGreaterThanOrEqual(before - 5_000);
+  });
+
+  it("leaves the conversion alone for a video every phone plays", async () => {
+    const id = await addVideo();
+
+    const marked = await markVideoReady(id, { ...processed, browserPlayable: true, needsConversion: false });
+
+    expect(marked?.conversionQueued).toBe(false);
+    expect(await readRow(id)).toMatchObject({ status: "ready", browserPlayable: true, conversion: "none" });
+  });
+
+  it("queues no conversion the row already has, queued or done: only the change from none sends a job", async () => {
+    for (const conversion of ["queued", "converting", "done", "failed"] as const) {
+      const id = await addVideo({ conversion });
+
+      const marked = await markVideoReady(id, processed);
+
+      expect(marked?.conversionQueued, conversion).toBe(false);
+      expect(await readRow(id), conversion).toMatchObject({ status: "ready", conversion });
+    }
+  });
+
+  it("keeps an item's place in the album, and the celebration the couple moved it to", async () => {
+    const listedAt = new Date("2026-12-05T12:00:00Z");
+    const id = await addVideo({ listedAt, celebration: "thanks", celebrationSetByAdmin: true });
+
+    expect((await markVideoReady(id, processed))?.manifest).toMatchObject({ celebration: "thanks", celebrationSetByAdmin: true });
+    expect(await readRow(id)).toMatchObject({ status: "ready", listedAt, celebration: "thanks" });
+  });
+
+  it("changes nothing, and returns null, for an item no longer uploaded, or hidden, removed or deleted (Ruling AG)", async () => {
+    const ids = [
+      await addVideo({ status: "ready", listedAt: new Date() }),
+      await addVideo({ status: "failed" }),
+      await addVideo({ hiddenAt: new Date(), hiddenBy: "admin" }),
+      await addVideo({ hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true }),
+      await addVideo({ deletedAt: new Date() }),
+    ];
+    for (const id of ids) {
+      const before = await readRow(id);
+      expect(await markVideoReady(id, processed), id).toBeNull();
+      expect(await readRow(id), id).toEqual(before);
+    }
+    expect(await markVideoReady(randomUUID(), processed)).toBeNull();
   });
 });
 

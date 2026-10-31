@@ -254,6 +254,8 @@ Its environment:
 | `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job. |
 | `WORKER_HEIF_THREADS` | 1 | `heif-dec`'s codec and tile threads for each HEIC (libheif would otherwise decode 4 tiles at once). |
 | `WORKER_HEIF_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `heif-info` and `heif-dec` may take for one HEIC, at least 256 MiB: a backstop against a crafted file. A 48 MP iPhone photo decodes in about 300 MB; a file that hits the cap fails as `corrupt`. |
+| `WORKER_POSTER_THREADS` | 1 | ffmpeg's `-threads` for each video's poster: decoding its frame and writing it. |
+| `WORKER_FFMPEG_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `ffprobe` and `ffmpeg` may take for one video's probe and poster, at least 1 GiB: a backstop against a crafted file. Measured on one thread, a 4K HDR poster needs about 830 MiB and an 8K one about 980 MiB; a file that hits the cap fails as `corrupt`. |
 | `WORKER_QUEUE_POOL_SIZE` | 10 | Database connections for the job queue. |
 
 The defaults suit about 3 CPUs and 12 GB. Thread counts never follow the machine's core count,

@@ -5,6 +5,7 @@ import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { errorMessage } from "@/lib/log-error";
 import { workerConfig, type WorkerConfig } from "./config";
 import { photoHandler } from "./jobs/photo";
+import { posterHandler } from "./jobs/poster";
 import type { MediaHandlers } from "./queues";
 import { runWorker } from "./runtime";
 
@@ -23,10 +24,10 @@ try {
 }
 
 /**
- * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash. A queue with
- * none yet keeps its jobs waiting, unfailed (Ruling AA), until the release that brings its handler:
- * - media.poster: Task 10, a video's probe and poster;
- * - media.convert: Task 11, a version every phone can play;
+ * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash, and
+ * media.poster, a video's probe and poster. A queue with none yet keeps its jobs waiting, unfailed
+ * (Ruling AA), until the release that brings its handler:
+ * - media.convert: Task 11, a version every phone can play (the posters queue the backlog's);
  * - media.visibility: Task 12, deleting and purging a hidden item's derived files;
  * - media.jpeg: Task 15, a HEIC's full-size JPEG, on its first download;
  * - media.wish: Task 16, a voice or video wish's recording;
@@ -34,6 +35,13 @@ try {
  */
 const handlers: MediaHandlers = {
   [MEDIA_QUEUES.photo]: photoHandler({ heifMemoryBytes: config.heifMemoryBytes, heifThreads: config.threads.heif }),
+  [MEDIA_QUEUES.poster]: posterHandler({
+    ffmpegMemoryBytes: config.ffmpegMemoryBytes,
+    posterThreads: config.threads.poster,
+    filterThreads: config.threads.ffmpegFilters,
+    // The worker's own queue, which runWorker starts (with this pool size) before any job runs.
+    jobQueue: () => getBoss(config.queuePoolSize),
+  }),
 };
 
 // libvips' threads for each image, from WORKER_SHARP_THREADS, never the host's core count (Ruling

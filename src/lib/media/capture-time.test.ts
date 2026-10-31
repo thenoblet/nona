@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { captureTimeFromExif, plausibleCaptureTime, readPhotoCaptureTime } from "./capture-time";
+import { captureTimeFromExif, captureTimeFromVideoTags, plausibleCaptureTime, readPhotoCaptureTime } from "./capture-time";
 
 describe("captureTimeFromExif", () => {
   it("reads DateTimeOriginal with its OffsetTimeOriginal", () => {
@@ -40,6 +40,43 @@ describe("captureTimeFromExif", () => {
   it("finds no time in a missing, blank, zeroed or impossible date", () => {
     for (const value of [undefined, null, "", "    :  :     :  :  ", "0000:00:00 00:00:00", "2026:02:30 10:00:00", "2026:12:05 24:00:00", "yesterday", 1764930600]) {
       expect(captureTimeFromExif({ DateTimeOriginal: value }), String(value)).toBeNull();
+    }
+  });
+});
+
+describe("captureTimeFromVideoTags", () => {
+  it("reads creation_time, which is UTC", () => {
+    expect(captureTimeFromVideoTags({ creationTime: "2026-12-05T10:30:00.000000Z" })?.toISOString()).toBe(
+      "2026-12-05T10:30:00.000Z",
+    );
+  });
+
+  it("prefers Apple's creationdate, at its own offset, to creation_time", () => {
+    const capturedAt = captureTimeFromVideoTags({
+      appleCreationDate: "2026-12-06T01:00:00+0200",
+      creationTime: "2026-12-05T23:00:07.000000Z",
+    });
+    expect(capturedAt?.toISOString()).toBe("2026-12-05T23:00:00.000Z");
+    expect(captureTimeFromVideoTags({ appleCreationDate: "2026-12-05T08:15:30-05:30" })?.toISOString()).toBe(
+      "2026-12-05T13:45:30.000Z",
+    );
+  });
+
+  it("reads a time with no zone as UTC, Accra's", () => {
+    expect(captureTimeFromVideoTags({ creationTime: "2026-12-05 10:30:00" })?.toISOString()).toBe("2026-12-05T10:30:00.000Z");
+  });
+
+  it("falls back to creation_time when Apple's date or its offset can't be read", () => {
+    for (const appleCreationDate of ["2026-12-06T01:00:00+9900", "soon", "2026-02-30T10:00:00+0100", ""]) {
+      const capturedAt = captureTimeFromVideoTags({ appleCreationDate, creationTime: "2026-12-05T10:30:00.000000Z" });
+      expect(capturedAt?.toISOString(), appleCreationDate).toBe("2026-12-05T10:30:00.000Z");
+    }
+  });
+
+  it("finds no time in missing, blank, zeroed or impossible tags", () => {
+    expect(captureTimeFromVideoTags({})).toBeNull();
+    for (const creationTime of ["", "0000-00-00T00:00:00.000000Z", "2026-13-01T00:00:00Z", "yesterday"]) {
+      expect(captureTimeFromVideoTags({ creationTime }), creationTime).toBeNull();
     }
   });
 });
