@@ -12,22 +12,27 @@ export type CappedRun = {
   /** The job's signal: aborting it kills the tool. */
   signal: AbortSignal;
   timeoutMilliseconds: number;
+  /**
+   * Required, as runProcess's is. `foreground`, the worker's own priority, for what a guest is
+   * waiting for (a photo, a poster), which never waits behind a conversion; `background` (nice 19)
+   * for a conversion.
+   */
+  priority: "background" | "foreground";
   cwd?: string;
   /** A presigned link among the arguments, kept out of what the tool printed (runProcess). */
   redact?: RedactedLink;
 };
 
 /**
- * Runs `tool` under prlimit --as, at the worker's own priority: what a guest is waiting for (a
- * photo, a poster) never waits behind a conversion. prlimit replaces itself with the tool, so the
- * job's signal and the time limit kill the tool itself. Resolves with its stdout and the end of its
- * stderr; a failure is the ProcessError runProcess gives.
+ * Runs `tool` under prlimit --as, at the priority given. prlimit (and nice before it) replaces
+ * itself with the tool, so the job's signal and the time limit kill the tool itself. Resolves with
+ * its stdout and the end of its stderr; a failure is the ProcessError runProcess gives.
  */
 export function runCapped(tool: string, args: readonly string[], run: CappedRun): Promise<ProcessOutput> {
   return runProcess("prlimit", [`--as=${run.memoryBytes}`, "--", tool, ...args], {
     signal: run.signal,
     timeoutMilliseconds: run.timeoutMilliseconds,
-    priority: "foreground",
+    priority: run.priority,
     cwd: run.cwd,
     redact: run.redact,
   });

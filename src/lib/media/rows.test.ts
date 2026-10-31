@@ -12,11 +12,16 @@ import { dbConfig } from "@/lib/env";
 import { originalKey } from "@/lib/storage/keys";
 import { resetDb } from "../../../test/db";
 import {
+  claimConversion,
+  findPlayableVideo,
   isVisible,
+  markConversionDone,
   markConversionFailed,
+  markConversionRequested,
   markPhotoReady,
   markProcessingFailed,
   markVideoReady,
+  releaseConversion,
   resumableUploadQuery,
   uploadQuery,
   type ProcessedPhoto,
@@ -279,6 +284,118 @@ describe("markVideoReady", () => {
       expect(await readRow(id), id).toEqual(before);
     }
     expect(await markVideoReady(randomUUID(), processed)).toBeNull();
+  });
+});
+
+describe("a video's conversion (Task 11, Ruling AG)", () => {
+  const conversionOf = async (id: string) => {
+    const [row] = await getDb()
+      .select({ conversion: media.conversion, derived: media.derived, requestedAt: media.conversionRequestedAt })
+      .from(media)
+      .where(eq(media.id, id));
+    return row;
+  };
+  const addVideo = (changes: Partial<typeof media.$inferInsert> = {}) =>
+    addPhoto({ kind: "video", contentType: "video/quicktime", conversion: "queued", ...changes });
+
+  it("is claimed by one job: converting, from queued; a second job's first attempt finds nothing to do, its own retry carries on", async () => {
+    const id = await addVideo({ capturedAt: new Date("2026-12-05T23:00:00Z") });
+
+    expect(await claimConversion(id, { resuming: false })).toEqual({
+      originalKey: originalKey(id, "jpg"),
+      capturedAt: new Date("2026-12-05T23:00:00Z"),
+    });
+    expect((await conversionOf(id)).conversion).toBe("converting");
+    expect(await claimConversion(id, { resuming: false })).toBeNull();
+    expect(await claimConversion(id, { resuming: true })).not.toBeNull();
+  });
+
+  it("is never claimed unless queued (or, on a retry, converting), the video ready, and neither hidden nor deleted", async () => {
+    const ids = [
+      await addVideo({ conversion: "none" }),
+      await addVideo({ conversion: "done" }),
+      await addVideo({ conversion: "failed" }),
+      await addVideo({ status: "uploaded", listedAt: null }),
+      await addVideo({ hiddenAt: new Date(), hiddenBy: "admin" }),
+      await addVideo({ hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true }),
+      await addVideo({ deletedAt: new Date() }),
+      await addPhoto({ conversion: "queued" }),
+    ];
+    for (const id of ids) {
+      const before = await conversionOf(id);
+      expect(await claimConversion(id, { resuming: true }), id).toBeNull();
+      expect(await conversionOf(id), id).toEqual(before);
+    }
+    expect(await claimConversion(randomUUID(), { resuming: true })).toBeNull();
+    expect(await claimConversion("not-an-id", { resuming: true })).toBeNull();
+  });
+
+  it("goes back to queued when it doesn't finish, but never from done or failed", async () => {
+    const converting = await addVideo({ conversion: "converting" });
+    const done = await addVideo({ conversion: "done" });
+    const failed = await addVideo({ conversion: "failed" });
+
+    for (const id of [converting, done, failed]) await releaseConversion(id);
+
+    expect((await conversionOf(converting)).conversion).toBe("queued");
+    expect((await conversionOf(done)).conversion).toBe("done");
+    expect((await conversionOf(failed)).conversion).toBe("failed");
+  });
+
+  it("is marked done with its file's key beside the poster's, returning the manifest's facts, only while the video still wants it", async () => {
+    const posters = { "poster-thumb": "derived/a/0000000000000000/poster-thumb.webp" };
+    const id = await addVideo({ conversion: "converting", derived: posters });
+    const videoKey = `derived/${id}/0123456789abcdef/video.mp4`;
+
+    expect(await markConversionDone(id, videoKey)).toMatchObject({ celebration: "reception", hiddenAt: null });
+    expect(await conversionOf(id)).toMatchObject({ conversion: "done", derived: { ...posters, video: videoKey } });
+    // A late job's mark changes nothing.
+    expect(await markConversionDone(id, "derived/x/1111111111111111/video.mp4")).toBeNull();
+    expect((await conversionOf(id)).derived.video).toBe(videoKey);
+
+    for (const changes of [
+      { hiddenAt: new Date(), hiddenBy: "admin" },
+      { deletedAt: new Date() },
+      { conversion: "failed" as const },
+      { conversion: "none" as const },
+    ]) {
+      const other = await addVideo({ conversion: "converting", ...changes });
+      expect(await markConversionDone(other, videoKey), JSON.stringify(changes)).toBeNull();
+      expect((await conversionOf(other)).derived.video).toBeUndefined();
+    }
+  });
+
+  it("is asked for on demand once: the first ask marks it (queuing one that needed none), the rest change nothing", async () => {
+    const queued = await addVideo();
+    const none = await addVideo({ conversion: "none" });
+
+    expect(await markConversionRequested(queued)).toBe(true);
+    expect(await markConversionRequested(queued)).toBe(false);
+    expect(await markConversionRequested(none)).toBe(true);
+
+    expect(await conversionOf(queued)).toMatchObject({ conversion: "queued", requestedAt: expect.any(Date) });
+    expect(await conversionOf(none)).toMatchObject({ conversion: "queued", requestedAt: expect.any(Date) });
+    for (const changes of [{ conversion: "done" as const }, { conversion: "failed" as const }, { hiddenAt: new Date(), hiddenBy: "admin" }]) {
+      const other = await addVideo(changes);
+      expect(await markConversionRequested(other)).toBe(false);
+      expect((await conversionOf(other)).requestedAt).toBeNull();
+    }
+  });
+
+  it("shows a phone only a ready, visible album video's conversion, with its file's key once done", async () => {
+    const videoKey = "derived/a/0123456789abcdef/video.mp4";
+    const done = await addVideo({ conversion: "done", derived: { video: videoKey } });
+    expect(await findPlayableVideo(done)).toEqual({ conversion: "done", videoKey });
+    expect(await findPlayableVideo(await addVideo())).toEqual({ conversion: "queued", videoKey: null });
+    for (const changes of [
+      { hiddenAt: new Date(), hiddenBy: "admin" },
+      { deletedAt: new Date() },
+      { status: "uploaded" as const },
+      { purpose: "wish" as const },
+      { kind: "photo" as const },
+    ]) {
+      expect(await findPlayableVideo(await addVideo(changes)), JSON.stringify(changes)).toBeNull();
+    }
   });
 });
 

@@ -2,27 +2,29 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { PgBoss } from "pg-boss";
 import { readSection } from "@/lib/content/store";
-import { CONVERT_PRIORITY, MEDIA_QUEUES } from "@/lib/jobs/media-queues";
+import { CONVERT_PRIORITY } from "@/lib/jobs/media-queues";
 import { describeError } from "@/lib/log-error";
 import { assignCelebration } from "@/lib/media/celebration";
 import { plausibleCaptureTime } from "@/lib/media/capture-time";
+import { requestConversion } from "@/lib/media/conversion";
 import { findItemToProcess, markVideoReady } from "@/lib/media/rows";
 import { derivedKey } from "@/lib/storage/keys";
 import { headOriginal, PLAYBACK_URL_SECONDS, presignGet, putPublicObject } from "@/lib/storage/objects";
-import { ProcessError } from "../processes";
-import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
+import type { JobReport, MediaJob, MediaJobHandler } from "../queues";
 import { withScratch } from "../scratch";
-import { describeEnding, killedFromOutside, runCapped, toolDidNotRun } from "./capped-tools";
 import { contentHashOf, rewriteManifest, withdrawIfHidden } from "./publishing";
 import { deriveStills, VIEW, type Stills } from "./stills";
+import { hdrToSdr, sdrInput } from "./video-filters";
+import type { VideoFacts } from "./video-probe";
 import {
-  PROBE_ENTRIES,
-  VIDEO_DEMUXERS,
-  videoFactsFrom,
-  type HdrColours,
-  type SdrColours,
-  type VideoFacts,
-} from "./video-probe";
+  blameFileFromThirdAttempt,
+  ffmpegGlobalArgs,
+  probeVideo,
+  runVideoTool,
+  VIDEO_READING_LIMITS,
+  type ReadingArgs,
+  type VideoToolRun,
+} from "./video-tools";
 
 /*
  * media.poster: an uploaded video becomes what the album shows, without its original ever being
@@ -58,21 +60,8 @@ const POSTER_SETTINGS_VERSION = 2;
 const POSTER_AT_MOST_SECONDS = 1;
 /** A video longer than this gets a backlog conversion even when it plays everywhere: its original is large to stream. */
 const LONG_VIDEO_SECONDS = 3 * 60;
-/**
- * From this attempt on (pg-boss's retryCount: the third attempt), a failure that looks like the
- * file's is taken to be: a stalled read wouldn't fail the same way three times, minutes apart.
- */
-const FILE_BLAMED_FROM_RETRY = 2;
 /** ffprobe and ffmpeg give up on a read or write that makes no progress for this long (in microseconds: 10 s). */
 const READ_TIMEOUT_MICROSECONDS = 10_000_000;
-/**
- * How much ffprobe and ffmpeg read to find the streams' details: ffmpeg's own defaults, stated so a
- * change of default can't move them. They bound only that probing, not the container's index (a
- * crafted MOV's whole `moov` is read whatever they say); what bounds a crafted file is the memory
- * cap, the time limits and the two whitelists (ffmpeg notes §4.5).
- */
-const PROBE_BYTES = 5_000_000;
-const PROBE_MICROSECONDS = 5_000_000;
 /** ffprobe reads only the container's index and a few MB: well under a second for a phone's video. */
 const PROBE_MILLISECONDS = 60_000;
 /**
@@ -104,132 +93,11 @@ export type PosterOptions = {
   jobQueue: () => Promise<Pick<PgBoss, "send">>;
 };
 
-/** Where and how a job runs ffprobe and ffmpeg. */
-type VideoContext = PosterOptions & {
-  /** The presigned link to the original: a credential, never logged. */
-  link: string;
-  folder: string;
-  signal: AbortSignal;
-  /** The job's retries so far: a failure that looks like the file's is blamed on it from the third attempt. */
-  retryCount: number;
-};
+/** Where and how a job runs ffprobe and ffmpeg: over the presigned link to the original, a credential, never logged. */
+type PosterRun = VideoToolRun & { link: string; options: PosterOptions };
 
 /** What the scratch folder's work made. */
 type Poster = { facts: VideoFacts; stills: Stills; probeMilliseconds: number; posterMilliseconds: number };
-
-// Something between the tool and R2 failed, not the file: a protocol layer complained (ffmpeg
-// names it in its log line), R2 answered with an HTTP error, or the connection was refused, reset,
-// cut short, timed out or never made (DNS). ffmpeg sees the network through avio, whose errors end
-// as "Input/output error".
-const NETWORK_TROUBLE = new RegExp(
-  [
-    "^\\[(?:tcp|tls|http|https) @",
-    "Server returned",
-    "HTTP error",
-    "Connection refused",
-    "Connection reset",
-    "Connection timed out",
-    "Operation timed out",
-    "Failed to resolve hostname",
-    "Network is unreachable",
-    "No route to host",
-    "Input/output error",
-    "Broken pipe",
-    "Stream ends prematurely",
-    "Error in the pull function",
-  ].join("|"),
-  "m",
-);
-// A thread the tool couldn't start (EAGAIN): the worker's limits on threads or memory, not the file.
-const NO_THREAD = /pthread_create|Resource temporarily unavailable/;
-// The tool refused one of its own options: the image's ffmpeg isn't the 7.1 the job was written
-// for (ffmpeg 4.4 has no -reconnect_max_retries). The worker's build, never the file (Ruling AP).
-const UNKNOWN_OPTION = /Option not found|Unrecognized option/;
-// What ffmpeg says when it recognised the file as a format other than the two it may open.
-const NOT_ALLOWED_FORMAT = /Format not on whitelist/;
-
-/** The last line a tool printed (runProcess has already taken any link out). */
-function lastLineOf(stderr: string): string {
-  return stderr.trim().split("\n").at(-1) ?? "";
-}
-
-/**
- * A failure that looks like the file's: from the third attempt it is, `corrupt`, for good. Before
- * that it is retried, since over the network a stalled read fails the same way (ffmpeg notes §4.4).
- */
-function blameFileFromThirdAttempt(message: string, retryCount: number): Error {
-  if (retryCount >= FILE_BLAMED_FROM_RETRY) return new PermanentJobError("corrupt", message);
-  return new Error(`${message} (tried again: a stalled read from R2 looks the same)`);
-}
-
-/**
- * What ffprobe or ffmpeg failing on an original means. Every error it returns is new, with no
- * cause; what the tool printed comes from runProcess with the link already taken out.
- * - `unsupported-type` at once: ffmpeg recognised a format other than the two allowed.
- * - Retried, always: R2 or the network failed the read; a thread couldn't start (EAGAIN); a SIGKILL
- *   from outside (the OOM killer); the tool ran past its time (it reads over the network, so a slow
- *   read can't be told from a slow file); the job ended; the worker stopped; the tool couldn't run,
- *   or didn't know one of its options (an image built with another ffmpeg).
- * - Anything else looks like the file's fault (the tool refused it, died on it, ran out of memory
- *   under the cap, or printed far too much): retried twice, then `corrupt`.
- * Exported for its test.
- */
-export function videoToolFailure(
-  tool: "ffprobe" | "ffmpeg",
-  error: unknown,
-  context: { memoryBytes: number; retryCount: number },
-): Error {
-  if (!(error instanceof ProcessError)) {
-    const code = (error as { code?: unknown } | null)?.code;
-    const name = error instanceof Error ? error.name : "an unknown error";
-    return new Error(`${tool} couldn't run: ${name}${typeof code === "string" ? ` (${code})` : ""}`);
-  }
-  const lastLine = lastLineOf(error.stderrTail);
-  const ending = describeEnding(error);
-  if (error.ending === "too-much-output") {
-    return blameFileFromThirdAttempt(`${tool} printed far too much reading the video: ${ending}`, context.retryCount);
-  }
-  if (error.ending !== "exit") return new Error(`${tool} didn't finish reading the video: ${ending}`);
-  if (toolDidNotRun(error)) return new Error(`${tool} couldn't run: ${ending}: ${lastLine}`);
-  if (UNKNOWN_OPTION.test(error.stderrTail)) {
-    return new Error(`${tool} doesn't know an option the worker gave it (is it ffmpeg 7.1?): ${ending}: ${lastLine}`);
-  }
-  if (killedFromOutside(error)) return new Error(`${tool} was killed from outside the worker: ${ending}`);
-  if (error.exitCode !== null && NOT_ALLOWED_FORMAT.test(error.stderrTail)) {
-    const refusal = error.stderrTail.split("\n").find((line) => NOT_ALLOWED_FORMAT.test(line)) ?? lastLine;
-    return new PermanentJobError("unsupported-type", `The original isn't a video the album takes: ${refusal.trim()}`);
-  }
-  if (error.exitCode !== null && NETWORK_TROUBLE.test(error.stderrTail)) {
-    return new Error(`${tool} couldn't read the original from R2: ${ending}: ${lastLine}`);
-  }
-  if (NO_THREAD.test(error.stderrTail)) {
-    return new Error(`${tool} couldn't start its threads, under a ${context.memoryBytes}-byte cap: ${ending}: ${lastLine}`);
-  }
-  return blameFileFromThirdAttempt(
-    `${tool} couldn't read the video, under a ${context.memoryBytes}-byte cap: ${ending}: ${lastLine}`,
-    context.retryCount,
-  );
-}
-
-/** Runs ffprobe or ffmpeg under the memory cap (runCapped), the link kept out of what it prints, its failure told apart by videoToolFailure. */
-async function runVideoTool(
-  tool: "ffprobe" | "ffmpeg",
-  args: string[],
-  context: VideoContext,
-  timeoutMilliseconds: number,
-): Promise<{ stdout: string; stderrTail: string }> {
-  try {
-    return await runCapped(tool, args, {
-      memoryBytes: context.ffmpegMemoryBytes,
-      signal: context.signal,
-      timeoutMilliseconds,
-      cwd: context.folder,
-      redact: { link: context.link, as: "the original" },
-    });
-  } catch (error) {
-    throw videoToolFailure(tool, error, { memoryBytes: context.ffmpegMemoryBytes, retryCount: context.retryCount });
-  }
-}
 
 /**
  * The protocols the link may open: https and what it runs on in production, plain http only for
@@ -243,33 +111,13 @@ function protocolsFor(link: string): string {
  * How ffprobe and ffmpeg open the original: over the link only, with a 10 s read timeout and
  * bounded reconnects, as one of the two video demuxers only, probing no more than ffmpeg's defaults.
  */
-function readingArgs(link: string): string[] {
+function readingArgs(link: string): ReadingArgs {
   return [
     ...["-protocol_whitelist", protocolsFor(link)],
     ...["-rw_timeout", String(READ_TIMEOUT_MICROSECONDS)],
     ...RECONNECTS,
-    ...["-format_whitelist", VIDEO_DEMUXERS],
-    ...["-probesize", String(PROBE_BYTES)],
-    ...["-analyzeduration", String(PROBE_MICROSECONDS)],
+    ...VIDEO_READING_LIMITS,
   ];
-}
-
-/** ffprobe's description of the original, checked: a video the album takes, and its facts. */
-async function probe(context: VideoContext): Promise<VideoFacts> {
-  const args = ["-hide_banner", "-loglevel", "error", ...readingArgs(context.link)];
-  args.push("-print_format", "json", "-show_error", "-show_entries", PROBE_ENTRIES, context.link);
-  const { stdout } = await runVideoTool("ffprobe", args, context, PROBE_MILLISECONDS);
-  let description: unknown;
-  try {
-    description = JSON.parse(stdout);
-  } catch {
-    throw blameFileFromThirdAttempt("ffprobe's description of the original isn't JSON", context.retryCount);
-  }
-  // What ffprobe read is the container's own header: no stall makes it describe another file, so
-  // its refusals stand at once.
-  const check = videoFactsFrom(description);
-  if (!check.ok) throw new PermanentJobError(check.reason, `The original is ${check.found}, not a video the album takes`);
-  return check.facts;
 }
 
 /**
@@ -279,45 +127,17 @@ async function probe(context: VideoContext): Promise<VideoFacts> {
  */
 const FIT_VIEW = `scale=w='min(${VIEW.longEdge},iw)':h='min(${VIEW.longEdge},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`;
 
-// The YUV matrices as scale names them (it has no "bt470bg").
-const SCALE_MATRIX: Record<SdrColours["matrix"], string> = {
-  bt709: "bt709",
-  smpte170m: "smpte170m",
-  bt470bg: "bt470",
-  bt2020nc: "bt2020",
-};
-// The colours as zscale's documentation names them (ffmpeg-filters, zscale).
-const ZSCALE_MATRIX: Record<HdrColours["matrix"], string> = { bt2020nc: "2020_ncl", bt2020c: "2020_cl", bt709: "709" };
-const ZSCALE_PRIMARIES: Record<HdrColours["primaries"], string> = { bt2020: "2020", bt709: "709" };
-const ZSCALE_RANGE: Record<HdrColours["range"], string> = { tv: "limited", pc: "full" };
-
 /**
- * ffmpeg's filters for the poster's frame (no turn among them: see posterArgs). Every colour named
- * is one video-probe.ts allowed, never the file's own text.
+ * ffmpeg's filters for the poster's frame (no turn among them: see posterArgs), from the shared
+ * video filters (video-filters.ts). Every colour named is one video-probe.ts allowed.
  * - SDR: scale turns YUV into RGB by the matrix and range the probe found, BT.709 when it found
- *   none: left to itself it would read an untagged video as BT.601 (ffmpeg notes §2.0, §4.9).
- * - HDR (PQ or HLG): zscale makes it linear light from its own colours, in BT.709 primaries,
- *   tonemap's hable curve brings its highlights into SDR's range, and zscale encodes it as BT.709
- *   (ffmpeg notes §4.7).
+ *   none (ffmpeg notes §2.0, §4.9). The output is RGB, so no output matrix or range is named.
+ * - HDR (PQ or HLG): tone-mapped to SDR BT.709 (§4.7).
  * Every frame ends as 8-bit RGB for the PNG sharp reads.
  */
 function posterFilters(facts: VideoFacts): string {
-  const { hdr, sdr } = facts;
-  if (!hdr) {
-    const inRange = sdr.range === "pc" ? "pc" : "tv";
-    return `${FIT_VIEW}:in_color_matrix=${SCALE_MATRIX[sdr.matrix]}:in_range=${inRange},format=rgb24`;
-  }
-  const input = `tin=${hdr.transfer}:min=${ZSCALE_MATRIX[hdr.matrix]}:pin=${ZSCALE_PRIMARIES[hdr.primaries]}:rin=${ZSCALE_RANGE[hdr.range]}`;
-  return [
-    FIT_VIEW,
-    `zscale=${input}:t=linear:npl=100`,
-    "format=gbrpf32le",
-    "zscale=p=709",
-    "tonemap=tonemap=hable:desat=0",
-    "zscale=t=709:m=709:r=limited",
-    "format=yuv420p",
-    "format=rgb24",
-  ].join(",");
+  if (!facts.hdr) return `${FIT_VIEW}${sdrInput(facts.sdr)},format=rgb24`;
+  return `${FIT_VIEW},${hdrToSdr(facts.hdr)},format=rgb24`;
 }
 
 /**
@@ -343,13 +163,12 @@ function posterSeconds(facts: VideoFacts): number {
  * - Its threads are pinned (Ruling R): -threads for decoding and writing, -filter_threads for the
  *   filters. -map_metadata -1: the frame carries none of the file's tags.
  */
-function posterArgs(facts: VideoFacts, context: VideoContext, seconds: number, output: string): string[] {
-  const threads = String(context.posterThreads);
+function posterArgs(facts: VideoFacts, run: PosterRun, seconds: number, output: string): string[] {
+  const threads = String(run.options.posterThreads);
   return [
-    ...["-hide_banner", "-loglevel", "error", "-nostdin", "-nostats", "-xerror", "-y"],
-    ...["-filter_threads", String(context.filterThreads)],
-    ...readingArgs(context.link),
-    ...["-threads", threads, "-ss", String(seconds), "-i", context.link],
+    ...ffmpegGlobalArgs(run.options.filterThreads),
+    ...readingArgs(run.link),
+    ...["-threads", threads, "-ss", String(seconds), "-i", run.link],
     ...["-map", `0:${facts.streamIndex}`, "-frames:v", "1", "-an", "-sn", "-dn", "-map_metadata", "-1"],
     ...["-vf", posterFilters(facts), "-threads", threads],
     ...["-c:v", "png", "-f", "image2", "-update", "1", output],
@@ -369,26 +188,26 @@ async function sizeOf(path: string): Promise<number> {
  * when there is no frame where it seeks (a clip of a frame or two: ffmpeg notes §4.17), so then it
  * tries the very start, into a file of its own.
  */
-async function posterFrame(facts: VideoFacts, context: VideoContext): Promise<string> {
+async function posterFrame(facts: VideoFacts, run: PosterRun): Promise<string> {
   const seconds = posterSeconds(facts);
-  const output = join(context.folder, "poster.png");
-  await runVideoTool("ffmpeg", posterArgs(facts, context, seconds, output), context, POSTER_MILLISECONDS);
+  const output = join(run.folder, "poster.png");
+  await runVideoTool("ffmpeg", posterArgs(facts, run, seconds, output), run, POSTER_MILLISECONDS);
   if ((await sizeOf(output)) > 0) return output;
   if (seconds > 0) {
-    const fromStart = join(context.folder, "poster-from-start.png");
-    await runVideoTool("ffmpeg", posterArgs(facts, context, 0, fromStart), context, POSTER_MILLISECONDS);
+    const fromStart = join(run.folder, "poster-from-start.png");
+    await runVideoTool("ffmpeg", posterArgs(facts, run, 0, fromStart), run, POSTER_MILLISECONDS);
     if ((await sizeOf(fromStart)) > 0) return fromStart;
   }
-  throw blameFileFromThirdAttempt("ffmpeg found no frame for the poster", context.retryCount);
+  throw blameFileFromThirdAttempt("ffmpeg found no frame for the poster", run.retryCount, run.source);
 }
 
 /** Probes the original and makes its poster's files, in the job's scratch folder. */
-async function posterOf(context: VideoContext): Promise<Poster> {
+async function posterOf(run: PosterRun): Promise<Poster> {
   const probeStartedAt = performance.now();
-  const facts = await probe(context);
+  const facts = await probeVideo(readingArgs(run.link), run.link, run, PROBE_MILLISECONDS);
   const posterStartedAt = performance.now();
   const stills = await deriveStills({
-    path: await posterFrame(facts, context),
+    path: await posterFrame(facts, run),
     maxPixels: VIEW.longEdge * VIEW.longEdge,
     autoOrient: false,
     kind: "poster",
@@ -407,8 +226,7 @@ async function posterOf(context: VideoContext): Promise<Poster> {
  */
 async function sendConversion(mediaId: string, options: PosterOptions): Promise<void> {
   try {
-    const queue = await options.jobQueue();
-    await queue.send(MEDIA_QUEUES.convert, { mediaId }, { priority: CONVERT_PRIORITY.backlog });
+    await requestConversion(mediaId, CONVERT_PRIORITY.backlog, options.jobQueue);
   } catch (error) {
     console.error(
       `[worker] media.poster media=${mediaId} is ready, but its conversion wasn't sent; the sweeper will send it:`,
@@ -430,7 +248,18 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
   const link = await presignGet(item.originalKey, { expiresInSeconds: PLAYBACK_URL_SECONDS });
 
   const poster = await withScratch(POSTER_SCRATCH_BYTES, (folder) =>
-    posterOf({ ...options, link, folder, signal: job.signal, retryCount: job.retryCount }),
+    posterOf({
+      memoryBytes: options.ffmpegMemoryBytes,
+      signal: job.signal,
+      folder,
+      retryCount: job.retryCount,
+      // A guest is waiting for the poster: the worker's own priority, never behind a conversion.
+      priority: "foreground",
+      source: "link",
+      redact: { link, as: "the original" },
+      link,
+      options,
+    }),
   );
   const { facts, stills } = poster;
   console.log(

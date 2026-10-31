@@ -14,6 +14,8 @@ import { captureTimeFromVideoTags } from "@/lib/media/capture-time";
  *   track isn't one); audio is optional. With several, the default one is the video, else the
  *   largest: an iPhone's Cinematic clip carries a smaller disparity track beside its picture;
  * - that stream must have a size, no bigger than 8K.
+ * Its audio, if any, is one stream: AAC if it has one (an iPhone's Spatial Audio track beside its
+ * stereo AAC isn't one every ffmpeg decodes), the default one among several, else the first.
  * Anything else fails for good: `unsupported-type`, `corrupt` or `too-large`. Pure, so its test
  * runs anywhere.
  */
@@ -85,6 +87,8 @@ export type SdrColours = {
 export type VideoFacts = {
   /** The video stream's index in the file, for ffmpeg's -map: the video, never a second track. */
   streamIndex: number;
+  /** The audio stream a conversion keeps, for ffmpeg's -map; null when it has none ffmpeg can name. */
+  audioStreamIndex: number | null;
   codec: string;
   /** The size it is shown at: the stored picture turned by its display matrix. */
   width: number;
@@ -209,6 +213,19 @@ function framesPerSecond(value: string | undefined): number | null {
   return Number.isFinite(rate) && rate > 0 ? rate : null;
 }
 
+/**
+ * The audio stream to keep, among those ffprobe names a codec for: AAC first (every phone's, and a
+ * newer iPhone writes a Spatial Audio track beside its stereo AAC), then the default stream, then
+ * the first; null when there is none (ffmpeg notes §6).
+ */
+function theAudio(streams: ProbeStream[]): number | null {
+  const audios = streams.filter((stream) => stream.codec_type === "audio" && CODEC_NAME.test(stream.codec_name ?? ""));
+  const aac = audios.filter((stream) => stream.codec_name === "aac");
+  const candidates = aac.length > 0 ? aac : audios;
+  const chosen = candidates.find((stream) => stream.disposition?.default) ?? candidates[0];
+  return chosen?.index ?? null;
+}
+
 function refused(reason: "unsupported-type" | "corrupt" | "too-large", found: string): VideoCheck {
   return { ok: false, reason, found };
 }
@@ -266,6 +283,7 @@ export function videoFactsFrom(probeJson: unknown): VideoCheck {
     ok: true,
     facts: {
       streamIndex: video.index,
+      audioStreamIndex: theAudio(streams),
       codec,
       width: turned ? video.height : video.width,
       height: turned ? video.width : video.height,

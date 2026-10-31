@@ -60,6 +60,7 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
     );
     expect(read).toEqual({
       streamIndex: 0,
+      audioStreamIndex: 1,
       codec: "h264",
       width: 1920,
       height: 1080,
@@ -161,6 +162,24 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
     });
     expect(facts(webm).durationSeconds).toBeNull();
     expect(facts(probe([videoStream()], { duration: "N/A" })).durationSeconds).toBe(12.5);
+  });
+
+  it("keeps one audio stream for a conversion: AAC first, then the default, then the first; none when ffprobe names none (ffmpeg notes §6)", () => {
+    const withDefault = (codec: string, index: number, isDefault: boolean) => ({
+      ...audioStream(codec, index),
+      disposition: { default: isDefault ? 1 : 0, attached_pic: 0 },
+    });
+    // A newer iPhone's Spatial Audio track (no codec ffmpeg 7.1 names, or one it can't decode) beside its stereo AAC.
+    expect(facts(probe([videoStream(), audioStream("apac", 1), audioStream("aac", 2)])).audioStreamIndex).toBe(2);
+    expect(facts(probe([videoStream(), { index: 1, codec_type: "audio" }, audioStream("aac", 2)])).audioStreamIndex).toBe(2);
+    // Two AAC streams: the default one.
+    expect(facts(probe([videoStream(), withDefault("aac", 1, false), withDefault("aac", 2, true)])).audioStreamIndex).toBe(2);
+    // No AAC: the default, else the first.
+    expect(facts(probe([videoStream(), withDefault("opus", 1, false), withDefault("mp3", 2, true)])).audioStreamIndex).toBe(2);
+    expect(facts(probe([videoStream(), audioStream("opus", 1), audioStream("mp3", 2)])).audioStreamIndex).toBe(1);
+    // None, or none ffprobe can name.
+    expect(facts(probe([videoStream()])).audioStreamIndex).toBeNull();
+    expect(facts(probe([videoStream(), { index: 1, codec_type: "audio" }])).audioStreamIndex).toBeNull();
   });
 
   it("uses the video stream's own index, for ffmpeg to take that stream and no other", () => {

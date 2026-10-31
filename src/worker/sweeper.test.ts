@@ -296,6 +296,39 @@ describe("the sweeper's second step: conversions queued with no job", () => {
     expect(result.requeuedConversions).toBe(0);
     expect(await liveJobs(MEDIA_QUEUES.convert, withJob)).toHaveLength(1);
   });
+
+  it("sends an on-demand conversion whose job was lost though a backlog job for it waits: the backlog may be switched off", async () => {
+    // A phone asked 10 minutes ago, and the app's send failed; the poster's backlog job still waits.
+    const asked = await insertItem({
+      kind: "video",
+      status: "ready",
+      conversion: "queued",
+      listedAt: minutesAgo(60),
+      conversionRequestedAt: minutesAgo(10),
+    });
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: asked }, { priority: CONVERT_PRIORITY.backlog });
+    // One whose on-demand job is waiting, and a backlog one with its backlog job: both left alone.
+    const askedWithJob = await insertItem({
+      kind: "video",
+      status: "ready",
+      conversion: "queued",
+      listedAt: minutesAgo(60),
+      conversionRequestedAt: minutesAgo(10),
+    });
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: askedWithJob }, { priority: CONVERT_PRIORITY.onDemand });
+    const backlog = await insertItem({ kind: "video", status: "ready", conversion: "queued", listedAt: minutesAgo(10) });
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: backlog }, { priority: CONVERT_PRIORITY.backlog });
+
+    const result = await sweeper().sweep();
+
+    expect(result.requeuedConversions).toBe(1);
+    expect((await liveJobs(MEDIA_QUEUES.convert, asked)).map((job) => job.priority).sort()).toEqual([
+      CONVERT_PRIORITY.backlog,
+      CONVERT_PRIORITY.onDemand,
+    ]);
+    expect(await liveJobs(MEDIA_QUEUES.convert, askedWithJob)).toHaveLength(1);
+    expect(await liveJobs(MEDIA_QUEUES.convert, backlog)).toHaveLength(1);
+  });
 });
 
 describe("the sweeper's third step (Ruling W): uploads whose phone dropped at the very end", () => {
@@ -496,6 +529,15 @@ describe("the sweeper's queries", () => {
   it("look up a batch's live jobs through pg-boss's index of live jobs by queue and state", async () => {
     const query = new PgDialect().sqlToQuery(
       liveJobsQuery(BOSS_SCHEMA, [MEDIA_QUEUES.photo, MEDIA_QUEUES.dead], [randomUUID(), randomUUID()]),
+    );
+    const plan = await genericPlan(query);
+    expect(plan).toMatch(/job_common_i14|job_i14/);
+    expect(plan).not.toContain("Seq Scan");
+  });
+
+  it("look up on-demand conversions' live jobs through the same index, their priority only a filter", async () => {
+    const query = new PgDialect().sqlToQuery(
+      liveJobsQuery(BOSS_SCHEMA, [MEDIA_QUEUES.convert, MEDIA_QUEUES.dead], [randomUUID()], CONVERT_PRIORITY.onDemand),
     );
     const plan = await genericPlan(query);
     expect(plan).toMatch(/job_common_i14|job_i14/);

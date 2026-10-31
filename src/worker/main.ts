@@ -4,6 +4,7 @@ import { getBoss, JOB_QUEUE_SCHEMA } from "@/lib/jobs/boss";
 import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { errorMessage } from "@/lib/log-error";
 import { workerConfig, type WorkerConfig } from "./config";
+import { convertHandler } from "./jobs/convert";
 import { photoHandler } from "./jobs/photo";
 import { posterHandler } from "./jobs/poster";
 import type { MediaHandlers } from "./queues";
@@ -24,10 +25,10 @@ try {
 }
 
 /**
- * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash, and
- * media.poster, a video's probe and poster. A queue with none yet keeps its jobs waiting, unfailed
- * (Ruling AA), until the release that brings its handler:
- * - media.convert: Task 11, a version every phone can play (the posters queue the backlog's);
+ * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash; media.poster,
+ * a video's probe and poster; and media.convert, a version of a video every phone can play (on
+ * demand at once, the backlog while its switch is on). A queue with none yet keeps its jobs
+ * waiting, unfailed (Ruling AA), until the release that brings its handler:
  * - media.visibility: Task 12, deleting and purging a hidden item's derived files;
  * - media.jpeg: Task 15, a HEIC's full-size JPEG, on its first download;
  * - media.wish: Task 16, a voice or video wish's recording;
@@ -41,6 +42,14 @@ const handlers: MediaHandlers = {
     filterThreads: config.threads.ffmpegFilters,
     // The worker's own queue, which runWorker starts (with this pool size) before any job runs.
     jobQueue: () => getBoss(config.queuePoolSize),
+  }),
+  [MEDIA_QUEUES.convert]: convertHandler({
+    convertMemoryBytes: config.convertMemoryBytes,
+    ffmpegMemoryBytes: config.ffmpegMemoryBytes,
+    decoderThreads: config.threads.decoder,
+    x264Threads: config.threads.x264,
+    filterThreads: config.threads.ffmpegFilters,
+    x264Preset: config.x264Preset,
   }),
 };
 

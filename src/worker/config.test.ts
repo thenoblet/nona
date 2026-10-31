@@ -24,6 +24,7 @@ describe("workerConfig", () => {
       ffmpegFilters: 1,
       heif: 1,
       poster: 1,
+      decoder: 2,
     });
   });
 
@@ -47,6 +48,7 @@ describe("workerConfig", () => {
       WORKER_FFMPEG_FILTER_THREADS: "2",
       WORKER_HEIF_THREADS: "4",
       WORKER_POSTER_THREADS: "2",
+      WORKER_FFMPEG_DECODER_THREADS: "3",
       WORKER_QUEUE_POOL_SIZE: "20",
     });
     expect(config.concurrency).toEqual({
@@ -59,7 +61,7 @@ describe("workerConfig", () => {
       convertOnDemand: 2,
       convertBacklog: 5,
     });
-    expect(config.threads).toEqual({ x264: 4, sharp: 3, ffmpegFilters: 2, heif: 4, poster: 2 });
+    expect(config.threads).toEqual({ x264: 4, sharp: 3, ffmpegFilters: 2, heif: 4, poster: 2, decoder: 3 });
     expect(config.queuePoolSize).toBe(20);
   });
 
@@ -94,6 +96,32 @@ describe("workerConfig", () => {
       );
     },
   );
+
+  it("caps a conversion's ffmpeg at 3 GiB unless WORKER_CONVERT_MEMORY_BYTES says otherwise", () => {
+    expect(workerConfig({ NODE_ENV: "development" }).convertMemoryBytes).toBe(3 * 1024 ** 3);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CONVERT_MEMORY_BYTES: "" }).convertMemoryBytes).toBe(3 * 1024 ** 3);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CONVERT_MEMORY_BYTES: "4294967296" }).convertMemoryBytes).toBe(
+      4 * 1024 ** 3,
+    );
+  });
+
+  it.each(["1073741824", "3GB", "-1", "1.5", String(128 * 1024 ** 3)])(
+    "refuses %j as a conversion's memory cap: bytes, from 2 GiB (below that a 4K HDR conversion can't run) to 64 GiB",
+    (value) => {
+      expect(() => workerConfig({ NODE_ENV: "development", WORKER_CONVERT_MEMORY_BYTES: value })).toThrow(
+        /WORKER_CONVERT_MEMORY_BYTES/,
+      );
+    },
+  );
+
+  it("converts at x264's veryfast preset unless WORKER_X264_PRESET names another of x264's presets", () => {
+    expect(workerConfig({ NODE_ENV: "development" }).x264Preset).toBe("veryfast");
+    expect(workerConfig({ NODE_ENV: "development", WORKER_X264_PRESET: "" }).x264Preset).toBe("veryfast");
+    expect(workerConfig({ NODE_ENV: "development", WORKER_X264_PRESET: "faster" }).x264Preset).toBe("faster");
+    for (const value of ["quick", "VERYFAST", "veryfast -crf 0", "placebo"]) {
+      expect(() => workerConfig({ NODE_ENV: "development", WORKER_X264_PRESET: value }), value).toThrow(/WORKER_X264_PRESET/);
+    }
+  });
 
   it("treats a blank variable as unset, as Dokploy may leave one", () => {
     expect(workerConfig({ NODE_ENV: "development", WORKER_PHOTO_CONCURRENCY: "" }).concurrency.photo).toBe(2);

@@ -264,6 +264,70 @@ describe("the conversion workers", () => {
     await running.followBacklogSwitch();
     await eventually(async () => expect(converted).toEqual([onDemandItem, backlogItem]));
   });
+
+  it("holds back a backlog job fetched after the switch went off, never failing it, and takes an on-demand request meanwhile", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await setSetting("convert_backlog", true);
+    const converted: string[] = [];
+    const running = await start({
+      [MEDIA_QUEUES.convert]: async (job) => {
+        converted.push(String(job.data.mediaId));
+      },
+    });
+    // The switch goes off between two heartbeats: the backlog worker is still fetching.
+    await setSetting("convert_backlog", false);
+    const backlogItem = randomUUID();
+    const backlogJob = await boss.send(MEDIA_QUEUES.convert, { mediaId: backlogItem }, { priority: CONVERT_PRIORITY.backlog });
+
+    // Fetched, its switch read again before it runs, and held back: never run, never failed.
+    await eventually(async () =>
+      expect(log.mock.calls.flat().join(" ")).toContain(`media.convert held back job=${backlogJob} media=${backlogItem}`),
+    );
+    const onDemandItem = randomUUID();
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: onDemandItem }, { priority: CONVERT_PRIORITY.onDemand });
+    await eventually(async () => expect(converted).toEqual([onDemandItem]));
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(converted).toEqual([onDemandItem]);
+    const jobs = await boss.findJobs<{ mediaId: string }>(MEDIA_QUEUES.convert, { data: { mediaId: backlogItem } });
+    // The attempt it was fetched for is settled, and the conversion waits again in the backlog with
+    // none of its attempts used: nothing failed.
+    expect(jobs.map((job) => ({ state: job.state, priority: job.priority, retryCount: job.retryCount })).sort()).toEqual(
+      expect.arrayContaining([
+        { state: "completed", priority: CONVERT_PRIORITY.backlog, retryCount: 0 },
+        { state: "created", priority: CONVERT_PRIORITY.backlog, retryCount: 0 },
+      ]),
+    );
+    expect(jobs).toHaveLength(2);
+    expect(jobs.some((job) => job.state === "failed")).toBe(false);
+
+    await setSetting("convert_backlog", true);
+    await running.followBacklogSwitch();
+    await eventually(async () => expect(converted).toEqual([onDemandItem, backlogItem]));
+  });
+
+  it("stops the backlog worker fetching as soon as it holds a job back, so it doesn't fetch the next at once", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await setSetting("convert_backlog", true);
+    const converted: string[] = [];
+    await start({
+      [MEDIA_QUEUES.convert]: async (job) => {
+        converted.push(String(job.data.mediaId));
+      },
+    });
+    await setSetting("convert_backlog", false);
+    const backlogItems = [randomUUID(), randomUUID(), randomUUID()];
+    for (const mediaId of backlogItems) {
+      await boss.send(MEDIA_QUEUES.convert, { mediaId }, { priority: CONVERT_PRIORITY.backlog });
+    }
+
+    await eventually(async () => expect(log.mock.calls.flat().join(" ")).toContain("media.convert held back"));
+    // Several of the test's half-second polls.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const held = log.mock.calls.flat().filter((line) => String(line).includes("media.convert held back"));
+    expect(held).toHaveLength(1);
+    expect(log.mock.calls.flat().join(" ")).toContain("backlog conversions paused by the switch");
+    expect(converted).toEqual([]);
+  });
 });
 
 describe("Review Focus 4: photos stay fast while a video converts", () => {

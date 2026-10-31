@@ -79,8 +79,20 @@ function describeReport(report: JobReport | void): string {
   return `${size}${kind}`;
 }
 
-/** Runs a queue's jobs through its handler, logging each one's duration, and settles each. */
-function runJobs(queue: WorkQueueName, handler: MediaJobHandler) {
+/**
+ * A check a worker makes before each job it fetched: the backlog conversions' switch. A job it
+ * doesn't allow is held back: waiting on its queue again, never failed, its attempts not used.
+ */
+type JobGate = {
+  allows(): Promise<boolean>;
+  /** Puts the job back to wait. Never throws. */
+  hold(job: Job<Record<string, unknown>>): Promise<void>;
+  /** Why a job was held, for the log. */
+  reason: string;
+};
+
+/** Runs a queue's jobs through its handler (once `gate`, if any, allows each), logging each one's duration, and settles each. */
+function runJobs(queue: WorkQueueName, handler: MediaJobHandler, gate?: JobGate) {
   return (jobs: Job<Record<string, unknown>>[]): Promise<JobResult[]> =>
     Promise.all(
       jobs.map(async (job): Promise<JobResult> => {
@@ -89,6 +101,11 @@ function runJobs(queue: WorkQueueName, handler: MediaJobHandler) {
         const subject = `job=${job.id}${mediaId ? ` media=${mediaId}` : ""}`;
         const elapsed = () => Math.round(performance.now() - startedAt);
         try {
+          if (gate && !(await gate.allows())) {
+            await gate.hold(job);
+            console.log(`[worker] ${queue} held back ${subject}: ${gate.reason}`);
+            return { id: job.id, status: "completed", output: { held: gate.reason } };
+          }
           const report = await handler({
             id: job.id,
             queue,
@@ -167,7 +184,9 @@ export type QueueWorkers = {
  * Starts the workers for every media queue that has a handler, each at its concurrency, and
  * media.dead's handler. A queue with no handler gets none, and is named once in the log.
  * media.convert has two: on-demand (priority 20 and up) always, and the backlog (below 20) while
- * the convert_backlog switch is on. While it is off, backlog jobs wait in the queue, unfailed.
+ * the convert_backlog switch is on. While it is off, backlog jobs wait in the queue, unfailed:
+ * the backlog worker is stopped within one heartbeat (30 s) of the switch going off, and reads the
+ * switch again before each job it fetched, so one fetched just before is held back, not run.
  */
 export async function startQueueWorkers(
   boss: PgBoss,
@@ -178,11 +197,17 @@ export async function startQueueWorkers(
   const polling: WorkOptions =
     options.pollingIntervalSeconds === undefined ? {} : { pollingIntervalSeconds: options.pollingIntervalSeconds };
 
-  const work = (queue: WorkQueueName, handler: MediaJobHandler, localConcurrency: number, priorities: WorkOptions = {}) =>
+  const work = (
+    queue: WorkQueueName,
+    handler: MediaJobHandler,
+    localConcurrency: number,
+    priorities: WorkOptions = {},
+    gate?: JobGate,
+  ) =>
     boss.work<Record<string, unknown>, JobResult[], WorkOptions & { perJobResults: true }>(
       queue,
       { ...polling, ...priorities, localConcurrency, perJobResults: true },
-      runJobs(queue, handler),
+      runJobs(queue, handler, gate),
     );
 
   const queues: [WorkQueueName, number][] = [
@@ -216,13 +241,43 @@ export async function startQueueWorkers(
   // One change of the switch at a time, so two quick calls can't start the backlog twice.
   let following = Promise.resolve();
 
+  const backlogSwitchOn = async () =>
+    (await getSetting("convert_backlog", SETTING_DEFAULTS.convert_backlog)) === true;
+
+  /**
+   * The backlog worker's check before each job: the switch as it is now, not as the last heartbeat
+   * saw it, so a job fetched in the moments after the switch went off is held back, not run. The
+   * worker stops fetching first (so the job isn't taken again at once); then a copy of the job is
+   * sent to wait in the backlog, and this attempt completes. A copy rather than the job put back:
+   * pg-boss counts every fetch of a job that has started as an attempt, which would bring a held
+   * file nearer to being blamed (from its third attempt) and its retries nearer their end. If the
+   * copy can't be sent, the conversion's row is still `queued`, and the sweeper sends it again.
+   */
+  const backlogGate: JobGate = {
+    allows: backlogSwitchOn,
+    async hold(job) {
+      // If this can't read the switch, the next heartbeat (within 30 s) stops the worker, and logs why.
+      await followBacklogSwitch().catch(() => {});
+      try {
+        await boss.send(MEDIA_QUEUES.convert, job.data ?? {}, { priority: CONVERT_PRIORITY.backlog });
+      } catch (error) {
+        console.error(`[worker] could not put back held job=${job.id}; the sweeper will send it again:`, describeError(error));
+      }
+    },
+    reason: "the backlog switch is off, so it waits in the queue",
+  };
+
   const followSwitchNow = async () => {
     if (stopped || !convert) return;
-    const backlogOn = (await getSetting("convert_backlog", SETTING_DEFAULTS.convert_backlog)) === true;
+    const backlogOn = await backlogSwitchOn();
     if (backlogOn && backlogWorkId === null) {
-      backlogWorkId = await work(MEDIA_QUEUES.convert, convert, concurrency.convertBacklog, {
-        maxPriority: CONVERT_PRIORITY.onDemand - 1,
-      });
+      backlogWorkId = await work(
+        MEDIA_QUEUES.convert,
+        convert,
+        concurrency.convertBacklog,
+        { maxPriority: CONVERT_PRIORITY.onDemand - 1 },
+        backlogGate,
+      );
       console.log("[worker] backlog conversions on");
     } else if (!backlogOn && backlogWorkId !== null) {
       // Stops fetching; a backlog conversion already running finishes.

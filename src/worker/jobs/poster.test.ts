@@ -23,7 +23,8 @@ import { workerConfig } from "../config";
 import { ProcessError } from "../processes";
 import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
-import { posterHandler, processVideo, videoToolFailure, type PosterOptions } from "./poster";
+import { posterHandler, processVideo, type PosterOptions } from "./poster";
+import { videoToolFailure } from "./video-tools";
 
 /*
  * media.poster against the local MinIO and test database (docker compose up -d db minio && npm run

@@ -14,7 +14,9 @@ import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch
  * The sweeper makes sure no item stays "processing" for good. At start-up and every 10 minutes it:
  * 1. queues the processing of items `uploaded` more than 5 minutes ago that have no job (the app
  *    couldn't queue it: the queue was starting, or down), unless hidden or deleted;
- * 2. queues the conversion of `ready` videos whose conversion is `queued` with no job;
+ * 2. queues the conversion of `ready` videos whose conversion is `queued` with no job, or, for one
+ *    a phone asked for or the couple made a highlight, no on-demand job (its backlog job may wait
+ *    behind the switch for days);
  * 3. (Ruling W) finishes uploads whose phone dropped during or just before its final complete:
  *    `uploading` for over 30 minutes, with every part in R2 adding up to the declared size, or the
  *    original already joined. Partial uploads are left for their guest to carry on; R2's 7-day
@@ -124,17 +126,27 @@ export function queuedConversionsQuery(limit: number, reader: Reader = getDb()) 
  * (waiting, retrying or running) on these queues, read from pg-boss's job table. That is pg-boss
  * 12's own table (the parent of every queue's partition), whose index of live jobs covers name and
  * state; package.json pins pg-boss exactly, so an upgrade that changes it is a deliberate one, and
- * it fails these tests.
+ * it fails these tests. With `minConvertPriority`, a media.convert job counts only at that priority
+ * or above (an on-demand conversion's backlog job doesn't); other queues' jobs (media.dead's) count.
  */
-export function liveJobsQuery(bossSchema: string, queues: MediaQueueName[], mediaIds: string[]): SQL {
+export function liveJobsQuery(
+  bossSchema: string,
+  queues: MediaQueueName[],
+  mediaIds: string[],
+  minConvertPriority?: number,
+): SQL {
   const names = sql.join(
     queues.map((name) => sql`${name}`),
     sql`, `,
   );
+  const priority =
+    minConvertPriority === undefined
+      ? sql``
+      : sql` and (job.name <> ${MEDIA_QUEUES.convert} or job.priority >= ${minConvertPriority})`;
   return sql`select distinct job.data ->> 'mediaId' as "mediaId" from ${sql.identifier(bossSchema)}.job as job
     where job.name in (${names})
       and job.state in ('created', 'retry', 'active')
-      and ${inArray(sql`job.data ->> 'mediaId'`, mediaIds)}`;
+      and ${inArray(sql`job.data ->> 'mediaId'`, mediaIds)}${priority}`;
 }
 
 /**
@@ -147,32 +159,36 @@ async function itemsWithLiveJobs(
   bossSchema: string,
   queues: MediaQueueName[],
   mediaIds: string[],
+  minConvertPriority?: number,
 ): Promise<Set<string>> {
   if (mediaIds.length === 0) return new Set();
-  const rows = await reader.execute<{ mediaId: string }>(liveJobsQuery(bossSchema, queues, mediaIds));
+  const rows = await reader.execute<{ mediaId: string }>(liveJobsQuery(bossSchema, queues, mediaIds, minConvertPriority));
   return new Set(rows.map((row) => row.mediaId));
 }
 
 /**
- * Up to a batch of the candidates `readCandidates` finds that have no live job on these queues.
- * Both reads see one snapshot (a read-only, repeatable-read transaction), so a job that finishes
- * between them, its item no longer stuck, can't look missing and have its item queued again. The
- * transaction holds no locks and makes no network call; the jobs are queued after it ends.
+ * Up to a batch of the candidates `readCandidates` finds that have no live job on these queues (at
+ * least `minConvertPriorityOf` the candidate, for a conversion, when it gives one). Both reads see
+ * one snapshot (a read-only, repeatable-read transaction), so a job that finishes between them, its
+ * item no longer stuck, can't look missing and have its item queued again. The transaction holds
+ * no locks and makes no network call; the jobs are queued after it ends. At most two reads of the
+ * live jobs: one for each minimum priority the candidates have.
  */
 function stuckAmong<TCandidate extends { id: string }>(
   bossSchema: string,
   queues: MediaQueueName[],
   readCandidates: (reader: Reader) => Promise<TCandidate[]>,
+  minConvertPriorityOf: (candidate: TCandidate) => number | undefined = () => undefined,
 ): Promise<TCandidate[]> {
   return getDb().transaction(
     async (transaction) => {
       const candidates = await readCandidates(transaction);
-      const withJobs = await itemsWithLiveJobs(
-        transaction,
-        bossSchema,
-        queues,
-        candidates.map((candidate) => candidate.id),
-      );
+      const byMinPriority = Map.groupBy(candidates, minConvertPriorityOf);
+      const withJobs = new Set<string>();
+      for (const [minConvertPriority, group] of byMinPriority) {
+        const ids = group.map((candidate) => candidate.id);
+        for (const id of await itemsWithLiveJobs(transaction, bossSchema, queues, ids, minConvertPriority)) withJobs.add(id);
+      }
       return candidates.filter((candidate) => !withJobs.has(candidate.id)).slice(0, REQUEUE_BATCH_SIZE);
     },
     { isolationLevel: "repeatable read", accessMode: "read only" },
@@ -200,10 +216,18 @@ export function createSweeper(options: SweeperOptions) {
     return stuck.length;
   }
 
-  /** Step 2: ready videos whose conversion is `queued` with no job: on demand if anyone asked, else the backlog. */
+  /**
+   * Step 2: ready videos whose conversion is `queued` with no job, on demand if anyone asked, else
+   * the backlog. One that someone asked for needs an on-demand job: a backlog job waits while the
+   * switch is off, so it doesn't count, and an on-demand one is sent beside it (the second of the
+   * two to run does nothing).
+   */
   async function requeueConversions(): Promise<number> {
-    const stuck = await stuckAmong(bossSchema, CONVERSION_QUEUES, (reader) =>
-      queuedConversionsQuery(CANDIDATE_BATCH_SIZE, reader),
+    const stuck = await stuckAmong(
+      bossSchema,
+      CONVERSION_QUEUES,
+      (reader) => queuedConversionsQuery(CANDIDATE_BATCH_SIZE, reader),
+      (item) => (item.onDemand ? CONVERT_PRIORITY.onDemand : undefined),
     );
     if (stuck.length > 0) {
       await boss.insert(

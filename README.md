@@ -204,8 +204,20 @@ that fails for good marks its item `failed`, with the reason its uploader sees.
 - It saves a heartbeat every 30 s. `GET /api/worker-health` on the site answers 200 while the last
   one is under 2 minutes old and 503 otherwise, for the uptime check.
 - Every 10 minutes a sweeper queues anything left behind: items uploaded with no job, conversions
-  with no job, and uploads whose phone dropped at the very last step (it completes them when R2
-  holds every part).
+  with no job (or, for one a phone asked for or a highlight, no on-demand job), and uploads whose
+  phone dropped at the very last step (it completes them when R2 holds every part).
+- **Conversions** (`media.convert`) make a version of a video every phone plays: H.264 High in MP4,
+  within 1920 × 1080 either way up, HDR tone-mapped to SDR, at most 30 fps, AAC stereo, no
+  metadata but its capture time, `moov` first. A phone that can't play an original asks
+  `POST /api/media/[id]/playable`, which sends its conversion at priority 20; the worker takes
+  those (and the couple's highlights) at once. Everything else waits in the backlog, which runs only
+  while the admin's backlog switch is on: the worker reads the switch every 30 s and again before
+  each backlog job, and a job fetched as the switch went off goes back to wait, never failed. Each
+  conversion downloads its original to scratch (twice its size must be free), runs `nice -n 19`
+  under its own memory cap, and is checked before it is published: exiting 0 isn't enough. Measured
+  under `--cpus=3` at the defaults, one conversion alone takes 1 to 3 s a second of video for 4K
+  HEVC HDR (8K: 1.4 to 3.4 s) and 0.4 to 1 s for 1080p60 H.264, on a dev host whose speed varied
+  twofold; each job logs its own speed.
 - On SIGTERM it stops taking jobs, kills ffmpeg and the other tools, and exits within 8 s; the
   interrupted jobs go back to their queues.
 
@@ -249,13 +261,16 @@ Its environment:
 | `WORKER_CARD_CONCURRENCY` | 1 | Link-preview cards at once. |
 | `WORKER_CONVERT_ON_DEMAND_CONCURRENCY` | 1 | Conversions a phone asked for, or highlights, at once. |
 | `WORKER_CONVERT_BACKLOG_CONCURRENCY` | 1 | Backlog conversions at once, while the admin's backlog switch is on. |
-| `WORKER_X264_THREADS` | 2 | x264's threads in each conversion. |
+| `WORKER_X264_THREADS` | 2 | x264's threads in each conversion (x264 adds a lookahead thread of its own). |
+| `WORKER_X264_PRESET` | `veryfast` | x264's preset in each conversion, at CRF 23: one of `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. A slower one compresses better and takes longer: measure a 4K clip before changing it. |
+| `WORKER_FFMPEG_DECODER_THREADS` | 2 | ffmpeg's decoder threads in each conversion (its `-threads` before the input), which would otherwise be the host's CPUs. Two decode 4K HEVC in about real time. |
 | `WORKER_SHARP_THREADS` | 1 | sharp's threads in each photo. |
-| `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job. |
+| `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job. Measured under `--cpus=3`, 2 made a 4K HDR conversion slower (18.4 s against 12 to 17 s, and 43 s against 31 s, for 10 s of video), not faster. |
 | `WORKER_HEIF_THREADS` | 1 | `heif-dec`'s codec and tile threads for each HEIC (libheif would otherwise decode 4 tiles at once). |
 | `WORKER_HEIF_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `heif-info` and `heif-dec` may take for one HEIC, at least 256 MiB: a backstop against a crafted file. A 48 MP iPhone photo decodes in about 300 MB; a file that hits the cap fails as `corrupt`. |
 | `WORKER_POSTER_THREADS` | 1 | ffmpeg's `-threads` for each video's poster: decoding its frame and writing it. Each thread takes its own stack and heap within `WORKER_FFMPEG_MEMORY_BYTES`: measure the cap again before raising this or `WORKER_FFMPEG_FILTER_THREADS`. |
 | `WORKER_FFMPEG_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `ffprobe` and `ffmpeg` may take for one video's probe and poster, at least 1 GiB: a backstop against a crafted file. Measured on one thread each (`WORKER_POSTER_THREADS` and `WORKER_FFMPEG_FILTER_THREADS` at 1), a 4K HDR poster needs about 830 MiB and an 8K one about 980 MiB. A file that runs out of memory under the cap three times fails as `corrupt`; a thread ffmpeg can't start (`pthread_create`, "Resource temporarily unavailable") is the worker's trouble and retries. |
+| `WORKER_CONVERT_MEMORY_BYTES` | 3221225472 (3 GiB) | The most memory (address space) a conversion's `ffmpeg` may take, at least 2 GiB: a backstop against a crafted file. Measured in the worker image under `--cpus=3` at the default threads, a 4K HEVC HLG conversion peaks at about 1,720 MiB (RSS about 730 MiB), an 8K HEVC one at about 1,790 MiB (RSS about 830 MiB), 1080p60 H.264 at about 1,310 MiB. More decoder, x264 or filter threads raise it: measure again before raising them. As for posters, running out of memory under the cap three times fails the conversion, and the video keeps its poster. |
 | `WORKER_QUEUE_POOL_SIZE` | 10 | Database connections for the job queue. |
 
 The defaults suit about 3 CPUs and 12 GB. Thread counts never follow the machine's core count,

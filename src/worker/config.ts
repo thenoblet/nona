@@ -40,7 +40,19 @@ export type WorkerThreads = {
   heif: number;
   /** ffmpeg's -threads when it decodes a video's poster frame (and writes it). */
   poster: number;
+  /**
+   * ffmpeg's -threads before its input in a conversion: the decoder's, which would otherwise be
+   * the host's CPUs (ffmpeg notes §4.14).
+   */
+  decoder: number;
 };
+
+/**
+ * x264's presets, fastest first, that a conversion may use. Not placebo, which would take far
+ * longer than a conversion's time for almost nothing.
+ */
+export const X264_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
+export type X264Preset = (typeof X264_PRESETS)[number];
 
 export type WorkerConfig = {
   /** Where jobs make their scratch folders: the scratch disk's mount in production. */
@@ -58,6 +70,14 @@ export type WorkerConfig = {
    * poster needs about 830 MiB and an 8K one about 980 MiB.
    */
   ffmpegMemoryBytes: number;
+  /**
+   * The most memory (address space) a conversion's ffmpeg may take: a backstop against a crafted
+   * file. Measured in the worker image under --cpus=3 at the default threads, a 4K HEVC HLG
+   * conversion peaks at about 1,720 MiB and an 8K HEVC one at about 1,790 MiB.
+   */
+  convertMemoryBytes: number;
+  /** x264's -preset in a conversion. */
+  x264Preset: X264Preset;
   /** Connections in the job queue's pool: room for every handler's polling and heartbeats at once. */
   queuePoolSize: number;
 };
@@ -94,12 +114,19 @@ const schema = zod.object({
   WORKER_FFMPEG_FILTER_THREADS: count(1),
   WORKER_HEIF_THREADS: count(1),
   WORKER_POSTER_THREADS: count(1),
+  // Measured: two decode a 4K HEVC clip in about real time; more only add memory (ffmpeg notes §4.14).
+  WORKER_FFMPEG_DECODER_THREADS: count(2),
   WORKER_QUEUE_POOL_SIZE: count(10, 100),
   // Below 256 MiB heif-dec can't decode even a small photo.
   WORKER_HEIF_MEMORY_BYTES: bytes(2048 * MEBIBYTE, 256 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
   // About twice an 8K poster's need. Below 1 GiB a 4K HDR poster can't be made: ffmpeg's libraries
   // alone take about 280 MiB of address space, and each of its threads a stack and a heap of its own.
   WORKER_FFMPEG_MEMORY_BYTES: bytes(2048 * MEBIBYTE, 1024 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
+  // About 1.7 times an 8K or 4K HDR conversion's need at the default threads (ffmpeg notes §4.14
+  // suggests 3 GiB). Below 2 GiB a 4K HDR conversion can't run. Raising a conversion's threads
+  // raises its need: measure again before.
+  WORKER_CONVERT_MEMORY_BYTES: bytes(3072 * MEBIBYTE, 2048 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
+  WORKER_X264_PRESET: zod.preprocess((value) => (value === "" ? undefined : value), zod.enum(X264_PRESETS).default("veryfast")),
 });
 
 /**
@@ -143,9 +170,12 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
       ffmpegFilters: settings.WORKER_FFMPEG_FILTER_THREADS,
       heif: settings.WORKER_HEIF_THREADS,
       poster: settings.WORKER_POSTER_THREADS,
+      decoder: settings.WORKER_FFMPEG_DECODER_THREADS,
     },
     heifMemoryBytes: settings.WORKER_HEIF_MEMORY_BYTES,
     ffmpegMemoryBytes: settings.WORKER_FFMPEG_MEMORY_BYTES,
+    convertMemoryBytes: settings.WORKER_CONVERT_MEMORY_BYTES,
+    x264Preset: settings.WORKER_X264_PRESET,
     queuePoolSize: settings.WORKER_QUEUE_POOL_SIZE,
   };
 }

@@ -1,0 +1,854 @@
+import { execFile } from "node:child_process";
+import { randomBytes, randomUUID } from "node:crypto";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
+import { eq } from "drizzle-orm";
+import type { PgBoss } from "pg-boss";
+import sharp from "sharp";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { getDb } from "@/lib/db/client";
+import { media } from "@/lib/db/schema";
+import { storageConfig } from "@/lib/env";
+import { CONVERT_PRIORITY, MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES } from "@/lib/jobs/media-queues";
+import { storageClient } from "@/lib/storage/client";
+import { originalKey } from "@/lib/storage/keys";
+import { readManifest } from "@/lib/storage/manifest";
+import { resetDb } from "../../../test/db";
+import { dropBossSchema, startTestBoss } from "../../../test/uploads";
+import { workerConfig } from "../config";
+import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
+import { prepareScratchRoot } from "../scratch";
+import { conversionMilliseconds, convertHandler, convertVideo, outputProblem, type ConvertOptions } from "./convert";
+import { photoHandler } from "./photo";
+
+/*
+ * media.convert against the local MinIO and test database (docker compose up -d db minio && npm run
+ * storage:init). Every clip is made here by ffmpeg (Ruling F); Noblet's own iPhone clip
+ * (test/fixtures/iphone-hdr.mov) is still to come, and its test is the poster's.
+ *
+ * The conversion runs ffmpeg 7.1's filters and options (the HDR side data it deletes are 7's), so
+ * the tests that run it run where ffmpeg is 7 or later: always in the worker image's test target.
+ * The output checks and the time limit run anywhere.
+ */
+
+// A test can act between the converted file going up and its row being marked (Ruling AG).
+const publishing = vi.hoisted(() => ({ afterPut: null as null | (() => Promise<void>) }));
+vi.mock("@/lib/storage/objects", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/storage/objects")>();
+  return {
+    ...real,
+    putPublicObject: async (...args: Parameters<typeof real.putPublicObject>) => {
+      await real.putPublicObject(...args);
+      const afterPut = publishing.afterPut;
+      publishing.afterPut = null;
+      await afterPut?.();
+    },
+  };
+});
+
+// Every program the job runs, with its priority, so a test can see how it ran.
+type ProgramRun = { args: string[]; priority: string };
+const programs = vi.hoisted(() => ({ runs: [] as ProgramRun[] }));
+vi.mock("../processes", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../processes")>();
+  return {
+    ...real,
+    runProcess: (...args: Parameters<typeof real.runProcess>) => {
+      programs.runs.push({ args: [args[0], ...args[1]], priority: args[2].priority });
+      return real.runProcess(...args);
+    },
+  };
+});
+
+// The free space each job asked its scratch folder for.
+const scratch = vi.hoisted(() => ({ bytesNeeded: [] as number[] }));
+vi.mock("../scratch", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../scratch")>();
+  const withScratch: typeof real.withScratch = (bytesNeeded, task) => {
+    scratch.bytesNeeded.push(bytesNeeded);
+    return real.withScratch(bytesNeeded, task);
+  };
+  return { ...real, withScratch };
+});
+
+const runFile = promisify(execFile);
+
+/** `ffmpeg -version`'s first line, or "" when there is no ffmpeg. */
+async function ffmpegVersionLine(): Promise<string> {
+  try {
+    const { stdout } = await runFile("ffmpeg", ["-version"], { timeout: 10_000 });
+    return stdout.split("\n")[0];
+  } catch {
+    return "";
+  }
+}
+
+const inWorkerImage = process.env.WORKER_TEST_IMAGE === "1";
+const versionLine = await ffmpegVersionLine();
+// The conversion's filters and options are ffmpeg 7's; elsewhere (an older ffmpeg) the tests that run it skip.
+const ffmpegSeven = inWorkerImage || Number(/ffmpeg version n?(\d+)\./.exec(versionLine)?.[1] ?? 0) >= 7;
+
+const BOSS_SCHEMA = "pgboss_worker_convert_test";
+const CAPTURED_AT = new Date("2026-12-05T23:00:00Z");
+/** A location every GPS fixture carries: the venue, in Accra. */
+const LOCATION = "+05.6037-000.1870+061.000/";
+let boss: PgBoss;
+let folder: string;
+let scratchRoot: string;
+let sharpThreads: number;
+let workers: QueueWorkers | null = null;
+const privateKeys: string[] = [];
+
+/** The production defaults: the conversion's memory cap, threads and preset. */
+function convertOptions(changes: Partial<ConvertOptions> = {}): ConvertOptions {
+  const config = workerConfig({});
+  return {
+    convertMemoryBytes: config.convertMemoryBytes,
+    ffmpegMemoryBytes: config.ffmpegMemoryBytes,
+    decoderThreads: config.threads.decoder,
+    x264Threads: config.threads.x264,
+    filterThreads: config.threads.ffmpegFilters,
+    x264Preset: config.x264Preset,
+    ...changes,
+  };
+}
+
+beforeAll(async () => {
+  folder = await mkdtemp(join(tmpdir(), "nona-convert-test-"));
+  scratchRoot = join(folder, "scratch");
+  await prepareScratchRoot(scratchRoot);
+  sharpThreads = sharp.concurrency();
+  sharp.concurrency(1);
+  boss = await startTestBoss(BOSS_SCHEMA);
+});
+
+afterAll(async () => {
+  sharp.concurrency(sharpThreads);
+  await boss?.stop({ graceful: false });
+  await dropBossSchema(BOSS_SCHEMA);
+  await rm(folder, { recursive: true, force: true });
+  const { privateBucket } = storageConfig();
+  for (let start = 0; start < privateKeys.length; start += 1000) {
+    const batch = privateKeys.slice(start, start + 1000);
+    await storageClient().send(
+      new DeleteObjectsCommand({ Bucket: privateBucket, Delete: { Objects: batch.map((key) => ({ Key: key })), Quiet: true } }),
+    );
+  }
+});
+
+beforeEach(async () => {
+  await resetDb();
+  publishing.afterPut = null;
+  programs.runs = [];
+  scratch.bytesNeeded = [];
+});
+
+afterEach(async () => {
+  workers?.stopFetching();
+  workers = null;
+  vi.restoreAllMocks();
+});
+
+/** The ffmpeg conversions run since the test began (not ffprobe, not the fixtures' ffmpeg). */
+function conversionRuns(): ProgramRun[] {
+  return programs.runs.filter((run) => run.args.includes("ffmpeg"));
+}
+
+/** Makes a clip with ffmpeg in the test's folder and returns its bytes. */
+async function clip(name: string, args: string[]): Promise<Buffer> {
+  const output = join(folder, `${randomUUID()}-${name}`);
+  await runFile("ffmpeg", ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", ...args, output], {
+    timeout: 600_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  return readFile(output);
+}
+
+/** Writes bytes to the test's folder, for ffmpeg or ffprobe to read. */
+async function saved(bytes: Uint8Array, extension: string): Promise<string> {
+  const path = join(folder, `${randomUUID()}.${extension}`);
+  await writeFile(path, bytes);
+  return path;
+}
+
+/** The HLG signal of ffmpeg notes §5: a test pattern made ARIB STD-B67 / BT.2020 by zscale, tagged so. */
+const HLG_FILTERS =
+  "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=2020:t=arib-std-b67:m=2020_ncl:r=limited,format=yuv420p10le";
+const HLG_TAGS = ["-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc", "-tag:v", "hvc1"];
+
+/**
+ * 10-bit HEVC HLG of `size`, with mono AAC: an iPhone's picture and sound, before its display
+ * matrix and tags. With `grain`, it has a camera sensor's noise at an iPhone's 4K bitrate (about 45
+ * Mbit/s), which takes as long to decode and encode as real footage; a clean test pattern takes a
+ * fraction of that.
+ */
+function hlgClip(size: string, seconds: number, { grain = false } = {}): Promise<Buffer> {
+  const rate = 30;
+  return clip("hlg.mov", [
+    ...["-f", "lavfi", "-i", `testsrc2=size=${size}:rate=${rate}`],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"],
+    ...["-t", String(seconds), "-vf", grain ? `noise=alls=12:allf=t+u,${HLG_FILTERS}` : HLG_FILTERS],
+    ...["-c:v", "libx265", "-preset", "ultrafast"],
+    ...[
+      "-x265-params",
+      `log-level=error:keyint=${rate}:min-keyint=${rate}:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc${grain ? ":bitrate=45000" : ""}`,
+    ],
+    ...HLG_TAGS,
+    ...["-c:a", "aac", "-ac", "1"],
+  ]);
+}
+
+/**
+ * An iPhone's portrait HDR clip: HLG 1920 × 1080 stored, shown turned −90 (upright 1080 × 1920),
+ * with Apple's location key, its own capture time and a location tag, as an iPhone's MOV carries.
+ */
+async function iphoneClip(): Promise<Buffer> {
+  const flat = await saved(await hlgClip("1920x1080", 2), "mov");
+  return clip("iphone.mov", [
+    ...["-display_rotation", "-90", "-i", flat, "-c", "copy", "-map_metadata", "-1"],
+    ...["-movflags", "use_metadata_tags"],
+    ...["-metadata", `com.apple.quicktime.location.ISO6709=${LOCATION}`],
+    ...["-metadata", "com.apple.quicktime.creationdate=2026-12-06T01:00:00+0200"],
+    ...["-metadata", `location=${LOCATION}`],
+    ...["-f", "mov"],
+  ]);
+}
+
+/**
+ * An Android phone's clip: H.264 at full range (yuvj420p), with AAC, in a MOV whose location is a
+ * `©xyz` atom, and its creation time.
+ */
+function androidClip(): Promise<Buffer> {
+  return clip("android.mov", [
+    ...["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"],
+    ...["-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuvj420p", "-color_range", "pc", "-c:a", "aac"],
+    ...["-metadata", `location=${LOCATION}`, "-metadata", "creation_time=2026-12-05T10:30:00Z", "-f", "mov"],
+  ]);
+}
+
+/** 1080p at 60 fps, H.264 with no audio, in an MP4 whose location is a `loci` atom. */
+function sixtyFramesClip(): Promise<Buffer> {
+  return clip("sixty.mp4", [
+    ...["-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=60"],
+    ...["-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+    ...["-metadata", `location=${LOCATION}`, "-f", "mp4"],
+  ]);
+}
+
+/** HDR10: PQ with a mastering display and content light levels, which libx264 would carry into SDR (ffmpeg notes §4.6). */
+function pqClip(): Promise<Buffer> {
+  return clip("pq.mov", [
+    ...["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t", "1"],
+    ...["-vf", HLG_FILTERS.replace("t=arib-std-b67", "t=smpte2084")],
+    ...["-c:v", "libx265", "-preset", "ultrafast"],
+    ...[
+      "-x265-params",
+      "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:hdr10=1:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400",
+    ],
+    ...["-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-tag:v", "hvc1"],
+  ]);
+}
+
+/** A phone's faststart MP4 cut to half its bytes: ffprobe still reads all of its index, but half its frames are gone (ffmpeg notes §5). */
+async function truncatedClip(): Promise<Buffer> {
+  const whole = await clip("whole.mp4", [
+    ...["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi", "-i", "sine=frequency=440"],
+    ...["-t", "3", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac"],
+    ...["-movflags", "+faststart"],
+  ]);
+  return whole.subarray(0, Math.floor(whole.length / 2));
+}
+
+/**
+ * Puts the bytes in the private bucket as a video's original, with its row as the poster job
+ * leaves an unplayable one: ready, listed, its poster's files named, its conversion queued.
+ */
+async function readyVideo(bytes: Uint8Array, extension: string, values: Partial<typeof media.$inferInsert> = {}): Promise<string> {
+  const id = values.id ?? randomUUID();
+  const key = originalKey(id, extension);
+  privateKeys.push(key, `manifests/${id}.json`);
+  await storageClient().send(new PutObjectCommand({ Bucket: storageConfig().privateBucket, Key: key, Body: bytes }));
+  await getDb()
+    .insert(media)
+    .values({
+      id,
+      purpose: "album",
+      kind: "video",
+      guestId: null,
+      uploaderName: "Ama Owusu",
+      celebration: "reception",
+      originalKey: key,
+      originalFilename: `IMG_0001.${extension.toUpperCase()}`,
+      sizeBytes: bytes.length,
+      contentType: extension === "mov" ? "video/quicktime" : "video/mp4",
+      status: "ready",
+      startedAt: new Date("2026-12-06T12:00:00Z"),
+      uploadedAt: new Date("2026-12-06T12:01:00Z"),
+      listedAt: new Date("2026-12-06T12:02:00Z"),
+      capturedAt: CAPTURED_AT,
+      derived: { "poster-thumb": `derived/${id}/0000000000000000/poster-thumb.webp`, "poster-view": `derived/${id}/0000000000000000/poster-view.webp` },
+      width: 1080,
+      height: 1920,
+      videoCodec: "hevc",
+      browserPlayable: false,
+      conversion: "queued",
+      ...values,
+    });
+  return id;
+}
+
+/** Puts a JPEG in the private bucket as a photo's original, with its row `uploaded` as the upload API leaves it. */
+async function uploadedPhoto(bytes: Uint8Array): Promise<string> {
+  const id = randomUUID();
+  const key = originalKey(id, "jpg");
+  privateKeys.push(key, `manifests/${id}.json`);
+  await storageClient().send(new PutObjectCommand({ Bucket: storageConfig().privateBucket, Key: key, Body: bytes }));
+  await getDb().insert(media).values({
+    id,
+    purpose: "album",
+    kind: "photo",
+    guestId: null,
+    uploaderName: "Kofi Mensah",
+    celebration: "more",
+    originalKey: key,
+    originalFilename: "IMG_0002.JPG",
+    sizeBytes: bytes.length,
+    contentType: "image/jpeg",
+    status: "uploaded",
+    startedAt: new Date("2026-12-06T12:00:00Z"),
+    uploadedAt: new Date("2026-12-06T12:01:00Z"),
+  });
+  return id;
+}
+
+/** The job as pg-boss delivers it, on its first attempt unless `retryCount` says otherwise. */
+function convertJob(mediaId: string, retryCount = 0, signal: AbortSignal = AbortSignal.timeout(600_000)): MediaJob {
+  return { id: randomUUID(), queue: MEDIA_QUEUES.convert, data: { mediaId }, signal, retryCount };
+}
+
+async function readItem(mediaId: string) {
+  const [row] = await getDb().select().from(media).where(eq(media.id, mediaId));
+  return row;
+}
+
+/** The public bucket's keys under an item's folder. */
+async function publicKeysOf(mediaId: string): Promise<string[]> {
+  const listing = await storageClient().send(
+    new ListObjectsV2Command({ Bucket: storageConfig().publicBucket, Prefix: `derived/${mediaId}/` }),
+  );
+  return (listing.Contents ?? []).map((object) => object.Key ?? "");
+}
+
+async function readPublic(key: string) {
+  const response = await storageClient().send(new GetObjectCommand({ Bucket: storageConfig().publicBucket, Key: key }));
+  return {
+    bytes: Buffer.from((await response.Body?.transformToByteArray()) ?? []),
+    contentType: response.ContentType,
+    cacheControl: response.CacheControl,
+  };
+}
+
+/** The error convertVideo failed with on attempt `retryCount + 1`, or null when it didn't fail. */
+async function failureOf(mediaId: string, retryCount = 0, options = convertOptions()): Promise<Error | null> {
+  try {
+    await convertVideo(convertJob(mediaId, retryCount), options);
+    return null;
+  } catch (error) {
+    return error as Error;
+  }
+}
+
+type Stream = Record<string, unknown> & { codec_type: string; tags?: Record<string, string>; side_data_list?: unknown[] };
+type Description = { streams: Stream[]; format: { duration?: string; tags?: Record<string, string> }; firstFrameSideData: string[] };
+
+/** What ffprobe says of a converted file: its streams and tags, and the side data on its first video frame. */
+async function describeConverted(bytes: Uint8Array): Promise<Description> {
+  const path = await saved(bytes, "mp4");
+  const base = ["-hide_banner", "-loglevel", "error", "-print_format", "json"];
+  const { stdout } = await runFile("ffprobe", [
+    ...base,
+    ...[
+      "-show_entries",
+      "format=duration:format_tags:stream=codec_type,codec_name,profile,level,pix_fmt,width,height,channels,avg_frame_rate,duration,color_range,color_space,color_transfer,color_primaries:stream_tags:stream_side_data_list",
+    ],
+    path,
+  ]);
+  const frames = await runFile("ffprobe", [
+    ...base,
+    ...["-select_streams", "v", "-read_intervals", "%+#1", "-show_entries", "frame_side_data=side_data_type", path],
+  ]);
+  const [firstFrame] = (JSON.parse(frames.stdout).frames ?? []) as { side_data_list?: { side_data_type: string }[] }[];
+  return { ...JSON.parse(stdout), firstFrameSideData: (firstFrame?.side_data_list ?? []).map((data) => data.side_data_type) };
+}
+
+/** An MP4's (or MOV's) top-level boxes, in order, each with its bytes (ffmpeg notes §5). */
+function topLevelBoxes(fileBytes: Buffer): { type: string; bytes: Buffer }[] {
+  const boxes: { type: string; bytes: Buffer }[] = [];
+  let position = 0;
+  while (position + 8 <= fileBytes.length) {
+    let size = fileBytes.readUInt32BE(position);
+    const type = fileBytes.toString("latin1", position + 4, position + 8);
+    if (size === 1) size = Number(fileBytes.readBigUInt64BE(position + 8));
+    if (size === 0) size = fileBytes.length - position;
+    boxes.push({ type, bytes: fileBytes.subarray(position, position + size) });
+    position += size;
+  }
+  return boxes;
+}
+
+/** The location forms a phone writes, found in the file's index (its `moov`), where metadata lives. */
+function locationsIn(fileBytes: Buffer): string[] {
+  const index = topLevelBoxes(fileBytes).find((box) => box.type === "moov")?.bytes ?? Buffer.alloc(0);
+  const forms: [string, Buffer][] = [
+    ["©xyz", Buffer.from([0xa9, 0x78, 0x79, 0x7a])],
+    ["loci", Buffer.from("loci")],
+    ["ISO6709", Buffer.from("com.apple.quicktime.location.ISO6709")],
+    ["coordinates", Buffer.from("+05.6037")],
+  ];
+  return forms.filter(([, bytes]) => index.includes(bytes)).map(([name]) => name);
+}
+
+const videoOf = (description: Description) => description.streams.find((stream) => stream.codec_type === "video") as Stream;
+const audiosOf = (description: Description) => description.streams.filter((stream) => stream.codec_type === "audio");
+/** The HDR side data that mustn't reach an SDR file (ffmpeg notes §4.6). */
+const HDR_SIDE_DATA = /mastering|light level|ambient|dolby|dovi|hdr10|dynamic/i;
+
+it.skipIf(!inWorkerImage)("runs on the worker image's ffmpeg 7.1, which the conversion and its memory cap were measured on", () => {
+  expect(versionLine).toMatch(/^ffmpeg version 7\.1\./);
+});
+
+describe("outputProblem: exiting 0 isn't success (ffmpeg notes §4.17)", () => {
+  const output = (video: Record<string, unknown> = {}, audio: Record<string, unknown> | null = {}, duration = "3.008000") => ({
+    format: { duration },
+    streams: [
+      { codec_type: "video", codec_name: "h264", profile: "High", pix_fmt: "yuv420p", width: 1080, height: 1920, duration: "3.000000", ...video },
+      ...(audio === null ? [] : [{ codec_type: "audio", codec_name: "aac", profile: "LC", duration: "3.008000", ...audio }]),
+    ],
+  });
+  const expected = { videoSeconds: 3, audio: true };
+
+  it("passes H.264 High in 8-bit 4:2:0, even-sided within 1920 × 1080 either way up, as long as the original, with AAC", () => {
+    expect(outputProblem(output(), expected)).toBeNull();
+    expect(outputProblem(output({ width: 1920, height: 1080 }), expected)).toBeNull();
+    expect(outputProblem(output({ duration: "3.450000" }), expected)).toBeNull();
+    expect(outputProblem(output({}, null), { videoSeconds: 3, audio: false })).toBeNull();
+  });
+
+  it("refuses anything else, saying what", () => {
+    const problems: [string, unknown, { videoSeconds: number | null; audio: boolean }, RegExp][] = [
+      ["High 10", output({ profile: "High 10" }), expected, /profile is High 10, not High/],
+      ["10-bit", output({ pix_fmt: "yuv420p10le" }), expected, /yuv420p10le, not yuv420p/],
+      ["HEVC", output({ codec_name: "hevc" }), expected, /hevc, not H.264/],
+      ["an odd side", output({ width: 1079 }), expected, /1079 × 1920, not even-sided/],
+      ["too large", output({ width: 2160, height: 3840 }), expected, /2160 × 3840/],
+      ["no audio", output({}, null), expected, /no AAC audio/],
+      ["MP3 audio", output({}, { codec_name: "mp3" }), expected, /no AAC audio/],
+      ["half as long", output({ duration: "1.500000" }, {}, "1.500000"), expected, /1\.50 s long, the original's 3\.00 s/],
+      ["no duration", { ...output({ duration: undefined }), format: {} }, expected, /no duration/],
+      ["no video", { format: {}, streams: [] }, expected, /0 video streams/],
+      ["nothing ffprobe could say", null, expected, /couldn't describe/],
+    ];
+    for (const [what, json, expecting, message] of problems) {
+      expect(outputProblem(json, expecting), what).toMatch(message);
+    }
+  });
+
+  it("skips the length check only when the original's length is unknown (a browser's WebM)", () => {
+    expect(outputProblem(output({ duration: "1.500000" }, {}, "1.500000"), { videoSeconds: null, audio: true })).toBeNull();
+  });
+});
+
+describe("conversionMilliseconds: the conversion's time, sized from its measured speed", () => {
+  it("gives ten seconds a second of video and ten minutes more, never past three hours", () => {
+    expect(conversionMilliseconds(10)).toBe(10 * 60_000 + 100_000);
+    expect(conversionMilliseconds(180)).toBe(10 * 60_000 + 1_800_000);
+    expect(conversionMilliseconds(4 * 3600)).toBe(3 * 3600_000);
+    expect(conversionMilliseconds(null)).toBe(3 * 3600_000);
+  });
+
+  it("leaves an hour of the job's four for the download, the upload and the rest", () => {
+    const jobMilliseconds = (MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.convert].expireInSeconds ?? 0) * 1000;
+    expect(jobMilliseconds).toBe(14_400_000);
+    expect(conversionMilliseconds(null) + 3600_000).toBeLessThanOrEqual(jobMilliseconds);
+  });
+});
+
+describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)", () => {
+  it("makes an iPhone's rotated HLG clip H.264 High, upright 1080 × 1920, SDR BT.709, AAC stereo, faststart, with its capture time and no location", async () => {
+    const original = await iphoneClip();
+    // The fixture is what it claims: an iPhone's location key (and its loci) in the index, turned −90.
+    expect(locationsIn(original)).toEqual(expect.arrayContaining(["ISO6709", "coordinates"]));
+    const mediaId = await readyVideo(original, "mov");
+
+    const report = await convertVideo(convertJob(mediaId), convertOptions());
+
+    const item = await readItem(mediaId);
+    expect(item).toMatchObject({ status: "ready", conversion: "done", width: 1080, height: 1920 });
+    // The poster's files are kept beside it.
+    expect(Object.keys(item.derived).sort()).toEqual(["poster-thumb", "poster-view", "video"]);
+    expect(item.derived.video).toMatch(new RegExp(`^derived/${mediaId}/[0-9a-f]{16}/video\\.mp4$`));
+    const converted = await readPublic(item.derived.video ?? "");
+    expect(converted.contentType).toBe("video/mp4");
+    expect(converted.cacheControl).toBe("public, max-age=31536000, immutable");
+
+    const description = await describeConverted(converted.bytes);
+    const video = videoOf(description);
+    expect(video).toMatchObject({
+      codec_name: "h264",
+      profile: "High",
+      pix_fmt: "yuv420p",
+      width: 1080,
+      height: 1920,
+      color_range: "tv",
+      color_space: "bt709",
+      color_transfer: "bt709",
+      color_primaries: "bt709",
+    });
+    expect(Number(video.level)).toBeLessThanOrEqual(40);
+    // Turned once, by autorotate: no display matrix left, and no HDR side data on the stream or its frames.
+    expect(video.side_data_list).toBeUndefined();
+    expect(description.firstFrameSideData.filter((type) => HDR_SIDE_DATA.test(type))).toEqual([]);
+    expect(audiosOf(description)).toEqual([expect.objectContaining({ codec_name: "aac", channels: 2 })]);
+    expect(Number(description.format.duration)).toBeCloseTo(2, 0);
+    // moov before mdat: a phone plays it while it downloads.
+    const boxes = topLevelBoxes(converted.bytes).map((box) => box.type);
+    expect(boxes.slice(0, 2)).toEqual(["ftyp", "moov"]);
+    expect(boxes.indexOf("mdat")).toBeGreaterThan(boxes.indexOf("moov"));
+    // Its capture time, as the poster job settled it, and nothing else of the original's.
+    expect(locationsIn(converted.bytes)).toEqual([]);
+    expect(description.format.tags).toMatchObject({ creation_time: "2026-12-05T23:00:00.000000Z" });
+    expect(JSON.stringify(description)).not.toMatch(/location|ISO6709|creationdate|05\.6037/i);
+    expect(video.tags).toMatchObject({ creation_time: "2026-12-05T23:00:00.000000Z" });
+
+    expect(report).toEqual({ sizeBytes: original.length, kind: "video/hevc-hdr" });
+    // The manifest is written again once it is done.
+    expect(await readManifest(mediaId)).toMatchObject({ celebration: "reception", hiddenAt: null });
+  });
+
+  it("runs ffmpeg as the ffmpeg notes' §2.3 says: nice'd, capped, on pinned threads, from a scratch file only", async () => {
+    const mediaId = await readyVideo(await iphoneClip(), "mov");
+
+    await convertVideo(convertJob(mediaId), convertOptions());
+
+    const [run] = conversionRuns();
+    expect(run.priority).toBe("background");
+    expect(run.args.slice(0, 4)).toEqual(["prlimit", `--as=${3 * 1024 ** 3}`, "--", "ffmpeg"]);
+    const args = run.args.slice(4);
+    const input = args.indexOf("-i");
+    const valueAfter = (flag: string, from = 0) => args[args.indexOf(flag, from) + 1];
+    for (const flag of ["-hide_banner", "-nostdin", "-nostats", "-xerror", "-y"]) expect(args.indexOf(flag)).toBeLessThan(input);
+    expect(valueAfter("-loglevel")).toBe("error");
+    expect(valueAfter("-filter_threads")).toBe("1");
+    expect(valueAfter("-protocol_whitelist")).toBe("file");
+    expect(valueAfter("-format_whitelist")).toBe("mov,matroska");
+    // The decoder's threads before the input, x264's after it (ffmpeg notes §4.14).
+    expect(args[input - 2]).toBe("-threads");
+    expect(args[input - 1]).toBe("2");
+    expect(valueAfter("-threads", input)).toBe("2");
+    expect(args[input + 1]).toMatch(/\/original$/);
+    expect(args.slice(input + 2, input + 6)).toEqual(["-map", "0:0", "-map", "0:1"]);
+    expect(valueAfter("-map_metadata")).toBe("-1");
+    expect(valueAfter("-map_chapters")).toBe("-1");
+    expect(valueAfter("-fpsmax")).toBe("30");
+    expect(valueAfter("-c:v")).toBe("libx264");
+    expect(valueAfter("-preset")).toBe("veryfast");
+    expect(valueAfter("-crf")).toBe("23");
+    expect(valueAfter("-profile:v")).toBe("high");
+    expect(args).not.toContain("-level");
+    expect(args).not.toContain("-level:v");
+    expect(args.slice(args.indexOf("-c:a"), args.indexOf("-c:a") + 6)).toEqual(["-c:a", "aac", "-b:a", "128k", "-ac", "2"]);
+    expect(valueAfter("-metadata")).toBe(`creation_time=${CAPTURED_AT.toISOString()}`);
+    expect(args.slice(-5)).toEqual(["-movflags", "+faststart", "-f", "mp4", expect.stringMatching(/\/converted\.mp4$/)]);
+    // The orientation-aware fit (ffmpeg notes §4.11), HLG tone-mapped, side data deleted; never a turn of our own.
+    const filters = valueAfter("-vf");
+    expect(filters).toMatch(/^scale=w='if\(gte\(iw,ih\),min\(1920,iw\),min\(1080,iw\)\)':h='if\(gte\(iw,ih\),min\(1080,ih\),min\(1920,ih\)\)'/);
+    expect(filters).toContain("zscale=tin=arib-std-b67:min=2020_ncl:pin=2020:rin=limited:t=linear:npl=100");
+    expect(filters).toContain("tonemap=tonemap=hable:desat=0");
+    expect(filters).toContain("sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA");
+    expect(filters).not.toMatch(/transpose|rotate|flip/);
+    expect(args).not.toContain("-noautorotate");
+    // Its probes too run nice'd, under the probe's cap, from the scratch file only.
+    const probes = programs.runs.filter((program) => program.args.includes("ffprobe"));
+    expect(probes).toHaveLength(2);
+    for (const probe of probes) {
+      expect(probe.priority).toBe("background");
+      expect(probe.args.slice(0, 4)).toEqual(["prlimit", `--as=${2 * 1024 ** 3}`, "--", "ffprobe"]);
+      expect(probe.args[probe.args.indexOf("-protocol_whitelist") + 1]).toBe("file");
+    }
+    // It asked the scratch disk for twice the original's size, and more.
+    const [bytesNeeded] = scratch.bytesNeeded;
+    expect(bytesNeeded).toBeGreaterThanOrEqual(2 * (await readItem(mediaId)).sizeBytes);
+  });
+
+  it("deletes a PQ clip's mastering display and light levels, which an SDR file mustn't carry (ffmpeg notes §4.6)", async () => {
+    const original = await pqClip();
+    const mediaId = await readyVideo(original, "mov");
+
+    await convertVideo(convertJob(mediaId), convertOptions());
+
+    const description = await describeConverted((await readPublic((await readItem(mediaId)).derived.video ?? "")).bytes);
+    expect(videoOf(description)).toMatchObject({ width: 1280, height: 720, color_transfer: "bt709", profile: "High" });
+    expect(videoOf(description).side_data_list).toBeUndefined();
+    expect(description.firstFrameSideData.filter((type) => HDR_SIDE_DATA.test(type))).toEqual([]);
+    expect(audiosOf(description)).toEqual([]);
+    expect(conversionRuns()[0].args).not.toContain("-c:a");
+  });
+
+  it("makes an Android phone's full-range clip limited-range BT.709, never enlarged, with no `©xyz` location", async () => {
+    const original = await androidClip();
+    expect(locationsIn(original)).toEqual(expect.arrayContaining(["©xyz", "coordinates"]));
+    const mediaId = await readyVideo(original, "mov", { width: 640, height: 360, videoCodec: "h264" });
+
+    const report = await convertVideo(convertJob(mediaId), convertOptions());
+
+    const bytes = (await readPublic((await readItem(mediaId)).derived.video ?? "")).bytes;
+    const description = await describeConverted(bytes);
+    expect(videoOf(description)).toMatchObject({
+      width: 640,
+      height: 360,
+      pix_fmt: "yuv420p",
+      color_range: "tv",
+      color_space: "bt709",
+      color_primaries: "bt709",
+      color_transfer: "bt709",
+    });
+    expect(locationsIn(bytes)).toEqual([]);
+    expect(report).toMatchObject({ kind: "video/h264" });
+    expect(conversionRuns()[0].args.join(" ")).toContain(":in_color_matrix=bt709:in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=");
+  });
+
+  it("brings 60 fps down to 30 (H.264 level 4.0), with no audio stream and no creation time when neither is known", async () => {
+    const original = await sixtyFramesClip();
+    expect(locationsIn(original)).toEqual(expect.arrayContaining(["loci"]));
+    const mediaId = await readyVideo(original, "mp4", { width: 1920, height: 1080, videoCodec: "h264", capturedAt: null });
+
+    await convertVideo(convertJob(mediaId), convertOptions());
+
+    const bytes = (await readPublic((await readItem(mediaId)).derived.video ?? "")).bytes;
+    const description = await describeConverted(bytes);
+    expect(videoOf(description)).toMatchObject({ width: 1920, height: 1080, avg_frame_rate: "30/1", level: 40 });
+    expect(audiosOf(description)).toEqual([]);
+    expect(description.format.tags?.creation_time).toBeUndefined();
+    expect(locationsIn(bytes)).toEqual([]);
+    expect(conversionRuns()[0].args).not.toContain("-metadata");
+  });
+});
+
+describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
+  it("is retried when the original was cut short (it passes ffprobe), its conversion queued again, and is corrupt for good on its third attempt", async () => {
+    const mediaId = await readyVideo(await truncatedClip(), "mp4", { width: 640, height: 360 });
+
+    for (const retryCount of [0, 1]) {
+      const error = await failureOf(mediaId, retryCount);
+      expect(error, `attempt ${retryCount + 1}`).not.toBeInstanceOf(PermanentJobError);
+      expect(error?.message).toMatch(/^ffmpeg /);
+      expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "queued" });
+    }
+    const last = await failureOf(mediaId, 2);
+    expect(last).toBeInstanceOf(PermanentJobError);
+    expect((last as PermanentJobError).reason).toBe("corrupt");
+    // Left for media.dead to mark failed (markConversionFailed); the video keeps its poster.
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "converting" });
+    expect(Object.keys((await readItem(mediaId)).derived)).not.toContain("video");
+    expect(await publicKeysOf(mediaId)).toEqual([]);
+  });
+
+  it("is marked failed through the queue once it fails for good, and the video stays ready with its poster", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    workers = await startQueueWorkers(
+      boss,
+      { [MEDIA_QUEUES.convert]: convertHandler(convertOptions()) },
+      { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
+      { pollingIntervalSeconds: 0.5 },
+    );
+    // A JPEG with a video's name: unsupported-type, at once.
+    const jpeg = await clip("photo.jpg", ["-f", "lavfi", "-i", "testsrc2=size=640x480", "-frames:v", "1"]);
+    const mediaId = await readyVideo(jpeg, "mp4");
+    await boss.send(MEDIA_QUEUES.convert, { mediaId }, { priority: CONVERT_PRIORITY.onDemand });
+
+    const deadline = Date.now() + 30_000;
+    while ((await readItem(mediaId)).conversion !== "failed" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "failed", failureReason: null });
+    expect(Object.keys((await readItem(mediaId)).derived).sort()).toEqual(["poster-thumb", "poster-view"]);
+  });
+
+  it("is retried, never published, when ffmpeg can't convert within its memory cap", async () => {
+    const mediaId = await readyVideo(await iphoneClip(), "mov");
+
+    const error = await failureOf(mediaId, 0, convertOptions({ convertMemoryBytes: 400 * 1024 * 1024 }));
+
+    expect(error).not.toBeInstanceOf(PermanentJobError);
+    expect(error?.message).toMatch(/^ffmpeg /);
+    expect(conversionRuns()[0].args.slice(0, 2)).toEqual(["prlimit", `--as=${400 * 1024 * 1024}`]);
+    expect(await readItem(mediaId)).toMatchObject({ conversion: "queued" });
+    expect(await publicKeysOf(mediaId)).toEqual([]);
+  });
+
+  it("removes its scratch folder however it ends: done, a file ffmpeg refuses, or killed mid-conversion by its job's end", async () => {
+    const done = await readyVideo(await androidClip(), "mov");
+    await convertVideo(convertJob(done), convertOptions());
+    const random = await readyVideo(randomBytes(64 * 1024), "mp4");
+    await failureOf(random);
+
+    // Killed once ffmpeg is converting: the job expired, or the worker is stopping.
+    const killed = await readyVideo(await iphoneClip(), "mov");
+    const ending = new AbortController();
+    const conversionsBefore = conversionRuns().length;
+    const converting = convertVideo(convertJob(killed, 0, ending.signal), convertOptions());
+    const deadline = Date.now() + 60_000;
+    while (conversionRuns().length === conversionsBefore && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    ending.abort();
+    const error = await converting.then(
+      () => null,
+      (failure: unknown) => failure as Error,
+    );
+
+    expect(error).not.toBeInstanceOf(PermanentJobError);
+    expect(error?.message).toMatch(/ffmpeg didn't finish with the video: it was killed \(aborted\)/);
+    expect(await readItem(killed)).toMatchObject({ conversion: "queued" });
+    expect(await readdir(scratchRoot)).toEqual([]);
+  });
+});
+
+describe.skipIf(!ffmpegSeven)("a conversion job delivered twice, late, or for a video that has moved on (Ruling AG)", () => {
+  it("does nothing, and runs nothing, unless the conversion is queued and the video ready and visible", async () => {
+    const bytes = randomBytes(1024);
+    const items = [
+      await readyVideo(bytes, "mp4", { conversion: "none" }),
+      await readyVideo(bytes, "mp4", { conversion: "done", derived: { video: "derived/x/0000000000000000/video.mp4" } }),
+      await readyVideo(bytes, "mp4", { conversion: "failed" }),
+      // Another job is converting it now: a first attempt of a second job leaves it alone.
+      await readyVideo(bytes, "mp4", { conversion: "converting" }),
+      await readyVideo(bytes, "mp4", { hiddenAt: new Date(), hiddenBy: "admin" }),
+      await readyVideo(bytes, "mp4", { hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true }),
+      await readyVideo(bytes, "mp4", { deletedAt: new Date() }),
+      await readyVideo(bytes, "mp4", { status: "uploaded", listedAt: null }),
+      await readyVideo(bytes, "jpg", { kind: "photo", contentType: "image/jpeg" }),
+    ];
+    const before = await Promise.all(items.map(readItem));
+
+    for (const mediaId of [...items, randomUUID(), "not-an-id"]) {
+      expect(await convertVideo(convertJob(mediaId), convertOptions())).toBeUndefined();
+    }
+
+    expect(programs.runs).toEqual([]);
+    expect(scratch.bytesNeeded).toEqual([]);
+    expect(await Promise.all(items.map(readItem))).toEqual(before);
+  });
+
+  it("carries on, on a retry, a conversion its own earlier attempt left converting (its worker died)", async () => {
+    const mediaId = await readyVideo(await androidClip(), "mov", { conversion: "converting" });
+
+    await convertVideo(convertJob(mediaId, 1), convertOptions());
+
+    expect(await readItem(mediaId)).toMatchObject({ conversion: "done" });
+  });
+
+  it("converts once however often it is delivered: the backlog's job after an on-demand one finished does nothing", async () => {
+    const mediaId = await readyVideo(await androidClip(), "mov");
+
+    await convertVideo(convertJob(mediaId), convertOptions());
+    const { derived } = await readItem(mediaId);
+    const runsAfterFirst = programs.runs.length;
+    await convertVideo(convertJob(mediaId), convertOptions());
+
+    expect(programs.runs).toHaveLength(runsAfterFirst);
+    expect(await readItem(mediaId)).toMatchObject({ conversion: "done", derived });
+  });
+
+  it("publishes nothing for a video hidden while it converted: its file comes down, and its conversion waits, queued, for an unhide", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const mediaId = await readyVideo(await androidClip(), "mov");
+    publishing.afterPut = async () => {
+      await getDb().update(media).set({ hiddenAt: new Date(), hiddenBy: "admin" }).where(eq(media.id, mediaId));
+    };
+
+    await convertVideo(convertJob(mediaId), convertOptions());
+
+    const item = await readItem(mediaId);
+    expect(item).toMatchObject({ status: "ready", conversion: "queued" });
+    expect(item.derived.video).toBeUndefined();
+    expect(await publicKeysOf(mediaId)).toEqual([]);
+  });
+
+  it("keeps the file another job finished under the same key while this one worked", async () => {
+    const mediaId = await readyVideo(await androidClip(), "mov");
+    publishing.afterPut = async () => {
+      await convertVideo(convertJob(mediaId, 1), convertOptions());
+    };
+
+    await convertVideo(convertJob(mediaId), convertOptions());
+
+    const item = await readItem(mediaId);
+    expect(item.conversion).toBe("done");
+    expect(await publicKeysOf(mediaId)).toEqual([item.derived.video]);
+  });
+});
+
+describe.skipIf(!ffmpegSeven)("Ruling E: a photo stays fast while a real 4K HDR conversion runs", () => {
+  it("finishes a 12 MP photo job in under 20 s while an iPhone-like 4K HLG clip converts, nice'd, at the default threads and memory cap", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const config = workerConfig({});
+    // An iPhone's portrait 4K HDR, grain, bitrate and display matrix included: autorotate turns
+    // each 4K frame before it is shrunk. Measured at 1.2 to 3 s a second of video on 3 CPUs.
+    const flat = await saved(await hlgClip("3840x2160", 6, { grain: true }), "mov");
+    const portrait = await clip("portrait.mov", ["-display_rotation", "-90", "-i", flat, "-c", "copy"]);
+    const hdr = await readyVideo(portrait, "mov", { width: 2160, height: 3840 });
+    const photoBytes = await sharp({
+      create: { width: 4032, height: 3024, channels: 3, background: { r: 128, g: 128, b: 128 }, noise: { type: "gaussian", mean: 128, sigma: 40 } },
+    })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    const photoId = await uploadedPhoto(photoBytes);
+    workers = await startQueueWorkers(
+      boss,
+      {
+        [MEDIA_QUEUES.convert]: convertHandler(convertOptions()),
+        [MEDIA_QUEUES.photo]: photoHandler({ heifMemoryBytes: config.heifMemoryBytes, heifThreads: config.threads.heif }),
+      },
+      config.concurrency,
+      { pollingIntervalSeconds: 0.5 },
+    );
+
+    const convertStartedAt = performance.now();
+    await boss.send(MEDIA_QUEUES.convert, { mediaId: hdr }, { priority: CONVERT_PRIORITY.onDemand });
+    const deadline = Date.now() + 120_000;
+    while (!conversionRuns().some((run) => run.args.includes("libx264")) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    // Let x264 take the CPUs first.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+
+    const photoSentAt = performance.now();
+    await boss.send(MEDIA_QUEUES.photo, { mediaId: photoId });
+    while ((await readItem(photoId)).status !== "ready" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const photoMilliseconds = performance.now() - photoSentAt;
+    const conversionAtPhoto = (await readItem(hdr)).conversion;
+    while ((await readItem(hdr)).conversion !== "done" && Date.now() < deadline + 240_000) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const conversionTotalMilliseconds = performance.now() - convertStartedAt;
+    log.mockRestore();
+    console.log(
+      `[Ruling E] photo ready in ${Math.round(photoMilliseconds)} ms while the 4K HLG conversion ran (${conversionAtPhoto}); ` +
+        `the 6 s clip converted in ${Math.round(conversionTotalMilliseconds)} ms`,
+    );
+
+    expect(photoMilliseconds).toBeLessThan(20_000);
+    expect(conversionAtPhoto).toBe("converting");
+    // The 4K HDR conversion fits the default 3 GiB cap.
+    expect(await readItem(hdr)).toMatchObject({ conversion: "done" });
+  }, 600_000);
+});

@@ -6,6 +6,7 @@ import {
   guests,
   media,
   uploadEvents,
+  type CONVERSION_STATES,
   type MEDIA_FILE_KINDS,
   type MEDIA_PURPOSES,
   type MEDIA_STATUSES,
@@ -17,6 +18,7 @@ import type { MediaManifest } from "@/lib/storage/manifest";
 type MediaPurpose = (typeof MEDIA_PURPOSES)[number];
 type MediaFileKind = (typeof MEDIA_FILE_KINDS)[number];
 type MediaStatus = (typeof MEDIA_STATUSES)[number];
+type ConversionState = (typeof CONVERSION_STATES)[number];
 type UploadEventKind = (typeof UPLOAD_EVENT_KINDS)[number];
 
 /*
@@ -32,19 +34,13 @@ type UploadEventKind = (typeof UPLOAD_EVENT_KINDS)[number];
  */
 export async function isVisible(mediaId: string): Promise<boolean> {
   if (!isUuid(mediaId)) return false;
-  const [row] = await getDb()
-    .select({ id: media.id })
-    .from(media)
-    .where(
-      and(
-        eq(media.id, mediaId),
-        isNull(media.hiddenAt),
-        isNull(media.deletedAt),
-        eq(media.removedByUploader, false),
-      ),
-    )
-    .limit(1);
+  const [row] = await getDb().select({ id: media.id }).from(media).where(visibleItem(mediaId)).limit(1);
   return row !== undefined;
+}
+
+/** The item, while no one has hidden it (removing one's own upload hides it too) or deleted it: isVisible's condition. */
+function visibleItem(mediaId: string) {
+  return and(eq(media.id, mediaId), isNull(media.hiddenAt), isNull(media.deletedAt), eq(media.removedByUploader, false));
 }
 
 /*
@@ -414,6 +410,145 @@ export async function markVideoReady(mediaId: string, video: ProcessedVideo): Pr
     manifest,
     conversionQueued: video.needsConversion && conversionBefore === "none" && conversionAfter === "queued",
   };
+}
+
+/*
+ * Video conversions (Task 11). A ready video's `conversion` goes `none` → `queued` (it needs one:
+ * its poster job found it unplayable or long, a phone asked, or the couple made it a highlight) →
+ * `converting` (a media.convert job is on it) → `done` (its MP4 is `derived.video`), or `failed`
+ * once its job has failed for good (the video keeps its poster, and plays from its original where
+ * a phone can). A conversion that doesn't finish goes back to `queued` for its job's retry.
+ */
+
+/** A ready, visible album video: what a phone may ask a playable version of (isVisible's condition, and ready). */
+function readyVideo(mediaId: string) {
+  return and(
+    visibleItem(mediaId),
+    sql`${media.status} = 'ready'`,
+    eq(media.kind, "video"),
+    eq(media.purpose, "album"),
+  );
+}
+
+/** What the playable route reads of a video. */
+export type PlayableVideo = {
+  conversion: ConversionState;
+  /** The converted MP4's key in the public bucket, once the conversion is done. */
+  videoKey: string | null;
+};
+
+/** The video's conversion, when it is a ready, visible album video; otherwise null. One read on the primary key. */
+export async function findPlayableVideo(mediaId: string): Promise<PlayableVideo | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .select({ conversion: media.conversion, videoKey: sql<string | null>`${media.derived} ->> 'video'` })
+    .from(media)
+    .where(readyVideo(mediaId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Records that a phone asked for a ready, visible video's conversion (conversion_requested_at, which
+ * makes it an on-demand one: the sweeper sends it again at the on-demand priority if its job is
+ * lost), and queues it if it hadn't been. True only for the first ask, whose caller sends the
+ * on-demand job, so asking again never sends a second: the row is the guard. A conversion done or
+ * failed, or asked for already, is left as it is.
+ */
+export async function markConversionRequested(mediaId: string): Promise<boolean> {
+  if (!isUuid(mediaId)) return false;
+  const rows = await getDb()
+    .update(media)
+    .set({
+      conversion: sql`case when ${media.conversion} = 'none' then 'queued' else ${media.conversion} end`,
+      conversionRequestedAt: sql`now()`,
+    })
+    .where(
+      and(
+        readyVideo(mediaId),
+        sql`${media.conversion} in ('none', 'queued', 'converting')`,
+        isNull(media.conversionRequestedAt),
+      ),
+    )
+    .returning({ id: media.id });
+  return rows.length > 0;
+}
+
+/** What a conversion job reads of its item when it claims it. */
+export type ConversionToRun = {
+  originalKey: string;
+  /** The capture time the poster job settled on: the converted file's creation_time. */
+  capturedAt: Date | null;
+};
+
+/**
+ * Claims the video's conversion for a media.convert job (Ruling AG), in one statement: `converting`,
+ * from `queued`, while the item is ready and neither hidden nor deleted. A retry (`resuming`) also
+ * takes it while `converting`, which its own earlier attempt left when its worker died mid-way; a
+ * first attempt finding it `converting` is a second job for a conversion already running, and does
+ * nothing. Null when there is nothing to do: converted already, failed for good, never queued,
+ * hidden, deleted, or converting under another job.
+ */
+export async function claimConversion(mediaId: string, options: { resuming: boolean }): Promise<ConversionToRun | null> {
+  if (!isUuid(mediaId)) return null;
+  const claimable = options.resuming
+    ? sql`${media.conversion} in ('queued', 'converting')`
+    : sql`${media.conversion} = 'queued'`;
+  const [row] = await getDb()
+    .update(media)
+    .set({ conversion: "converting" })
+    .where(
+      and(
+        eq(media.id, mediaId),
+        sql`${media.status} = 'ready'`,
+        eq(media.kind, "video"),
+        isNull(media.hiddenAt),
+        isNull(media.deletedAt),
+        claimable,
+      ),
+    )
+    .returning({ originalKey: media.originalKey, capturedAt: media.capturedAt });
+  return row ?? null;
+}
+
+/**
+ * Puts a conversion that didn't finish (its job failed and will retry, or the item was hidden
+ * while it ran) back to `queued`, if it is still `converting`: a phone's ask can then send it on
+ * demand, the sweeper sees it, and an unhide finds it waiting. Never one that is done or failed.
+ */
+export async function releaseConversion(mediaId: string): Promise<void> {
+  if (!isUuid(mediaId)) return;
+  await getDb()
+    .update(media)
+    .set({ conversion: "queued" })
+    .where(and(eq(media.id, mediaId), sql`${media.conversion} = 'converting'`));
+}
+
+/**
+ * Marks the video's conversion `done`, with the converted MP4's key as its `video` derived file, in
+ * one statement and only while the item still wants it (ready, neither hidden nor deleted, its
+ * conversion queued or converting): a hide while the job worked, or another job that finished
+ * first, leaves it as it is. Returns the facts its manifest holds, or null when it changed nothing.
+ */
+export async function markConversionDone(mediaId: string, videoKey: string): Promise<MediaManifest | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .update(media)
+    .set({
+      conversion: "done",
+      derived: sql`${media.derived} || jsonb_build_object('video', ${videoKey}::text)`,
+    })
+    .where(
+      and(
+        eq(media.id, mediaId),
+        sql`${media.status} = 'ready'`,
+        isNull(media.hiddenAt),
+        isNull(media.deletedAt),
+        sql`${media.conversion} in ('queued', 'converting')`,
+      ),
+    )
+    .returning(manifestColumns);
+  return row ?? null;
 }
 
 /** Where a sweep through unfinished uploads stopped: the last row it looked at. */

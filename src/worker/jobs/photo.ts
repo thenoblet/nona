@@ -153,6 +153,7 @@ async function runHeifTool(
       memoryBytes: context.heifMemoryBytes,
       signal: context.signal,
       timeoutMilliseconds,
+      priority: "foreground",
       cwd: context.folder,
     });
     return stdout;
