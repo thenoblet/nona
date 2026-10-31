@@ -7,7 +7,7 @@ import { conversionLeaseOf } from "@/lib/media/conversion";
 import { claimConversion, markConversionDone, releaseConversion } from "@/lib/media/rows";
 import { derivedKey } from "@/lib/storage/keys";
 import { headOriginal, putPublicObject } from "@/lib/storage/objects";
-import type { X264Preset } from "../config";
+import type { X264Cap, X264Preset } from "../config";
 import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
 import { saveOriginal, withScratch } from "../scratch";
 import { contentHashOf, rewriteManifest, withdrawIfHidden, type JobQueue } from "./publishing";
@@ -36,7 +36,10 @@ import {
  *    (the MP4's faststart pass rewrites the output in place: notes §4.13), under the job's signal;
  * 3. probes it there, and converts it, nice'd, on pinned threads and under its own memory cap
  *    (WORKER_CONVERT_MEMORY_BYTES): fitted within 1920 × 1080 whichever way up, HDR tone-mapped to
- *    SDR BT.709, at most 30 fps, AAC stereo, no metadata but its capture time, `moov` first;
+ *    SDR BT.709, at most 30 fps, CRF 23 (capped only where WORKER_X264_MAXRATE is set), AAC
+ *    stereo, no metadata but its capture time, `moov` first. One that starts while no other
+ *    conversion runs in this worker takes every CPU (WORKER_CPUS) for its decoder and x264; one
+ *    that starts beside another, the shared counts (Task 14b);
  * 4. checks what ffmpeg made, since exiting 0 isn't success (notes §4.17): H.264 High, 8-bit 4:2:0,
  *    as long as the original's video, with its audio;
  * 5. puts it in the public bucket under a content hash, marks the conversion `done` with its key,
@@ -49,9 +52,10 @@ import {
 
 /**
  * Part of every converted file's key. Raise it whenever what this job makes changes (the size, the
- * quality, the colours), so the files made again get new keys, which no cache has seen.
+ * quality, the colours), so the files made again get new keys, which no cache has seen. 2: Task
+ * 14b's threads and optional cap (whose values join the key too: conversionSettings).
  */
-const CONVERT_SETTINGS_VERSION = 1;
+const CONVERT_SETTINGS_VERSION = 2;
 /** The box a converted video fits within, either way up (Android's 1080p, notes §4.19). */
 const FIT = { longEdge: 1920, shortEdge: 1080 };
 /** -fpsmax: 60 fps and slow motion come out at 30, which keeps x264's level at 4.0 for 1080p (notes §4.19). */
@@ -95,23 +99,31 @@ export type ConvertOptions = {
   convertMemoryBytes: number;
   /** The memory ffprobe may take, as for a poster's: WORKER_FFMPEG_MEMORY_BYTES. */
   ffmpegMemoryBytes: number;
-  /** ffmpeg's -threads before -i, decoding the original: WORKER_FFMPEG_DECODER_THREADS. */
+  /** ffmpeg's -threads before -i, decoding the original, beside another conversion: WORKER_FFMPEG_DECODER_THREADS. */
   decoderThreads: number;
-  /** ffmpeg's -threads after -i, x264's: WORKER_X264_THREADS. */
+  /** ffmpeg's -threads after -i, x264's, beside another conversion: WORKER_X264_THREADS. */
   x264Threads: number;
   /** ffmpeg's -filter_threads (fitting, tone-mapping): WORKER_FFMPEG_FILTER_THREADS. */
   filterThreads: number;
+  /** The container's CPUs, a lone conversion's decoder and x264 threads: WORKER_CPUS. */
+  cpus: number;
   /** x264's -preset: WORKER_X264_PRESET. */
   x264Preset: X264Preset;
+  /** x264's -maxrate:v and -bufsize:v, WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE; null (the default) for none: pure CRF 23. */
+  x264Cap: X264Cap | null;
   /** The longest video converted, in seconds: WORKER_CONVERT_MAX_SECONDS. */
   convertMaxSeconds: number;
   /** The job queue a withdrawal is sent to, for a video hidden while it converted. */
   jobQueue: JobQueue;
 };
 
+/** The threads a conversion's ffmpeg runs on: its decoder's (-threads before -i), its filters' and x264's. */
+export type ConversionThreads = { decoder: number; x264: number; filter: number };
+
 /** What a conversion in the scratch folder made. */
 type Conversion = {
   facts: VideoFacts;
+  threads: ConversionThreads;
   outputBytes: number;
   downloadMilliseconds: number;
   convertMilliseconds: number;
@@ -122,12 +134,16 @@ type Conversion = {
  * ffmpeg's arguments for the conversion (ffmpeg notes §2.3), in the job's scratch folder:
  * - the original opened as a file only, by one of the two video demuxers (§2.0);
  * - -threads before -i is the decoder's, which would otherwise take the host's CPUs (§4.14), and
- *   after it x264's;
+ *   after it x264's (conversionThreads);
  * - -map by the probe's indexes: the video and one audio stream, never an iPhone's metadata tracks
  *   or a second video (§2.3); no turn of our own, as autorotate turns the frames upright (§4.1);
  * - -map_metadata -1 and -map_chapters -1 drop every tag, location included (the `©xyz` and `loci`
  *   atoms, Apple's location key), and only the capture time is written back: the default mapping
  *   would drop creation_time and keep the location (§4.12);
+ * - CRF 23, uncapped unless WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE are set: then -maxrate:v
+ *   and -bufsize:v hold its peaks to the cap over the buffer (the notes' optional "capped CRF",
+ *   §2.3; x264 still picks level 4.0). Off by default (Noblet): a cap costs quality in exactly the
+ *   scenes that matter, dancing, confetti, low light, grain;
  * - -profile:v high, and no -level: x264 picks the lowest that fits, 4.0 for 1080p30; a 10-bit
  *   frame reaching x264 fails the run rather than making High 10, which most phones can't play
  *   (§4.8, §4.19);
@@ -137,26 +153,75 @@ type Conversion = {
 export function convertArgs(
   facts: Pick<VideoFacts, "streamIndex" | "audioStreamIndex" | "hdr" | "sdr">,
   paths: { original: string; output: string },
-  options: Pick<ConvertOptions, "decoderThreads" | "x264Threads" | "filterThreads" | "x264Preset">,
+  threads: ConversionThreads,
+  options: Pick<ConvertOptions, "x264Preset" | "x264Cap">,
   capturedAt: Date | null,
 ): string[] {
   const audio = facts.audioStreamIndex;
   return [
-    ...ffmpegGlobalArgs(options.filterThreads),
+    ...ffmpegGlobalArgs(threads.filter),
     ...SCRATCH_FILE_READING,
-    ...["-threads", String(options.decoderThreads), "-i", paths.original],
+    ...["-threads", String(threads.decoder), "-i", paths.original],
     ...["-map", `0:${facts.streamIndex}`, ...(audio === null ? [] : ["-map", `0:${audio}`])],
     ...["-map_metadata", "-1", "-map_chapters", "-1"],
     ...["-vf", convertedPictureFilters(facts, FIT.longEdge, FIT.shortEdge)],
     ...["-fpsmax", String(MAX_FRAMES_PER_SECOND)],
-    ...["-c:v", "libx264", "-preset", options.x264Preset, "-crf", String(CRF), "-profile:v", "high"],
-    ...["-threads", String(options.x264Threads)],
+    ...["-c:v", "libx264", "-preset", options.x264Preset, "-crf", String(CRF)],
+    ...(options.x264Cap === null ? [] : ["-maxrate:v", options.x264Cap.maxRate, "-bufsize:v", options.x264Cap.bufferSize]),
+    ...["-profile:v", "high"],
+    ...["-threads", String(threads.x264)],
     // The native AAC encoder at a constant 128 kbit/s, stereo: Android's recommended audio (§2.3).
     ...(audio === null ? [] : ["-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ac", "2"]),
     // ISO 8601, which ffmpeg stores in mvhd, tkhd and mdhd to the second (§2.3).
     ...(capturedAt === null ? [] : ["-metadata", `creation_time=${capturedAt.toISOString()}`]),
     ...["-movflags", "+faststart", "-f", "mp4", paths.output],
   ];
+}
+
+/**
+ * The settings a converted file's key is made from: the version, and the cap when one is set, so
+ * turning the cap on (or changing it) gives the files made after it keys of their own.
+ */
+export function conversionSettings(options: Pick<ConvertOptions, "x264Cap">): string {
+  const cap = options.x264Cap;
+  return `convert-settings-${CONVERT_SETTINGS_VERSION}${cap === null ? "" : `-maxrate-${cap.maxRate}-bufsize-${cap.bufferSize}`}`;
+}
+
+/** Conversions whose ffmpeg runs now in this worker: the on-demand and the backlog workers' together. */
+let conversionsRunning = 0;
+
+/**
+ * The threads of a conversion that starts while `othersRunning` other conversions run in this
+ * worker (Noblet, Task 14b). Alone, its decoder and x264 take every CPU the container has
+ * (WORKER_CPUS): the first real conversion (81 s of 1080 × 1920 HLG) used about 2.4 of 3 CPUs on
+ * two each. Beside another, the shared counts, WORKER_FFMPEG_DECODER_THREADS and
+ * WORKER_X264_THREADS, two each. Decided once, as it starts: a lone conversion keeps its threads
+ * when a second starts beside it, nice'd as both are. Every count is from the settings, never the
+ * machine's (Ruling R).
+ */
+export function conversionThreads(
+  othersRunning: number,
+  options: Pick<ConvertOptions, "cpus" | "decoderThreads" | "x264Threads" | "filterThreads">,
+): ConversionThreads {
+  if (othersRunning === 0) return { decoder: options.cpus, x264: options.cpus, filter: options.filterThreads };
+  return { decoder: options.decoderThreads, x264: options.x264Threads, filter: options.filterThreads };
+}
+
+/**
+ * Runs `convert` on the threads conversionThreads gives it, counted among the conversions running
+ * while it runs.
+ */
+async function withConversionThreads<TResult>(
+  options: ConvertOptions,
+  convert: (threads: ConversionThreads) => Promise<TResult>,
+): Promise<TResult> {
+  const threads = conversionThreads(conversionsRunning, options);
+  conversionsRunning += 1;
+  try {
+    return await convert(threads);
+  } finally {
+    conversionsRunning -= 1;
+  }
 }
 
 /**
@@ -238,22 +303,33 @@ export function outputProblem(probeJson: unknown, expected: { length: ExpectedLe
   if (expected.audio && (audios.length !== 1 || audios[0].codec_name !== "aac")) {
     return "the converted file has no AAC audio, though the original had audio";
   }
-  const { streamSeconds, containerSeconds } = expected.length;
+  return lengthProblem("the converted", expected.length, { video: video.duration, file: format?.duration });
+}
+
+/**
+ * What is wrong with the length of a file made from the original (its conversion, or its clean
+ * copy), whose description starts `subject` ("the converted"): within half a second of the
+ * original's, like compared with like (ExpectedLength), or null when it is. A file that ends early
+ * is what ffmpeg makes of an original cut short that still passes ffprobe (ffmpeg notes §4.17).
+ */
+export function lengthProblem(
+  subject: string,
+  expected: ExpectedLength,
+  made: { video: string | undefined; file: string | undefined },
+): string | null {
+  const { streamSeconds, containerSeconds } = expected;
   const [what, originalSeconds, madeSeconds] =
-    streamSeconds !== null
-      ? ["video", streamSeconds, seconds(video.duration)]
-      : ["file", containerSeconds, seconds(format?.duration)];
-  if (originalSeconds !== null) {
-    if (madeSeconds === null) return `the converted ${what} has no duration`;
-    if (Math.abs(madeSeconds - originalSeconds) > DURATION_TOLERANCE_SECONDS) {
-      return `the converted ${what} is ${madeSeconds.toFixed(2)} s long, the original's ${originalSeconds.toFixed(2)} s`;
-    }
+    streamSeconds !== null ? ["video", streamSeconds, seconds(made.video)] : ["file", containerSeconds, seconds(made.file)];
+  if (originalSeconds === null) return null;
+  if (madeSeconds === null) return `${subject} ${what} has no duration`;
+  if (Math.abs(madeSeconds - originalSeconds) > DURATION_TOLERANCE_SECONDS) {
+    return `${subject} ${what} is ${madeSeconds.toFixed(2)} s long, the original's ${originalSeconds.toFixed(2)} s`;
   }
   return null;
 }
 
-/** What the converted file's length is checked against, from the original's probe (outputProblem). */
-function expectedLength(facts: VideoFacts): ExpectedLength {
+/** What a file made from the original has its length checked against, from the original's probe (lengthProblem). */
+export function expectedLength(facts: Pick<VideoFacts, "videoStreamSeconds" | "durationSeconds">): ExpectedLength {
   // facts.durationSeconds is the container's, or the stream's when the container gave none.
   return facts.videoStreamSeconds !== null
     ? { streamSeconds: facts.videoStreamSeconds, containerSeconds: null }
@@ -325,16 +401,19 @@ async function convertIn(
   // Its own length, read from the file itself, decides: the row's could be a poster's from a file since replaced.
   const refusal = tooLong(facts.durationSeconds, options);
   if (refusal) throw refusal;
-  await runVideoTool(
-    "ffmpeg",
-    convertArgs(facts, paths, options, capturedAt),
-    {
-      ...run,
-      memoryBytes: options.convertMemoryBytes,
-      cpuSeconds: conversionCpuSeconds(facts.durationSeconds, options.convertMaxSeconds),
-    },
-    conversionMilliseconds(facts.durationSeconds),
-  );
+  const threads = await withConversionThreads(options, async (threads) => {
+    await runVideoTool(
+      "ffmpeg",
+      convertArgs(facts, paths, threads, options, capturedAt),
+      {
+        ...run,
+        memoryBytes: options.convertMemoryBytes,
+        cpuSeconds: conversionCpuSeconds(facts.durationSeconds, options.convertMaxSeconds),
+      },
+      conversionMilliseconds(facts.durationSeconds),
+    );
+    return threads;
+  });
   const outputBytes = await checkOutput(paths.output, facts, run);
   const uploadStartedAt = performance.now();
   const converted = createReadStream(paths.output);
@@ -345,6 +424,7 @@ async function convertIn(
   }
   return {
     facts,
+    threads,
     outputBytes,
     downloadMilliseconds: Math.round(convertStartedAt - downloadStartedAt),
     convertMilliseconds: Math.round(uploadStartedAt - convertStartedAt),
@@ -374,7 +454,7 @@ export async function convertVideo(job: MediaJob, options: ConvertOptions): Prom
   if (refusal) throw refusal;
   const original = await headOriginal(item.originalKey, { signal: job.signal });
   if (!original) throw new Error(`The original ${item.originalKey} isn't in the private bucket`);
-  const contentHash = contentHashOf(original.etag, `convert-settings-${CONVERT_SETTINGS_VERSION}`, item.derivedGeneration);
+  const contentHash = contentHashOf(original.etag, conversionSettings(options), item.derivedGeneration);
   const videoKey = derivedKey(mediaId, contentHash, "video", "mp4");
 
   const conversion = await withScratch(2 * original.size + SCRATCH_MARGIN_BYTES, (folder) =>
@@ -385,9 +465,11 @@ export async function convertVideo(job: MediaJob, options: ConvertOptions): Prom
   // The real conversion speed, for the couple's status page (spec §8.3): ids, sizes and times only.
   const length = videoSeconds === null ? "a video of unknown length" : `${videoSeconds.toFixed(1)} s of video`;
   const speed = videoSeconds ? ` (${(conversion.convertMilliseconds / 1000 / videoSeconds).toFixed(2)} s a second of video)` : "";
+  const { threads } = conversion;
   console.log(
     `[worker] media.convert job=${job.id} media=${mediaId}: downloaded in ${conversion.downloadMilliseconds} ms, ` +
-      `converted ${length} in ${conversion.convertMilliseconds} ms${speed} to ${conversion.outputBytes} bytes, ` +
+      `converted ${length} in ${conversion.convertMilliseconds} ms${speed} to ${conversion.outputBytes} bytes ` +
+      `(threads: decoder ${threads.decoder}, filters ${threads.filter}, x264 ${threads.x264}), ` +
       `uploaded in ${conversion.uploadMilliseconds} ms`,
   );
 

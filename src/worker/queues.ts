@@ -152,8 +152,10 @@ const PROCESSING_QUEUES = new Set<string>([MEDIA_QUEUES.photo, MEDIA_QUEUES.post
 /**
  * media.dead's handler: a job that failed for good. Its item's processing (photo, poster, wish)
  * marks the item failed with the reason; a conversion marks only the conversion failed, since the
- * video keeps its poster. Anything else (a hide, a full-size JPEG, a card) leaves the item as it
- * is, and is logged for the couple's status page. A database error here retries, a minute apart.
+ * video keeps its poster. A playable copy is never the video's failure: it stays ready with its
+ * poster, and plays from its conversion where it has one. Anything else (a hide, a full-size JPEG,
+ * a card) leaves the item as it is, and is logged for the couple's status page. A database error
+ * here retries, a minute apart.
  */
 async function handleDeadLetters(jobs: JobWithMetadata<Record<string, unknown>>[]): Promise<void> {
   for (const job of jobs) {
@@ -173,6 +175,10 @@ async function handleDeadLetters(jobs: JobWithMetadata<Record<string, unknown>>[
         marked
           ? `[worker] ${source} job for ${mediaId} failed for good: conversion marked failed (${reason})`
           : `[worker] ${source} job for ${mediaId} failed for good (${reason}): left as it was, converted already or gone`,
+      );
+    } else if (mediaId && source === MEDIA_QUEUES.playable) {
+      console.error(
+        `[worker] ${source} job for ${mediaId} failed for good (${reason}): the video keeps its poster, and plays from its conversion where it has one`,
       );
     } else {
       console.error(`[worker] ${source} job for ${mediaId ?? "no item"} failed for good: ${reason}`);
@@ -226,6 +232,7 @@ export async function startQueueWorkers(
     [MEDIA_QUEUES.photo, concurrency.photo],
     [MEDIA_QUEUES.jpeg, concurrency.jpeg],
     [MEDIA_QUEUES.poster, concurrency.poster],
+    [MEDIA_QUEUES.playable, concurrency.playable],
     [MEDIA_QUEUES.wish, concurrency.wish],
     [MEDIA_QUEUES.visibility, concurrency.visibility],
     [MEDIA_QUEUES.card, concurrency.card],

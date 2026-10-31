@@ -640,6 +640,22 @@ describe("the sweeper's withdrawals: hidden or deleted items whose public files 
     expect((await liveJobs(MEDIA_QUEUES.visibility, id)).map((job) => job.data)).toEqual([{ mediaId: id, action: "hide" }]);
   });
 
+  it("queues the withdrawal of a hidden video whose row still names its playable copy, or only that copy's key is left to withdraw", async () => {
+    const id = randomUUID();
+    const playable = `derived/${id}/0123456789abcdef/playable.mp4`;
+    // Its poster withdrawn by an attempt that stopped before its playable copy.
+    const named = await readyItem({ id, kind: "video", hiddenAt: minutesAgo(10), hiddenBy: "admin", derived: { playable } });
+    // A copy made for a video hidden while it was made: withdrawIfHidden recorded it, and its job is gone.
+    const recorded = await readyItem({ kind: "video", hiddenAt: minutesAgo(1), hiddenBy: "admin", derived: {}, withdrawingKeys: [playable] });
+
+    const result = await sweeper().sweep();
+
+    expect(result.requeuedWithdrawals).toBe(2);
+    for (const mediaId of [named, recorded]) {
+      expect((await liveJobs(MEDIA_QUEUES.visibility, mediaId)).map((job) => job.data), mediaId).toEqual([{ mediaId, action: "hide" }]);
+    }
+  });
+
   it("queues none twice: the next sweep finds the job it queued", async () => {
     await readyItem({ hiddenAt: minutesAgo(10), hiddenBy: "admin" });
 

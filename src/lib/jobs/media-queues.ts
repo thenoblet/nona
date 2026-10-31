@@ -10,6 +10,7 @@ export const MEDIA_QUEUES = {
   poster: "media.poster",
   wish: "media.wish",
   convert: "media.convert",
+  playable: "media.playable",
   visibility: "media.visibility",
   card: "media.card",
   dead: "media.dead",
@@ -46,7 +47,8 @@ const EVERY_QUEUE = {
  * again at random) to at most 30 minutes: 3½ to 4 hours in all, well inside the 14 days pg-boss
  * keeps a job waiting. A permanent error (a corrupt file) is the worker's to fail at once, without
  * retries. A job out of retries goes to media.dead, whose handler marks its item failed with the
- * reason. Each attempt may run 15 minutes (pg-boss's default), a conversion 4 hours.
+ * reason. Each attempt may run 15 minutes (pg-boss's default), a playable copy an hour, a
+ * conversion 4 hours.
  */
 const JOB_QUEUE = {
   ...EVERY_QUEUE,
@@ -64,6 +66,8 @@ export const MEDIA_QUEUE_OPTIONS: Readonly<Record<MediaQueueName, MediaQueueOpti
   [MEDIA_QUEUES.poster]: JOB_QUEUE,
   [MEDIA_QUEUES.wish]: JOB_QUEUE,
   [MEDIA_QUEUES.convert]: { ...JOB_QUEUE, expireInSeconds: 4 * 60 * 60 },
+  // A video's clean copy (Task 14b): a 2 GB original's download, copy and upload, with room for a slow day at R2.
+  [MEDIA_QUEUES.playable]: { ...JOB_QUEUE, expireInSeconds: 60 * 60 },
   [MEDIA_QUEUES.visibility]: JOB_QUEUE,
   [MEDIA_QUEUES.card]: JOB_QUEUE,
   // The dead-letter handler only marks an item failed, so a few flat retries a minute apart. Flat

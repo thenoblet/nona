@@ -6,6 +6,7 @@ import { errorMessage } from "@/lib/log-error";
 import { workerConfig, type WorkerConfig } from "./config";
 import { convertHandler } from "./jobs/convert";
 import { photoHandler } from "./jobs/photo";
+import { playableHandler } from "./jobs/playable";
 import { posterHandler } from "./jobs/poster";
 import { visibilityHandler } from "./jobs/visibility";
 import type { MediaHandlers } from "./queues";
@@ -30,8 +31,9 @@ const jobQueue = () => getBoss(config.queuePoolSize);
 
 /**
  * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash; media.poster,
- * a video's probe and poster; media.convert, a version of a video every phone can play (on demand
- * at once, the backlog while its switch is on); and media.visibility, deleting a hidden item's
+ * a video's probe and poster; media.playable, a clean copy of a video's own streams, which the album
+ * plays an H.264 video from; media.convert, an H.264 version of a video every phone can play (on
+ * demand at once, the backlog while its switch is on); and media.visibility, deleting a hidden item's
  * public files and purging them from Cloudflare (CF_PURGE_TOKEN and CF_ZONE_ID). A queue with none
  * yet keeps its jobs waiting, unfailed (Ruling AA), until the release that brings its handler:
  * - media.jpeg: Task 15, a HEIC's full-size JPEG, on its first download;
@@ -53,10 +55,13 @@ const handlers: MediaHandlers = {
     decoderThreads: config.threads.decoder,
     x264Threads: config.threads.x264,
     filterThreads: config.threads.ffmpegFilters,
+    cpus: config.cpus,
     x264Preset: config.x264Preset,
+    x264Cap: config.x264Cap,
     convertMaxSeconds: config.convertMaxSeconds,
     jobQueue,
   }),
+  [MEDIA_QUEUES.playable]: playableHandler({ ffmpegMemoryBytes: config.ffmpegMemoryBytes, jobQueue }),
   [MEDIA_QUEUES.visibility]: visibilityHandler({}),
 };
 

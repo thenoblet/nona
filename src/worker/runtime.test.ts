@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -75,6 +75,84 @@ function watchOutput(child: ChildProcess) {
     },
   };
 }
+
+/** Starts the harness as its own process, a worker as main.ts runs it, with its output watched. */
+function startHarness(env: Record<string, string> = {}) {
+  const harness = spawn(process.execPath, [join(harnessFolder, "worker-harness.mjs")], {
+    env: { ...process.env, WORKER_SCRATCH_DIR: scratchRoot, HARNESS_QUEUE_SCHEMA: BOSS_SCHEMA, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let errors = "";
+  harness.stderr?.setEncoding("utf8").on("data", (chunk: string) => (errors += chunk));
+  const exited = new Promise<number | null>((resolve) => harness.on("exit", (exitCode) => resolve(exitCode)));
+  return { harness, exited, output: watchOutput(harness), errors: () => errors };
+}
+
+describe("two workers overlapping, as a start-first deploy runs them (Ruling AZ)", () => {
+  it("makes the second wait, its scratch and sweeper untouched, until the first stops, then take over within seconds", async () => {
+    const first = startHarness();
+    let second: ReturnType<typeof startHarness> | null = null;
+    try {
+      await first.output.waitFor(/\[worker\] ready/);
+      // A job folder the first worker is using now: the second's start-up must not remove it.
+      const running = join(scratchRoot, "job-running-in-the-first");
+      await mkdir(running);
+      await writeFile(join(running, "original"), "a guest's video");
+
+      second = startHarness();
+      await second.output.waitFor(/\[worker\] waiting for the previous worker to stop/);
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      expect(second.output.lines.join("\n")).not.toMatch(/ready|schema/);
+      expect(await readdir(scratchRoot)).toContain("job-running-in-the-first");
+
+      const stoppedAt = Date.now();
+      first.harness.kill("SIGTERM");
+      expect(await first.exited).toBe(0);
+      await second.output.waitFor(/\[worker\] ready/, 20_000);
+      const tookOverIn = Date.now() - stoppedAt;
+      console.log(`[Ruling AZ] the second worker was ready ${tookOverIn} ms after the first was told to stop`);
+
+      // Within a poll (5 s) of the first's exit, and the start-up after it.
+      expect(tookOverIn).toBeLessThan(15_000);
+      // Its own start-up then cleared what the stopped worker left.
+      expect(await readdir(scratchRoot)).not.toContain("job-running-in-the-first");
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : error}\nThe first's stderr:\n${first.errors()}\nThe second's stderr:\n${second?.errors() ?? ""}`,
+      );
+    } finally {
+      for (const worker of [first, second]) {
+        if (worker && worker.harness.exitCode === null) {
+          worker.harness.kill("SIGTERM");
+          await worker.exited;
+        }
+      }
+    }
+  });
+});
+
+describe("a scratch folder the worker can't use", () => {
+  it("stops the worker with one plain line, never the raw EACCES and its stack", async () => {
+    const locked = await mkdtemp(join(tmpdir(), "nona-worker-locked-"));
+    const file = join(locked, "a-file");
+    await writeFile(file, "not a folder");
+    await chmod(locked, 0o555);
+    try {
+      // The mount missing (the folder can't be made), and a path that isn't a folder.
+      for (const path of [join(locked, "scratch"), file]) {
+        const { exited, output, errors } = startHarness({ WORKER_SCRATCH_DIR: path });
+        expect(await exited, path).toBe(1);
+        expect(errors().trim(), path).toBe(
+          `[worker] can't use the scratch folder ${path}: mount /mnt/nona-worker at /scratch, writable by uid 10001`,
+        );
+        expect(output.lines, path).toEqual([]);
+      }
+    } finally {
+      await chmod(locked, 0o755);
+      await rm(locked, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("the worker on SIGTERM", () => {
   it("kills a running ffmpeg and exits within 8 s, and the interrupted job goes back to its queue", async () => {

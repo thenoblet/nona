@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, statfs } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { readOriginalStream } from "@/lib/storage/objects";
@@ -15,6 +16,37 @@ import { readOriginalStream } from "@/lib/storage/objects";
 const JOB_FOLDER_PREFIX = "job-";
 
 let scratchRoot: string | null = null;
+
+/**
+ * The scratch folder can't be used: missing (and not makeable), not a folder, or not writable by
+ * the worker's user. Its message is the one plain line the worker stops with, saying what to fix
+ * on nona-worker-01 (its uid is the image's, Dockerfile.worker), never the system's error.
+ */
+export class ScratchFolderError extends Error {
+  override name = "ScratchFolderError";
+  constructor(root: string) {
+    super(`can't use the scratch folder ${root}: mount /mnt/nona-worker at /scratch, writable by uid 10001`);
+  }
+}
+
+/**
+ * Checks, at start-up and before anything is removed, that the worker can use the scratch root:
+ * makes it if it is missing and can be made (outside production, a folder under the system's temp
+ * folder), then writes and removes a file in it. Throws ScratchFolderError otherwise: in production
+ * a missing bind mount shows as a /scratch the worker's user can't make (EACCES).
+ */
+export async function checkScratchRoot(root: string): Promise<void> {
+  try {
+    await mkdir(root, { recursive: true });
+    if (!(await stat(root)).isDirectory()) throw new Error("not a folder");
+    // Not a job- name, so a start's clean-up never takes it for a job's.
+    const probe = join(root, `.write-check-${randomUUID()}`);
+    await writeFile(probe, "");
+    await rm(probe, { force: true });
+  } catch {
+    throw new ScratchFolderError(root);
+  }
+}
 
 /** The disk doesn't have the room a job asked for. The job retries later, when others have finished. */
 export class ScratchSpaceError extends Error {

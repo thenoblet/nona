@@ -89,10 +89,17 @@ export type VideoFacts = {
   streamIndex: number;
   /** The audio stream a conversion keeps, for ffmpeg's -map; null when it has none ffmpeg can name. */
   audioStreamIndex: number | null;
+  /** That audio stream's codec, as ffmpeg names it; null with no audio stream. */
+  audioCodec: string | null;
   codec: string;
   /** The size it is shown at: the stored picture turned by its display matrix. */
   width: number;
   height: number;
+  /**
+   * Its display matrix's turn, in degrees counter-clockwise, as ffprobe gives it (an iPhone's
+   * portrait: −90; ffmpeg notes §4.2); 0 when it has none. A clean copy must keep it.
+   */
+  rotation: number;
   /** Null when the container doesn't say (a browser's WebM recording). */
   durationSeconds: number | null;
   /** The video stream's own duration, which may be shorter than the container's: where a poster can be. */
@@ -156,15 +163,20 @@ function seconds(value: string | undefined): number | null {
 }
 
 /**
- * Whether the display matrix turns the picture a quarter (either way), so it is shown with its
- * width and height swapped. ffprobe gives the matrix's turn in degrees counter-clockwise (an
- * iPhone's portrait video: -90); ffmpeg before 5 also gave a `rotate` tag, clockwise.
+ * The display matrix's turn, in degrees counter-clockwise, as ffprobe gives it (an iPhone's portrait
+ * video: -90); 0 when there is none. ffmpeg before 5 gave a `rotate` tag instead, clockwise.
  */
+function rotationOf(stream: ProbeStream): number {
+  const counterClockwise = stream.side_data_list?.find((sideData) => sideData.rotation !== undefined)?.rotation;
+  const rotation = counterClockwise ?? -Number(stream.tags?.rotate ?? 0);
+  // A tag of "0" gives -0, which is no turn.
+  return Number.isFinite(rotation) && rotation !== 0 ? rotation : 0;
+}
+
+/** Whether the display matrix turns the picture a quarter (either way), so it is shown with its width and height swapped. */
 function turnedQuarter(stream: ProbeStream): boolean {
-  const rotation =
-    stream.side_data_list?.find((sideData) => sideData.rotation !== undefined)?.rotation ?? Number(stream.tags?.rotate ?? 0);
-  const quarterTurns = Math.round(rotation / 90);
-  return Number.isFinite(quarterTurns) && Math.abs(quarterTurns) % 2 === 1;
+  const quarterTurns = Math.round(rotationOf(stream) / 90);
+  return Math.abs(quarterTurns) % 2 === 1;
 }
 
 /** One of the values given, or the first when the file says something else. */
@@ -218,12 +230,11 @@ function framesPerSecond(value: string | undefined): number | null {
  * newer iPhone writes a Spatial Audio track beside its stereo AAC), then the default stream, then
  * the first; null when there is none (ffmpeg notes §6).
  */
-function theAudio(streams: ProbeStream[]): number | null {
+function theAudio(streams: ProbeStream[]): ProbeStream | null {
   const audios = streams.filter((stream) => stream.codec_type === "audio" && CODEC_NAME.test(stream.codec_name ?? ""));
   const aac = audios.filter((stream) => stream.codec_name === "aac");
   const candidates = aac.length > 0 ? aac : audios;
-  const chosen = candidates.find((stream) => stream.disposition?.default) ?? candidates[0];
-  return chosen?.index ?? null;
+  return candidates.find((stream) => stream.disposition?.default) ?? candidates[0] ?? null;
 }
 
 function refused(reason: "unsupported-type" | "corrupt" | "too-large", found: string): VideoCheck {
@@ -266,6 +277,7 @@ export function videoFactsFrom(probeJson: unknown): VideoCheck {
   const codec = CODEC_NAME.test(video.codec_name ?? "") ? (video.codec_name as string) : "unknown";
   const audioCodecs = streams.filter((stream) => stream.codec_type === "audio").map((stream) => stream.codec_name ?? "unknown");
   const turned = turnedQuarter(video);
+  const audio = theAudio(streams);
   const rate = framesPerSecond(video.avg_frame_rate);
   const browserPlayable =
     container === MOV_FAMILY &&
@@ -283,10 +295,13 @@ export function videoFactsFrom(probeJson: unknown): VideoCheck {
     ok: true,
     facts: {
       streamIndex: video.index,
-      audioStreamIndex: theAudio(streams),
+      audioStreamIndex: audio?.index ?? null,
+      // theAudio takes only a stream whose codec name passes CODEC_NAME.
+      audioCodec: audio?.codec_name ?? null,
       codec,
       width: turned ? video.height : video.width,
       height: turned ? video.width : video.height,
+      rotation: rotationOf(video),
       durationSeconds,
       videoStreamSeconds,
       hdr: hdrColours(video),

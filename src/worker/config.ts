@@ -26,11 +26,13 @@ export type WorkerConcurrency = {
   convertOnDemand: number;
   /** media.convert's other jobs, taken only while the admin's backlog switch is on. */
   convertBacklog: number;
+  /** media.playable: a video's clean copy (a stream copy, no encoding), a download and an upload of its size. */
+  playable: number;
 };
 
 /** Threads each job's tools may use. */
 export type WorkerThreads = {
-  /** x264's -threads in a conversion. */
+  /** x264's -threads in a conversion that starts beside another (a lone one takes `cpus`). */
   x264: number;
   /** sharp's (libvips') threads, set once with sharp.concurrency. */
   sharp: number;
@@ -41,8 +43,8 @@ export type WorkerThreads = {
   /** ffmpeg's -threads when it decodes a video's poster frame (and writes it). */
   poster: number;
   /**
-   * ffmpeg's -threads before its input in a conversion: the decoder's, which would otherwise be
-   * the host's CPUs (ffmpeg notes §4.14).
+   * ffmpeg's -threads before its input in a conversion that starts beside another: the decoder's,
+   * which would otherwise be the host's CPUs (ffmpeg notes §4.14). A lone one takes `cpus`.
    */
   decoder: number;
 };
@@ -54,11 +56,20 @@ export type WorkerThreads = {
 export const X264_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
 export type X264Preset = (typeof X264_PRESETS)[number];
 
+/** x264's -maxrate:v and -bufsize:v, in ffmpeg's notation. */
+export type X264Cap = { maxRate: string; bufferSize: string };
+
 export type WorkerConfig = {
   /** Where jobs make their scratch folders: the scratch disk's mount in production. */
   scratchRoot: string;
   concurrency: WorkerConcurrency;
   threads: WorkerThreads;
+  /**
+   * The CPUs the container may use (its limit, not the host's count, which is what the tools
+   * would see): a conversion that starts while no other runs gives its decoder and x264 this many
+   * threads each (Noblet, Task 14b).
+   */
+  cpus: number;
   /**
    * The most memory (address space) heif-dec and heif-info may take for one HEIC: a backstop
    * against a crafted file, far above a real photo's needs (a 48 MP HEIC decodes in about 300 MB).
@@ -72,12 +83,19 @@ export type WorkerConfig = {
   ffmpegMemoryBytes: number;
   /**
    * The most memory (address space) a conversion's ffmpeg may take: a backstop against a crafted
-   * file. Measured in the worker image under --cpus=3 at the default threads, a 4K HEVC HLG
-   * conversion peaks at about 1,720 MiB and an 8K HEVC one at about 1,790 MiB.
+   * file. Its need grows with its threads (conversionPeakBytes): by default 3 GiB, or 1.6 times a
+   * lone conversion's need on WORKER_CPUS threads where that is more.
    */
   convertMemoryBytes: number;
   /** x264's -preset in a conversion. */
   x264Preset: X264Preset;
+  /**
+   * A conversion's bitrate cap, off (null) unless WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE are
+   * both set: x264's -maxrate:v and -bufsize:v, in ffmpeg's notation ("5M", "4500k" or bits a
+   * second), the notes' "capped CRF" (§2.3). Off, a conversion is pure CRF 23 (Noblet, 31 Oct: a
+   * cap would cost quality in the scenes that matter, dancing, confetti, low light, grain).
+   */
+  x264Cap: X264Cap | null;
   /**
    * The longest video the worker converts, in seconds (Ruling AR). A longer one's conversion is
    * `failed` with the reason `too-long` at once: it plays from its original where a phone can, and
@@ -98,12 +116,49 @@ function count(fallback: number, max = 64) {
 
 const MEBIBYTE = 1024 * 1024;
 
+/**
+ * A bitrate in ffmpeg's notation, or unset: a positive number of bits a second, with an optional SI
+ * suffix, k (thousand) or M (million), as ffmpeg's "5M" (ffmpeg-utils, "Expression Evaluation").
+ * Nothing else, so it can't carry another option into ffmpeg's arguments.
+ */
+function bitrate() {
+  return zod.preprocess(
+    (value) => (value === "" ? undefined : value),
+    zod
+      .string()
+      .regex(/^(?:[1-9][0-9]*|[0-9]+\.[0-9]*[1-9][0-9]*)[kM]?$/, "a bitrate such as 5M, 4500k or 5000000")
+      .optional(),
+  );
+}
+
 /** A number of bytes from `min` to `max`, the default when unset or blank. */
 function bytes(fallback: number, min: number, max: number) {
   return zod.preprocess(
     (value) => (value === "" ? undefined : value),
     zod.coerce.number().int().min(min).max(max).default(fallback),
   );
+}
+
+/** A number of bytes from `min` to `max`, or unset (blank counts as unset). */
+function optionalBytes(min: number, max: number) {
+  return zod.preprocess(
+    (value) => (value === "" ? undefined : value),
+    zod.coerce.number().int().min(min).max(max).optional(),
+  );
+}
+
+/** A conversion's memory cap when WORKER_CONVERT_MEMORY_BYTES isn't set, at least (ffmpeg notes §4.14 suggests 3 GiB). */
+const CONVERT_MEMORY_FLOOR_BYTES = 3072 * MEBIBYTE;
+
+/**
+ * The address space a conversion's ffmpeg peaks at on `threads` decoder and x264 threads each.
+ * Measured in the worker image (Task 14b) on the costliest phone video measured, an iPhone-like
+ * portrait 4K HEVC HLG clip, alone: 1,873 MiB on 3 threads, 2,614 on 8, 3,834 on 16 (8K HEVC on 3:
+ * 1,753), so about 1,450 MiB and 150 more for each thread of each: every thread takes a stack and a
+ * heap (malloc arena) of its own, mostly reserved, never used.
+ */
+export function conversionPeakBytes(threads: number): number {
+  return (1450 + 150 * threads) * MEBIBYTE;
 }
 
 const schema = zod.object({
@@ -115,6 +170,9 @@ const schema = zod.object({
   WORKER_CARD_CONCURRENCY: count(1),
   WORKER_CONVERT_ON_DEMAND_CONCURRENCY: count(1),
   WORKER_CONVERT_BACKLOG_CONCURRENCY: count(1),
+  WORKER_PLAYABLE_CONCURRENCY: count(1),
+  // nona-worker-01's container limit (Ruling Q): a lone conversion's threads.
+  WORKER_CPUS: count(3),
   WORKER_X264_THREADS: count(2),
   WORKER_SHARP_THREADS: count(1),
   WORKER_FFMPEG_FILTER_THREADS: count(1),
@@ -128,11 +186,12 @@ const schema = zod.object({
   // About twice an 8K poster's need. Below 1 GiB a 4K HDR poster can't be made: ffmpeg's libraries
   // alone take about 280 MiB of address space, and each of its threads a stack and a heap of its own.
   WORKER_FFMPEG_MEMORY_BYTES: bytes(2048 * MEBIBYTE, 1024 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
-  // About 1.7 times an 8K or 4K HDR conversion's need at the default threads (ffmpeg notes §4.14
-  // suggests 3 GiB). Below 2 GiB a 4K HDR conversion can't run. Raising a conversion's threads
-  // raises its need: measure again before.
-  WORKER_CONVERT_MEMORY_BYTES: bytes(3072 * MEBIBYTE, 2048 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
+  // Unset, from the threads (convertMemoryDefault). Below 2 GiB a 4K HDR conversion can't run.
+  WORKER_CONVERT_MEMORY_BYTES: optionalBytes(2048 * MEBIBYTE, 64 * 1024 * MEBIBYTE),
   WORKER_X264_PRESET: zod.preprocess((value) => (value === "" ? undefined : value), zod.enum(X264_PRESETS).default("veryfast")),
+  // Off unless both are set (Noblet, 31 Oct): e.g. 5M and 10M, should mobile data become a concern.
+  WORKER_X264_MAXRATE: bitrate(),
+  WORKER_X264_BUFSIZE: bitrate(),
   // Half an hour: past the longest speech, and a conversion that fits its time and CPU limits.
   WORKER_CONVERT_MAX_SECONDS: zod.preprocess(
     (value) => (value === "" ? undefined : value),
@@ -155,6 +214,16 @@ function scratchRoot(env: Env): string {
   return configured;
 }
 
+/**
+ * A conversion's memory cap when WORKER_CONVERT_MEMORY_BYTES isn't set: 3 GiB, or 1.6 times a
+ * conversion's need on its threads where that is more (WORKER_CPUS raised for a bigger box), in
+ * whole 256 MiB.
+ */
+function convertMemoryDefault(needBytes: number): number {
+  const step = 256 * MEBIBYTE;
+  return Math.max(CONVERT_MEMORY_FLOOR_BYTES, Math.ceil((1.6 * needBytes) / step) * step);
+}
+
 /** The worker's settings, or an error naming the first one that is wrong. */
 export function workerConfig(env: Env = process.env): WorkerConfig {
   const parsed = schema.safeParse(env);
@@ -163,6 +232,24 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
     throw new Error(`Invalid worker setting ${issue.path.join(".")}: ${issue.message}`);
   }
   const settings = parsed.data;
+  // A conversion's most threads: a lone one's (WORKER_CPUS), or the shared counts if set higher.
+  const conversionThreads = Math.max(settings.WORKER_CPUS, settings.WORKER_FFMPEG_DECODER_THREADS, settings.WORKER_X264_THREADS);
+  const conversionNeed = conversionPeakBytes(conversionThreads);
+  const configuredConvertMemory = settings.WORKER_CONVERT_MEMORY_BYTES;
+  // A cap under a 4K HDR conversion's need would fail every one as the file's fault, `corrupt` on
+  // its third attempt: refused here, at start-up, instead.
+  if (configuredConvertMemory !== undefined && configuredConvertMemory < conversionNeed) {
+    throw new Error(
+      `Invalid worker setting WORKER_CONVERT_MEMORY_BYTES: ${configuredConvertMemory} bytes is under the ${conversionNeed} a 4K HDR ` +
+        `conversion needs on ${conversionThreads} threads (WORKER_CPUS); raise it with WORKER_CPUS, or leave it unset`,
+    );
+  }
+  const maxRate = settings.WORKER_X264_MAXRATE;
+  const bufferSize = settings.WORKER_X264_BUFSIZE;
+  // One without the other is a half-made setting: x264's VBV needs both.
+  if ((maxRate === undefined) !== (bufferSize === undefined)) {
+    throw new Error("Invalid worker setting WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE: set both to cap conversions, or neither");
+  }
   return {
     scratchRoot: scratchRoot(env),
     concurrency: {
@@ -174,6 +261,7 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
       card: settings.WORKER_CARD_CONCURRENCY,
       convertOnDemand: settings.WORKER_CONVERT_ON_DEMAND_CONCURRENCY,
       convertBacklog: settings.WORKER_CONVERT_BACKLOG_CONCURRENCY,
+      playable: settings.WORKER_PLAYABLE_CONCURRENCY,
     },
     threads: {
       x264: settings.WORKER_X264_THREADS,
@@ -183,10 +271,12 @@ export function workerConfig(env: Env = process.env): WorkerConfig {
       poster: settings.WORKER_POSTER_THREADS,
       decoder: settings.WORKER_FFMPEG_DECODER_THREADS,
     },
+    cpus: settings.WORKER_CPUS,
     heifMemoryBytes: settings.WORKER_HEIF_MEMORY_BYTES,
     ffmpegMemoryBytes: settings.WORKER_FFMPEG_MEMORY_BYTES,
-    convertMemoryBytes: settings.WORKER_CONVERT_MEMORY_BYTES,
+    convertMemoryBytes: configuredConvertMemory ?? convertMemoryDefault(conversionNeed),
     x264Preset: settings.WORKER_X264_PRESET,
+    x264Cap: maxRate !== undefined && bufferSize !== undefined ? { maxRate, bufferSize } : null,
     convertMaxSeconds: settings.WORKER_CONVERT_MAX_SECONDS,
     queuePoolSize: settings.WORKER_QUEUE_POOL_SIZE,
   };

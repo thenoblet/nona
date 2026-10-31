@@ -37,6 +37,7 @@ describe("derivedKey", () => {
       "poster-thumb",
       "poster-view",
       "video",
+      "playable",
       "audio",
       "card",
     ]);

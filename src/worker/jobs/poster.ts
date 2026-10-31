@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { PgBoss } from "pg-boss";
 import { readSection } from "@/lib/content/store";
-import { CONVERT_PRIORITY } from "@/lib/jobs/media-queues";
+import { CONVERT_PRIORITY, MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { describeError } from "@/lib/log-error";
 import { assignCelebration } from "@/lib/media/celebration";
 import { plausibleCaptureTime } from "@/lib/media/capture-time";
@@ -12,6 +12,7 @@ import { derivedKey } from "@/lib/storage/keys";
 import { headOriginal, PLAYBACK_URL_SECONDS, presignGet, putPublicObject } from "@/lib/storage/objects";
 import type { JobReport, MediaJob, MediaJobHandler } from "../queues";
 import { withScratch } from "../scratch";
+import { streamsCopyable } from "./playable";
 import { contentHashOf, rewriteManifest, withdrawIfHidden } from "./publishing";
 import { deriveStills, VIEW, type Stills } from "./stills";
 import { hdrToSdr, sdrInput } from "./video-filters";
@@ -38,11 +39,15 @@ import {
  *    the poster's viewing size, thumbnail, ThumbHash and average colour from it (stills.ts).
  * Then the two files go to the public bucket under a content hash, and the item turns `ready`,
  * listed, in the celebration its capture time falls in (unless the couple moved it), with whether
- * every phone can play it as it is. A video that can't be played everywhere, or is long, is queued
- * for a backlog conversion (media.convert, Task 11), sent once; one longer than the worker converts
- * (WORKER_CONVERT_MAX_SECONDS) has its conversion failed, `too-long`, at once, and none is sent. A
- * conversion an unhide left queued is sent too (Task 12), at priority 20 when a guest is waiting
- * for it (a highlight, or a phone's ask).
+ * every phone can play it as it is. Then, never before its ready mark:
+ * - its clean playable copy's job (media.playable, Task 14b) is sent, for a video whose streams an
+ *   MP4 carries as they are (H.264 or HEVC, AAC or no sound): the file the album plays an H.264
+ *   video from;
+ * - a video that can't be played everywhere, or is long and heavy to stream (conversionWanted), is
+ *   queued for a backlog conversion (media.convert, Task 11), sent once; one longer than the worker
+ *   converts (WORKER_CONVERT_MAX_SECONDS) has its conversion failed, `too-long`, at once, and none
+ *   is sent. A conversion an unhide left queued is sent too (Task 12), at priority 20 when a guest
+ *   is waiting for it (a highlight, or a phone's ask).
  *
  * Both tools run under a memory cap (WORKER_FFMPEG_MEMORY_BYTES) on WORKER_POSTER_THREADS and
  * WORKER_FFMPEG_FILTER_THREADS threads, and read through bounded reconnects. Over the network a
@@ -61,8 +66,14 @@ import {
 const POSTER_SETTINGS_VERSION = 2;
 /** The poster's frame is at most this far in: past a fade-in or a shaky start, but early in any clip. */
 const POSTER_AT_MOST_SECONDS = 1;
-/** A video longer than this gets a backlog conversion even when it plays everywhere: its original is large to stream. */
+/**
+ * A video every phone plays is converted only when it is longer than this and its bitrate above
+ * HEAVY_BITS_PER_SECOND: a long, heavy original is large to stream, its copy as large, where its
+ * 1080p CRF-23 conversion is usually smaller (and capped, where WORKER_X264_MAXRATE is set).
+ */
 const LONG_VIDEO_SECONDS = 3 * 60;
+/** About 6 Mbit/s (Noblet, Task 14b). */
+const HEAVY_BITS_PER_SECOND = 6_000_000;
 /** ffprobe and ffmpeg give up on a read or write that makes no progress for this long (in microseconds: 10 s). */
 const READ_TIMEOUT_MICROSECONDS = 10_000_000;
 /** ffprobe reads only the container's index and a few MB: well under a second for a phone's video. */
@@ -226,6 +237,35 @@ async function posterOf(run: PosterRun): Promise<Poster> {
 }
 
 /**
+ * Whether the video gets an H.264 conversion beside its clean copy (Noblet, Task 14b):
+ * - every video a phone can't play as it is (HEVC, HDR, 4K, slow motion, a browser's WebM: its
+ *   probe's browserPlayable), always;
+ * - an H.264 video every phone plays, only when it is longer than 3 minutes and its average
+ *   bitrate (the original's size over its length, sound included) is above about 6 Mbit/s;
+ * - otherwise none: its clean copy is what the album plays.
+ * Exported for its test.
+ */
+export function conversionWanted(facts: Pick<VideoFacts, "browserPlayable" | "durationSeconds">, originalBytes: number): boolean {
+  if (!facts.browserPlayable) return true;
+  const seconds = facts.durationSeconds;
+  if (seconds === null || seconds <= LONG_VIDEO_SECONDS) return false;
+  return (originalBytes * 8) / seconds > HEAVY_BITS_PER_SECOND;
+}
+
+/**
+ * Sends the video's clean copy's job (media.playable) once it is ready. Never throws: a copy that
+ * can't be sent leaves the video ready with its poster (and its conversion, where it has one), and
+ * an unhide's poster job sends it again; the failure is logged, with ids only.
+ */
+async function sendPlayableCopy(mediaId: string, options: PosterOptions): Promise<void> {
+  try {
+    await (await options.jobQueue()).send(MEDIA_QUEUES.playable, { mediaId });
+  } catch (error) {
+    console.error(`[worker] media.poster media=${mediaId} is ready, but its playable copy's job wasn't sent:`, describeError(error));
+  }
+}
+
+/**
  * Sends the video's conversion (media.convert): to the backlog, or at priority 20 when a guest is
  * waiting for it (a phone asked, or the couple made it a highlight, before it was ready or before an
  * unhide made its poster again). Never throws: the row says `queued`, so if this fails the sweeper
@@ -298,7 +338,7 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
     durationSeconds: facts.durationSeconds,
     videoCodec: facts.codec,
     browserPlayable: facts.browserPlayable,
-    needsConversion: !facts.browserPlayable || (facts.durationSeconds ?? 0) > LONG_VIDEO_SECONDS,
+    needsConversion: conversionWanted(facts, original.size),
     tooLongToConvert: (facts.durationSeconds ?? 0) > options.convertMaxSeconds,
   });
   if (!marked) {
@@ -309,6 +349,7 @@ export async function processVideo(job: MediaJob, options: PosterOptions): Promi
     });
     return;
   }
+  if (streamsCopyable(facts)) await sendPlayableCopy(mediaId, options);
   if (marked.conversionQueued) await sendConversion(mediaId, marked.conversionOnDemand, options);
   await rewriteManifest(job.queue, mediaId, marked.manifest, job.signal);
   return { sizeBytes: original.size, kind: `video/${facts.codec}${facts.hdr ? "-hdr" : ""}` };

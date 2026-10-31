@@ -8,7 +8,11 @@ import { mediaBaseUrl } from "@/lib/env";
  *   so the files can be cached for good. Site photos are media rows too and use the same keys.
  */
 
-/** Every derived file the worker writes. */
+/**
+ * Every derived file the worker writes. A video's `video` is its H.264 conversion; its `playable`
+ * is a clean copy of the original's own streams (Task 14b): no metadata but its capture time,
+ * `moov` first.
+ */
 export const DERIVED_VARIANTS = [
   "thumb",
   "view",
@@ -16,6 +20,7 @@ export const DERIVED_VARIANTS = [
   "poster-thumb",
   "poster-view",
   "video",
+  "playable",
   "audio",
   "card",
 ] as const;

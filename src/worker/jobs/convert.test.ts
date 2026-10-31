@@ -16,14 +16,23 @@ import { storageConfig } from "@/lib/env";
 import { CONVERT_PRIORITY, MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { storageClient } from "@/lib/storage/client";
 import { originalKey } from "@/lib/storage/keys";
+import { headOriginal } from "@/lib/storage/objects";
 import { readManifest } from "@/lib/storage/manifest";
 import { resetDb } from "../../../test/db";
 import { dropBossSchema, startTestBoss } from "../../../test/uploads";
 import { workerConfig } from "../config";
 import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
-import { conversionMilliseconds, convertHandler, convertVideo, outputProblem, type ConvertOptions } from "./convert";
+import {
+  conversionMilliseconds,
+  conversionThreads,
+  convertHandler,
+  convertVideo,
+  outputProblem,
+  type ConvertOptions,
+} from "./convert";
 import { photoHandler } from "./photo";
+import { contentHashOf } from "./publishing";
 import { runVideoTool } from "./video-tools";
 
 /*
@@ -113,7 +122,9 @@ function convertOptions(changes: Partial<ConvertOptions> = {}): ConvertOptions {
     decoderThreads: config.threads.decoder,
     x264Threads: config.threads.x264,
     filterThreads: config.threads.ffmpegFilters,
+    cpus: config.cpus,
     x264Preset: config.x264Preset,
+    x264Cap: config.x264Cap,
     convertMaxSeconds: config.convertMaxSeconds,
     jobQueue: async () => boss,
     ...changes,
@@ -523,7 +534,9 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     expect(item).toMatchObject({ status: "ready", conversion: "done", width: 1080, height: 1920 });
     // The poster's files are kept beside it.
     expect(Object.keys(item.derived).sort()).toEqual(["poster-thumb", "poster-view", "video"]);
-    expect(item.derived.video).toMatch(new RegExp(`^derived/${mediaId}/[0-9a-f]{16}/video\\.mp4$`));
+    // Under its settings' second version (Task 14b), so no cache has the first's: uncapped, as by default.
+    const { etag } = (await headOriginal(item.originalKey)) ?? { etag: "" };
+    expect(item.derived.video).toBe(`derived/${mediaId}/${contentHashOf(etag, "convert-settings-2", 0)}/video.mp4`);
     const converted = await readPublic(item.derived.video ?? "");
     expect(converted.contentType).toBe("video/mp4");
     expect(converted.cacheControl).toBe("public, max-age=31536000, immutable");
@@ -585,10 +598,10 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     expect(valueAfter("-filter_threads")).toBe("1");
     expect(valueAfter("-protocol_whitelist")).toBe("file");
     expect(valueAfter("-format_whitelist")).toBe("mov,matroska");
-    // The decoder's threads before the input, x264's after it (ffmpeg notes §4.14).
+    // The decoder's threads before the input, x264's after it (ffmpeg notes §4.14): alone, every CPU (WORKER_CPUS).
     expect(args[input - 2]).toBe("-threads");
-    expect(args[input - 1]).toBe("2");
-    expect(valueAfter("-threads", input)).toBe("2");
+    expect(args[input - 1]).toBe("3");
+    expect(valueAfter("-threads", input)).toBe("3");
     expect(args[input + 1]).toMatch(/\/original$/);
     expect(args.slice(input + 2, input + 6)).toEqual(["-map", "0:0", "-map", "0:1"]);
     expect(valueAfter("-map_metadata")).toBe("-1");
@@ -597,6 +610,8 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     expect(valueAfter("-c:v")).toBe("libx264");
     expect(valueAfter("-preset")).toBe("veryfast");
     expect(valueAfter("-crf")).toBe("23");
+    // Pure CRF 23: no cap unless WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE are set (Noblet).
+    expect(args.join(" ")).not.toMatch(/-maxrate|-bufsize/);
     expect(valueAfter("-profile:v")).toBe("high");
     expect(args).not.toContain("-level");
     expect(args).not.toContain("-level:v");
@@ -622,6 +637,23 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     // It asked the scratch disk for twice the original's size, and more.
     const [bytesNeeded] = scratch.bytesNeeded;
     expect(bytesNeeded).toBeGreaterThanOrEqual(2 * (await readItem(mediaId)).sizeBytes);
+  });
+
+  it("caps its bitrate when WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE are set, under keys of their own", async () => {
+    const mediaId = await readyVideo(await androidClip(), "mov", { width: 640, height: 360, videoCodec: "h264" });
+    const capped = convertOptions({ x264Cap: { maxRate: "5M", bufferSize: "10M" } });
+
+    await convertVideo(convertJob(mediaId), capped);
+
+    const args = conversionRuns()[0].args;
+    const valueAfter = (flag: string) => args[args.indexOf(flag) + 1];
+    expect(valueAfter("-crf")).toBe("23");
+    expect(valueAfter("-maxrate:v")).toBe("5M");
+    expect(valueAfter("-bufsize:v")).toBe("10M");
+    expect(args.indexOf("-maxrate:v")).toBeGreaterThan(args.indexOf("-c:v"));
+    const item = await readItem(mediaId);
+    const { etag } = (await headOriginal(item.originalKey)) ?? { etag: "" };
+    expect(item.derived.video).toBe(`derived/${mediaId}/${contentHashOf(etag, "convert-settings-2-maxrate-5M-bufsize-10M", 0)}/video.mp4`);
   });
 
   it("deletes a PQ clip's mastering display and light levels, which an SDR file mustn't carry (ffmpeg notes §4.6)", async () => {
@@ -706,11 +738,58 @@ async function startConversions(): Promise<QueueWorkers> {
   workers = await startQueueWorkers(
     boss,
     { [MEDIA_QUEUES.convert]: convertHandler(convertOptions()) },
-    { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
+    { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1, playable: 1 },
     { pollingIntervalSeconds: 0.5 },
   );
   return workers;
 }
+
+describe("conversionThreads: a lone conversion takes every CPU, two share them (Task 14b, Ruling R)", () => {
+  const options = { cpus: 3, decoderThreads: 2, x264Threads: 2, filterThreads: 1 };
+
+  it("gives a conversion that starts alone WORKER_CPUS for its decoder and for x264", () => {
+    expect(conversionThreads(0, options)).toMatchObject({ decoder: 3, x264: 3 });
+    expect(conversionThreads(0, { ...options, cpus: 16 })).toMatchObject({ decoder: 16, x264: 16 });
+  });
+
+  it("gives one that starts beside another the shared counts, WORKER_FFMPEG_DECODER_THREADS and WORKER_X264_THREADS", () => {
+    expect(conversionThreads(1, options)).toEqual({ decoder: 2, x264: 2, filter: 1 });
+    expect(conversionThreads(2, options)).toEqual({ decoder: 2, x264: 2, filter: 1 });
+  });
+});
+
+describe.skipIf(!ffmpegSeven)("conversions that overlap (Task 14b)", () => {
+  it("pick their threads by how many run as each starts: 3 alone, 2 each for two, and 3 again once the box is free", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    // The first runs long enough for the second to start beside it.
+    const flat = await saved(await hlgClip("1920x1080", 4, { grain: true }), "mov");
+    const first = await readyVideo(await clip("first.mov", ["-display_rotation", "-90", "-i", flat, "-c", "copy"]), "mov");
+    const second = await readyVideo(await androidClip(), "mov", { width: 640, height: 360, videoCodec: "h264" });
+    const third = await readyVideo(await androidClip(), "mov", { width: 640, height: 360, videoCodec: "h264" });
+
+    const firstConverting = convertVideo(convertJob(first), convertOptions());
+    const deadline = Date.now() + 120_000;
+    while (!conversionRuns().some((run) => run.args.includes("libx264")) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await convertVideo(convertJob(second), convertOptions());
+    const firstStillConverting = (await readItem(first)).conversion === "converting";
+    await firstConverting;
+    await convertVideo(convertJob(third), convertOptions());
+
+    const threadsOf = (run: ProgramRun) => {
+      const args = run.args;
+      const input = args.indexOf("-i");
+      return { decoder: args[args.lastIndexOf("-threads", input) + 1], x264: args[args.indexOf("-threads", input) + 1] };
+    };
+    const [firstRun, secondRun, thirdRun] = conversionRuns().filter((run) => run.args.includes("libx264"));
+    expect(firstStillConverting).toBe(true);
+    expect(threadsOf(firstRun)).toEqual({ decoder: "3", x264: "3" });
+    expect(threadsOf(secondRun)).toEqual({ decoder: "2", x264: "2" });
+    expect(threadsOf(thirdRun)).toEqual({ decoder: "3", x264: "3" });
+    for (const mediaId of [first, second, third]) expect((await readItem(mediaId)).conversion, mediaId).toBe("done");
+  }, 300_000);
+});
 
 describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
   it("is retried when the original was cut short (it passes ffprobe), still converting under its job's lease, and is corrupt for good on its third attempt", async () => {

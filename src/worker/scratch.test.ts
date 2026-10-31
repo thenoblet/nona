@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DeleteObjectsCommand, UploadPartCommand } from "@aws-sdk/client-s3";
@@ -8,7 +8,15 @@ import { storageConfig } from "@/lib/env";
 import { storageClient } from "@/lib/storage/client";
 import { originalKey } from "@/lib/storage/keys";
 import { completeMultipart, startMultipart } from "@/lib/storage/objects";
-import { freeScratchBytes, prepareScratchRoot, saveOriginal, ScratchSpaceError, withScratch } from "./scratch";
+import {
+  checkScratchRoot,
+  freeScratchBytes,
+  prepareScratchRoot,
+  saveOriginal,
+  ScratchFolderError,
+  ScratchSpaceError,
+  withScratch,
+} from "./scratch";
 
 let root: string;
 const roots: string[] = [];
@@ -92,6 +100,51 @@ describe("prepareScratchRoot", () => {
     const missing = join(root, "not-yet");
     await prepareScratchRoot(missing);
     expect(await exists(missing)).toBe(true);
+  });
+});
+
+describe("checkScratchRoot: a scratch folder the worker can't use is said plainly", () => {
+  const plainLine = (path: string) => `can't use the scratch folder ${path}: mount /mnt/nona-worker at /scratch, writable by uid 10001`;
+
+  async function refusal(path: string): Promise<unknown> {
+    return checkScratchRoot(path).then(
+      () => null,
+      (error: unknown) => error,
+    );
+  }
+
+  it("takes a folder it can write in, making it if it is missing, and leaves nothing in it", async () => {
+    await checkScratchRoot(root);
+    const missing = join(root, "not-yet");
+    await checkScratchRoot(missing);
+    expect(await readdir(root)).toEqual(["not-yet"]);
+    expect(await readdir(missing)).toEqual([]);
+  });
+
+  it("refuses a folder it can't write in (a mount owned by another user), with one plain line and no EACCES", async () => {
+    const readOnly = join(root, "read-only");
+    await mkdir(readOnly);
+    await chmod(readOnly, 0o555);
+    try {
+      const error = await refusal(readOnly);
+      expect(error).toBeInstanceOf(ScratchFolderError);
+      expect((error as Error).message).toBe(plainLine(readOnly));
+      // Nor one it would have to make there: the missing mount's case.
+      expect(((await refusal(join(readOnly, "scratch"))) as Error).message).toBe(plainLine(join(readOnly, "scratch")));
+    } finally {
+      await chmod(readOnly, 0o755);
+    }
+  });
+
+  it("refuses a path that is a file, or under one", async () => {
+    const file = join(root, "scratch");
+    await writeFile(file, "not a folder");
+    for (const path of [file, join(file, "inside")]) {
+      const error = await refusal(path);
+      expect(error, path).toBeInstanceOf(ScratchFolderError);
+      expect((error as Error).message).toBe(plainLine(path));
+      expect((error as Error).message).not.toMatch(/EACCES|ENOTDIR|EEXIST/);
+    }
   });
 });
 

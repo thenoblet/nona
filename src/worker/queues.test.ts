@@ -46,6 +46,7 @@ const ONE_EACH = {
   card: 1,
   convertOnDemand: 1,
   convertBacklog: 1,
+  playable: 1,
 };
 
 /** Starts the workers for the queues a test gives handlers; the others have none, as in production until their task. */
@@ -228,6 +229,28 @@ describe("a job that fails for good", () => {
     );
     expect(errors.mock.calls.flat().join(" ")).not.toContain("marked failed");
     expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "done" });
+  });
+});
+
+describe("a playable copy that fails for good", () => {
+  it("leaves the video ready, its conversion as it was, and says so in the log with its id only", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await start({
+      [MEDIA_QUEUES.playable]: async () => {
+        throw new PermanentJobError("corrupt", "ffmpeg couldn't copy the video");
+      },
+    });
+    const mediaId = await insertItem({ kind: "video", status: "ready", conversion: "queued", listedAt: new Date() });
+    await boss.send(MEDIA_QUEUES.playable, { mediaId });
+
+    await eventually(async () =>
+      expect(errors.mock.calls.flat().join(" ")).toContain(
+        `media.playable job for ${mediaId} failed for good (corrupt): the video keeps its poster, and plays from its conversion`,
+      ),
+    );
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("marked failed");
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("Ama");
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", failureReason: null, conversion: "queued" });
   });
 });
 
