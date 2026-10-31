@@ -204,11 +204,12 @@ export const rsvp = {
     "Replies are now closed. Thank you to everyone who let us know! If your plans have changed, please message Noblet or Nancy directly.",
 };
 
+/** An item held at one of the venues names it; one held anywhere else types its `place`. */
 export const schedule: ScheduleItem[] = [
-  { time: "[Time]", title: "Guests arrive", place: venues.church.name + ", Tepa", day: "sat" },
-  { time: "[Time]", title: "White wedding", place: venues.church.name + ", Tepa", day: "sat" },
-  { time: "[Time]", title: "Photos with the couple", place: "BN 111 Katakyie St, Tepa", day: "sat" },
-  { time: "[Time]", title: "Reception dinner", place: "BN 111 Katakyie St, Tepa", day: "sat" },
-  { time: "[Time]", title: "First dance & party", place: "BN 111 Katakyie St, Tepa", day: "sat" },
-  { time: "Sun 6 Dec", title: "Thanksgiving service", place: venues.church.name + ", Tepa", day: "sun" },
+  { time: "[Time]", title: "Guests arrive", venue: "church", day: "sat" },
+  { time: "[Time]", title: "White wedding", venue: "church", day: "sat" },
+  { time: "[Time]", title: "Photos with the couple", venue: "reception", day: "sat" },
+  { time: "[Time]", title: "Reception dinner", venue: "reception", day: "sat" },
+  { time: "[Time]", title: "First dance & party", venue: "reception", day: "sat" },
+  { time: "Sun 6 Dec", title: "Thanksgiving service", venue: "church", day: "sun" },
 ];

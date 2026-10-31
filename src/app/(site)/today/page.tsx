@@ -30,13 +30,13 @@ export default function TodayPage() {
         happeningNow={
           <ByDay
             fallback={<div className="h-16 animate-pulse rounded-full bg-white/10" />}
-            render={(secondDay, content) => <HappeningNow schedule={content.schedule} secondDay={secondDay} />}
+            render={(secondDay, content) => <HappeningNow schedule={content.schedule} venues={content.venues} secondDay={secondDay} />}
           />
         }
         orderOfDay={
           <ByDay
             fallback={<OrderSkeleton />}
-            render={(secondDay, content) => <OrderOfDay schedule={content.schedule} secondDay={secondDay} />}
+            render={(secondDay, content) => <OrderOfDay schedule={content.schedule} venues={content.venues} secondDay={secondDay} />}
           />
         }
         quickActions={

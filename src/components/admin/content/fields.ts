@@ -1,7 +1,7 @@
 import { describeDate } from "@/lib/admin/content";
 import type { ContentSectionKey } from "@/lib/admin/content";
 import { celebrationPlace } from "@/lib/content/place";
-import type { CelebrationVenue, SiteContent } from "@/lib/content/schema";
+import { CELEBRATION_VENUES, VENUE_KEYS, VENUE_LABELS, type SiteContent } from "@/lib/content/schema";
 import { endsNextDay } from "@/lib/content/times";
 import { getAt } from "./editing";
 
@@ -10,8 +10,11 @@ import { getAt } from "./editing";
 
 type Item = unknown;
 
-/** What a hint may show besides its own item: the saved venues, where each celebration's place comes from. */
-export type EditorContext = { venues: SiteContent["venues"] };
+/**
+ * What a hint may show besides its own item: the saved venues, where each celebration's place
+ * comes from. Read only for the celebrations; null elsewhere.
+ */
+export type EditorContext = { venues: SiteContent["venues"] | null };
 
 export type FieldSpec = {
   /** Where the value sits in an item (or in a group), e.g. ["coords", "lat"]; [] for a list of plain text. */
@@ -21,6 +24,8 @@ export type FieldSpec = {
   /** Columns out of six on wide screens. Phones use two columns: span 1 is half, the rest full. */
   span: 1 | 2 | 3 | 4 | 6;
   hint?: string | ((item: Item, context: EditorContext) => string | undefined);
+  /** Shown only for items it fits, such as a typed place for an item at no venue. */
+  shownFor?: (item: Item) => boolean;
   placeholder?: string;
   options?: readonly { value: string; label: string }[];
   /** A one-line text that often runs long starts two lines tall, as in the approved design. */
@@ -87,18 +92,21 @@ const venueFields: readonly FieldSpec[] = [
   { path: ["coords", "lng"], label: "Longitude", kind: "decimal", span: 3, placeholder: OPTIONAL },
 ];
 
-const venueOptions = [
-  { value: "church", label: "Church" },
-  { value: "reception", label: "Reception venue" },
-] as const satisfies readonly { value: CelebrationVenue; label: string }[];
+const celebrationVenueOptions = CELEBRATION_VENUES.map((venue) => ({ value: venue, label: VENUE_LABELS[venue] }));
 
 /** "Place, GPS and directions come from Venues → Church: Assemblies of God, Victory Worship Centre, Tepa (no GPS yet)". */
 function venueHint(item: Item, { venues }: EditorContext): string | undefined {
-  const option = venueOptions.find((choice) => choice.value === getAt(item, ["venue"]));
-  if (!option) return undefined;
-  const { place, gpsLine } = celebrationPlace({ venue: option.value }, venues);
-  return `Place, GPS and directions come from Venues → ${option.label}: ${place}${gpsLine ? ` · ${gpsLine}` : " (no GPS yet)"}`;
+  const venue = CELEBRATION_VENUES.find((key) => key === getAt(item, ["venue"]));
+  if (!venue || !venues) return undefined;
+  const { place, gpsLine } = celebrationPlace({ venue }, venues);
+  return `Place, GPS and directions come from Venues → ${VENUE_LABELS[venue]}: ${place}${gpsLine ? ` · ${gpsLine}` : " (no GPS yet)"}`;
 }
+
+/** An order of the day item is at one of the venues, or at another place typed for it (posted as no venue). */
+const scheduleVenueOptions = [
+  ...VENUE_KEYS.map((venue) => ({ value: venue, label: VENUE_LABELS[venue] })),
+  { value: "", label: "Other place" },
+];
 
 const chapterFields = (body: "text" | "quote"): readonly FieldSpec[] => [
   { path: ["when"], label: "When", kind: "text", span: 2 },
@@ -132,7 +140,7 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
         span: 4,
         hint: "Shown on the site. Calendars use the start and end times.",
       },
-      { path: ["venue"], label: "Venue", kind: "select", span: 3, options: venueOptions, hint: venueHint },
+      { path: ["venue"], label: "Venue", kind: "select", span: 3, options: celebrationVenueOptions, hint: venueHint },
       {
         path: ["placeDetail"],
         label: "Extra place note",
@@ -150,7 +158,8 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
     fields: [
       { path: ["time"], label: "Time", kind: "text", span: 2 },
       { path: ["title"], label: "What happens", kind: "text", span: 4 },
-      { path: ["place"], label: "Place", kind: "text", span: 4 },
+      { path: ["venue"], label: "Venue", kind: "select", span: 2, options: scheduleVenueOptions },
+      { path: ["place"], label: "Place", kind: "text", span: 2, shownFor: (item) => !text(item, "venue") },
       {
         path: ["day"],
         label: "Day",
@@ -170,11 +179,7 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
   },
   venues: {
     layout: "groups",
-    groups: [
-      { key: "church", legend: "Church", fields: venueFields },
-      { key: "reception", legend: "Reception", fields: venueFields },
-      { key: "hotel", legend: "Hotel", fields: venueFields },
-    ],
+    groups: VENUE_KEYS.map((venue) => ({ key: venue, legend: VENUE_LABELS[venue], fields: venueFields })),
   },
   landmarks: {
     layout: "list",
@@ -276,6 +281,11 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
   },
 };
 
+/** The fields a list item shows: a field meant only for some items is left out of the rest. */
+export function fieldsFor(spec: ListSpec, item: Item): readonly FieldSpec[] {
+  return spec.fields.filter((field) => field.shownFor?.(item) ?? true);
+}
+
 /**
  * Every field's place and name in form order, e.g. { path: "0.endTime", name: "White wedding · Ends" }:
  * the save bar names the first problem by it.
@@ -291,7 +301,7 @@ export function fieldsInOrder(spec: SectionSpec, value: unknown): { path: string
   }
   const items = Array.isArray(value) ? value : [];
   return items.flatMap((item, index) =>
-    spec.fields.map((field) => ({
+    fieldsFor(spec, item).map((field) => ({
       path: [index, ...field.path].join("."),
       name: spec.fields.length === 1 ? spec.legend(item, index) : `${spec.legend(item, index)} · ${field.label}`,
     })),

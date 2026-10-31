@@ -1,7 +1,7 @@
 import postgres from "postgres";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDb } from "../../../test/db";
-import { celebrationsSavedBeforeVenues } from "../../../test/fixtures/saved-celebrations";
+import { celebrationsSavedBeforeVenues } from "../../../test/fixtures/saved-before-venues";
 import { dbConfig } from "@/lib/env";
 import { contentDefaults } from "./defaults";
 import { sectionKeys, sectionSchemas } from "./schema";
@@ -82,6 +82,25 @@ describe("versions", () => {
     await saveSection("faq", faqB, "test");
     expect(await restoreVersion("faq", 1, "test")).toEqual({ ok: true, version: 3 });
     expect((await readSiteContent()).faq).toEqual(faqA);
+  });
+
+  it("restores a version saved before the celebrations named their venues, in the new shape", async () => {
+    await sql`insert into site_content (key, version, value, saved_by) values ('celebrations', 1, ${sql.json(celebrationsSavedBeforeVenues)}, 'test')`;
+    expect(await saveSection("celebrations", contentDefaults.celebrations, "test")).toEqual({ ok: true, version: 2 });
+    expect(await restoreVersion("celebrations", 1, "test")).toEqual({ ok: true, version: 3 });
+
+    const [restored] = await sql<{ value: Record<string, unknown>[] }[]>`
+      select value from site_content where key = 'celebrations' and version = 3`;
+    expect(restored.value.map((celebration) => [celebration.id, celebration.venue])).toEqual([
+      ["ceremony", "church"],
+      ["reception", "reception"],
+      ["thanks", "church"],
+    ]);
+    for (const celebration of restored.value) {
+      expect(celebration).not.toHaveProperty("place");
+      expect(celebration).not.toHaveProperty("directionsUrl");
+      expect(celebration).not.toHaveProperty("placeDetail");
+    }
   });
 
   it("refuses to restore a version that does not exist", async () => {

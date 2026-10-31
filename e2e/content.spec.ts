@@ -8,6 +8,7 @@ test("the home page shows content saved in the database", async ({ page }) => {
 });
 
 const BUILT_IN_RECEPTION_GPS = "AX-0084-3317";
+const BUILT_IN_RECEPTION_NAME = "BN 111 Katakyie St";
 
 /** A browser signed in to the admin through Cloudflare Access, allowed to read what the copy button copies. */
 async function signedIn(browser: Browser, baseURL: string | undefined) {
@@ -19,12 +20,12 @@ async function signedIn(browser: Browser, baseURL: string | undefined) {
   return { page: await context.newPage(), done: () => context.close() };
 }
 
-/** Saves Venues → Reception → GhanaPost GPS in the admin. */
-async function saveReceptionGps(page: Page, gps: string) {
+/** Saves one field of Venues → Reception in the admin, such as its GhanaPost GPS. */
+async function saveReceptionVenue(page: Page, label: "GhanaPost GPS" | "Name", value: string) {
   await page.goto("/admin/content/venues");
   // The form works once the page has hydrated.
   await page.waitForLoadState("networkidle");
-  await page.getByRole("group", { name: "Reception" }).getByLabel("GhanaPost GPS").fill(gps);
+  await page.getByRole("group", { name: "Reception" }).getByLabel(label, { exact: true }).fill(value);
   await page.getByRole("button", { name: "Save venues" }).click();
   await expect(page.getByText("Saved. Guests see it now.")).toBeVisible();
 }
@@ -36,7 +37,7 @@ test.describe("each venue fact typed once", () => {
   }) => {
     const { page, done } = await signedIn(browser, baseURL);
     try {
-      await saveReceptionGps(page, "AS-1205-2026");
+      await saveReceptionVenue(page, "GhanaPost GPS", "AS-1205-2026");
 
       await page.goto("/home?mode=before");
       // The page streams in: until the swap, a hidden copy sits beside the visible one.
@@ -61,11 +62,11 @@ test.describe("each venue fact typed once", () => {
       // The celebrations editor shows where the reception's place and GPS now come from.
       await page.goto("/admin/content/celebrations");
       await expect(page.getByRole("group", { name: "Reception" })).toContainText(
-        "Place, GPS and directions come from Venues → Reception venue: BN 111 Katakyie St, Tepa · GhanaPost GPS · AS-1205-2026",
+        "Place, GPS and directions come from Venues → Reception: BN 111 Katakyie St, Tepa · GhanaPost GPS · AS-1205-2026",
       );
     } finally {
       // Later tests expect the built-in GPS.
-      await saveReceptionGps(page, BUILT_IN_RECEPTION_GPS);
+      await saveReceptionVenue(page, "GhanaPost GPS", BUILT_IN_RECEPTION_GPS);
       await done();
     }
   });
@@ -91,11 +92,44 @@ test.describe("each venue fact typed once", () => {
       // Choosing another venue shows its place straight away, before anything is saved.
       await thanksgiving.getByLabel("Venue", { exact: true }).selectOption("reception");
       await expect(thanksgiving).toContainText(
-        `come from Venues → Reception venue: BN 111 Katakyie St, Tepa · GhanaPost GPS · ${BUILT_IN_RECEPTION_GPS}`,
+        `come from Venues → Reception: BN 111 Katakyie St, Tepa · GhanaPost GPS · ${BUILT_IN_RECEPTION_GPS}`,
       );
       await page.getByRole("button", { name: "Discard changes" }).click();
       await expect(thanksgiving.getByLabel("Venue", { exact: true })).toHaveValue("church");
     } finally {
+      await done();
+    }
+  });
+
+  test("the order of the day names its venues: renaming one renames its items, and Other place takes a typed place", async ({
+    browser,
+    baseURL,
+  }) => {
+    const { page, done } = await signedIn(browser, baseURL);
+    try {
+      await saveReceptionVenue(page, "Name", "Katakyie Gardens");
+
+      await page.goto("/today");
+      const order = page.getByRole("list").filter({ visible: true }).filter({ hasText: "Photos with the couple" });
+      const photos = order.getByRole("listitem").filter({ hasText: "Photos with the couple" });
+      await expect(photos).toContainText("Katakyie Gardens, Tepa");
+      await expect(order).not.toContainText(BUILT_IN_RECEPTION_NAME);
+      await expect(order.getByRole("listitem").filter({ hasText: "Guests arrive" })).toContainText(
+        "Assemblies of God, Victory Worship Centre, Tepa",
+      );
+
+      await page.goto("/admin/content/schedule");
+      await page.waitForLoadState("networkidle");
+      const guestsArrive = page.getByRole("group", { name: "Guests arrive" });
+      await expect(guestsArrive.getByLabel("Venue", { exact: true })).toHaveValue("church");
+      await expect(guestsArrive.getByLabel("Place", { exact: true })).toHaveCount(0);
+      await guestsArrive.getByLabel("Venue", { exact: true }).selectOption({ label: "Other place" });
+      await expect(guestsArrive.getByLabel("Place", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Discard changes" }).click();
+      await expect(guestsArrive.getByLabel("Place", { exact: true })).toHaveCount(0);
+    } finally {
+      // Later tests expect the built-in name.
+      await saveReceptionVenue(page, "Name", BUILT_IN_RECEPTION_NAME);
       await done();
     }
   });

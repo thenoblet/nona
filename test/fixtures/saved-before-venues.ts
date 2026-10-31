@@ -51,3 +51,17 @@ export const celebrationsSavedBeforeVenues = [
     endTime: null,
   },
 ];
+
+/**
+ * The order of the day as saved before its items could name a venue: each typed its venue's name,
+ * with the town, as its place. One here leaves the town off and one is somewhere else, to show
+ * both are read.
+ */
+export const scheduleSavedBeforeVenues = [
+  { time: "[Time]", title: "Guests arrive", place: "Assemblies of God, Victory Worship Centre, Tepa", day: "sat" },
+  { time: "[Time]", title: "White wedding", place: "Assemblies of God, Victory Worship Centre, Tepa", day: "sat" },
+  { time: "[Time]", title: "Photos with the couple", place: "BN 111 Katakyie St, Tepa", day: "sat" },
+  { time: "[Time]", title: "Reception dinner", place: "BN 111 Katakyie St", day: "sat" },
+  { time: "[Time]", title: "After-party", place: "Rexco Junction, Tepa", day: "sat" },
+  { time: "Sun 6 Dec", title: "Thanksgiving service", place: "Assemblies of God, Victory Worship Centre, Tepa", day: "sun" },
+];

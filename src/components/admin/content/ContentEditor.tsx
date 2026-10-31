@@ -22,7 +22,15 @@ import {
   type SaveState,
 } from "@/lib/admin/content";
 import { getAt, insertAt, moveItem, pathKey, removeAt, setAt, type Path } from "./editing";
-import { fieldsInOrder, sectionSpecs, type EditorContext, type FieldSpec, type ListSpec, type SectionSpec } from "./fields";
+import {
+  fieldsFor,
+  fieldsInOrder,
+  sectionSpecs,
+  type EditorContext,
+  type FieldSpec,
+  type ListSpec,
+  type SectionSpec,
+} from "./fields";
 import { setUnsavedChanges } from "./unsaved";
 import { VersionHistory, type RestoreNotice, type VersionEntry } from "./VersionHistory";
 
@@ -301,7 +309,7 @@ export function ContentEditor({
                     <legend>{legend}</legend>
                     {note && <p className="admin-item-note">{note}</p>}
                     <div className="admin-fields">
-                      {spec.fields.map((field) => (
+                      {fieldsFor(spec, item).map((field) => (
                         <Field
                           key={field.path.join(".") || "value"}
                           {...fieldProps(field, item, [index, ...field.path], `${formId}-${itemKey}`)}

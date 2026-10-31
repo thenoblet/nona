@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { celebrationsSavedBeforeVenues } from "../../../test/fixtures/saved-celebrations";
+import { celebrationsSavedBeforeVenues, scheduleSavedBeforeVenues } from "../../../test/fixtures/saved-before-venues";
 import { contentDefaults } from "./defaults";
 import { formatIssues, sectionKeys, sectionSchemas, type SectionKey } from "./schema";
 
@@ -32,7 +32,8 @@ describe("one-line fields", () => {
 
     const schedule = structuredClone(contentDefaults.schedule);
     schedule[0].title = "Guests\narrive";
-    expect(problems("schedule", schedule)).toEqual(["schedule[0].title: Use one line"]);
+    schedule[1] = { ...schedule[1], venue: undefined, place: "Town\nhall" };
+    expect(problems("schedule", schedule)).toEqual(["schedule[0].title: Use one line", "schedule[1].place: Use one line"]);
 
     const party = structuredClone(contentDefaults.party);
     party[0].role = "Maid\nof honour";
@@ -148,6 +149,73 @@ describe("celebrations saved before each named its venue", () => {
     const parsed = sectionSchemas.celebrations.parse(value);
     expect(parsed[0]).not.toHaveProperty("placeDetail");
     expect(parsed[2].placeDetail).toBe("Main hall, upstairs");
+  });
+});
+
+describe("a GhanaPost GPS typed into a celebration's extra place note", () => {
+  it("is refused, saying which venue holds the GPS", () => {
+    const value = celebrations();
+    value[1].placeDetail = "GhanaPost GPS · AX-1111-2222";
+    value[2].placeDetail = " ghanapost gps AS-0000-0001";
+    expect(problems("celebrations", value)).toEqual([
+      "celebrations[1].placeDetail: Put the GPS number in Venues → Reception → GhanaPost GPS",
+      "celebrations[2].placeDetail: Put the GPS number in Venues → Church → GhanaPost GPS",
+    ]);
+  });
+
+  it("is still dropped from a celebration saved before it named its venue", () => {
+    const value = structuredClone(celebrationsSavedBeforeVenues);
+    expect(problems("celebrations", value)).toEqual([]);
+    expect(sectionSchemas.celebrations.parse(value)[1]).not.toHaveProperty("placeDetail");
+  });
+});
+
+describe("order of the day venues", () => {
+  it("name the venue of every built-in item", () => {
+    expect(contentDefaults.schedule.map((item) => [item.title, item.venue, item.place])).toEqual([
+      ["Guests arrive", "church", undefined],
+      ["White wedding", "church", undefined],
+      ["Photos with the couple", "reception", undefined],
+      ["Reception dinner", "reception", undefined],
+      ["First dance & party", "reception", undefined],
+      ["Thanksgiving service", "church", undefined],
+    ]);
+  });
+
+  it("are read from a schedule saved before items named one, with or without the town; anywhere else stays as typed", () => {
+    const parsed = sectionSchemas.schedule.safeParse(structuredClone(scheduleSavedBeforeVenues));
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.data).toEqual([
+      { time: "[Time]", title: "Guests arrive", venue: "church", day: "sat" },
+      { time: "[Time]", title: "White wedding", venue: "church", day: "sat" },
+      { time: "[Time]", title: "Photos with the couple", venue: "reception", day: "sat" },
+      { time: "[Time]", title: "Reception dinner", venue: "reception", day: "sat" },
+      { time: "[Time]", title: "After-party", place: "Rexco Junction, Tepa", day: "sat" },
+      { time: "Sun 6 Dec", title: "Thanksgiving service", venue: "church", day: "sun" },
+    ]);
+  });
+
+  it("leave an item's own place behind once it names a venue, the hotel included", () => {
+    const schedule = [
+      { time: "[Time]", title: "Breakfast", venue: "hotel", place: "Typed before the venue was chosen", day: "sat" },
+      { time: "[Time]", title: "Brunch", place: "Town park", day: "sun" },
+    ];
+    expect(sectionSchemas.schedule.parse(schedule)).toEqual([
+      { time: "[Time]", title: "Breakfast", venue: "hotel", day: "sat" },
+      { time: "[Time]", title: "Brunch", place: "Town park", day: "sun" },
+    ]);
+  });
+
+  it("ask for a place when an item names no venue, and refuse a venue that isn't one", () => {
+    const schedule = structuredClone(contentDefaults.schedule) as Record<string, unknown>[];
+    delete schedule[0].venue;
+    schedule[1].venue = "garden";
+    schedule[2] = { ...schedule[2], venue: undefined, place: "" };
+    expect(problems("schedule", schedule)).toEqual([
+      "schedule[0].place: Type the place, or choose a venue",
+      "schedule[1].venue: Choose a venue, or Other place",
+      "schedule[2].place: Cannot be empty",
+    ]);
   });
 });
 

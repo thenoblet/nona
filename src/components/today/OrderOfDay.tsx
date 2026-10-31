@@ -1,8 +1,17 @@
-import type { ScheduleItem } from "@/lib/content/schema";
+import { scheduleItemPlace } from "@/lib/content/place";
+import type { ScheduleItem, SiteContent } from "@/lib/content/schema";
 import { nowIndex } from "./day";
 
 /** The day's timeline: finished items fade, the current one is marked in orange. */
-export function OrderOfDay({ schedule, secondDay }: { schedule: ScheduleItem[]; secondDay: boolean }) {
+export function OrderOfDay({
+  schedule,
+  venues,
+  secondDay,
+}: {
+  schedule: ScheduleItem[];
+  venues: SiteContent["venues"];
+  secondDay: boolean;
+}) {
   const now = nowIndex(schedule, secondDay);
   return (
     <ol className="border-t border-hairline">
@@ -30,7 +39,7 @@ export function OrderOfDay({ schedule, secondDay }: { schedule: ScheduleItem[]; 
                 {item.title}
                 {state === "done" ? <span className="sr-only"> (finished)</span> : null}
               </span>
-              <span className="text-[13px] text-mocha">{item.place}</span>
+              <span className="text-[13px] text-mocha">{scheduleItemPlace(item, venues)}</span>
               {state === "now" ? (
                 <span className="mt-[3px] text-[10px] uppercase tracking-[0.24em] text-ember-ink">Happening now</span>
               ) : null}

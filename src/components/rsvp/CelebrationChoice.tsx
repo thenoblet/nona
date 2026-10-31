@@ -1,6 +1,5 @@
 "use client";
 
-import { celebrationPlace } from "@/lib/content/place";
 import type { Celebration, SiteContent } from "@/lib/content/schema";
 import type { Answer } from "@/lib/data/types";
 import { Icon } from "@/components/ui/Icon";
@@ -17,12 +16,9 @@ const settle = "ease-[cubic-bezier(0.16,1,0.3,1)]";
 /** The part before the first separator: "[Start time] · please be seated early" becomes "[Start time]". */
 const lead = (text: string, separator: string) => text.split(separator)[0].trim();
 
-/** The place without its town: "BN 111 Katakyie St, Tepa" becomes "BN 111 Katakyie St". */
-const withoutTown = (place: string) => (place.includes(",") ? place.slice(0, place.lastIndexOf(",")).trim() : place);
-
-/** "[Start time] · Assemblies of God, Victory Worship Centre": a short time and place for the card. */
+/** "[Start time] · Assemblies of God, Victory Worship Centre": a short time, and the venue without its town. */
 export function whenLine(celebration: Celebration, venues: SiteContent["venues"]) {
-  return `${lead(celebration.time, " · ")} · ${withoutTown(celebrationPlace(celebration, venues).place)}`;
+  return `${lead(celebration.time, " · ")} · ${venues[celebration.venue].name}`;
 }
 
 /**
