@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { celebrationsSavedBeforeVenues, scheduleSavedBeforeVenues } from "../../../test/fixtures/saved-before-venues";
 import { contentDefaults } from "./defaults";
 import { formatIssues, sectionKeys, sectionSchemas, type SectionKey } from "./schema";
 
@@ -20,18 +21,19 @@ describe("one-line fields", () => {
     const value = celebrations();
     value[0].name = "White\nwedding";
     value[0].time = "10:00\nplease be seated early";
-    value[0].place = "Victory Worship Centre\nTepa";
+    value[0].placeDetail = "Main hall\nupstairs";
     value[0].dress = "Formal\r\nblack tie optional";
     expect(problems("celebrations", value)).toEqual([
       "celebrations[0].name: Use one line",
       "celebrations[0].time: Use one line",
-      "celebrations[0].place: Use one line",
+      "celebrations[0].placeDetail: Use one line",
       "celebrations[0].dress: Use one line",
     ]);
 
     const schedule = structuredClone(contentDefaults.schedule);
     schedule[0].title = "Guests\narrive";
-    expect(problems("schedule", schedule)).toEqual(["schedule[0].title: Use one line"]);
+    schedule[1] = { ...schedule[1], venue: undefined, place: "Town\nhall" };
+    expect(problems("schedule", schedule)).toEqual(["schedule[0].title: Use one line", "schedule[1].place: Use one line"]);
 
     const party = structuredClone(contentDefaults.party);
     party[0].role = "Maid\nof honour";
@@ -59,10 +61,6 @@ describe("one-line fields", () => {
 
 describe("links", () => {
   it("say to remove a space rather than asking for https", () => {
-    const value = celebrations();
-    value[0].directionsUrl = "https://maps.example.com/a b";
-    expect(problems("celebrations", value)).toEqual(["celebrations[0].directionsUrl: Remove the space from the link"]);
-
     const venues = structuredClone(contentDefaults.venues);
     venues.church.mapsUrl = "https://maps.example.com/\nchurch";
     expect(problems("venues", venues)).toEqual(["venues.church.mapsUrl: Remove the space from the link"]);
@@ -73,13 +71,150 @@ describe("links", () => {
   });
 
   it("still ask for https when there is no space", () => {
-    const value = celebrations();
-    value[0].directionsUrl = "http://maps.example.com";
-    expect(problems("celebrations", value)).toEqual([
-      "celebrations[0].directionsUrl: Use an https:// link or an in-page anchor starting with #",
+    const venues = structuredClone(contentDefaults.venues);
+    venues.reception.mapsUrl = "http://maps.example.com";
+    expect(problems("venues", venues)).toEqual([
+      "venues.reception.mapsUrl: Use an https:// link or an in-page anchor starting with #",
     ]);
     expect(problems("liveStream", { url: "http://live.example.com" })).toEqual([
       "liveStream.url: Use an https:// link, or leave it empty",
+    ]);
+  });
+});
+
+describe("celebration venues", () => {
+  it("put the white wedding and the thanksgiving at the church and the reception at the reception venue", () => {
+    expect(contentDefaults.celebrations.map((celebration) => [celebration.id, celebration.venue])).toEqual([
+      ["ceremony", "church"],
+      ["reception", "reception"],
+      ["thanks", "church"],
+    ]);
+  });
+
+  it("keep the venue a celebration names, and refuse one that holds no celebration", () => {
+    const value = celebrations();
+    value[2].venue = "reception";
+    expect(sectionSchemas.celebrations.parse(value)[2].venue).toBe("reception");
+
+    (value[0] as { venue: string }).venue = "hotel";
+    expect(problems("celebrations", value)).toEqual(["celebrations[0].venue: Choose the church or the reception venue"]);
+  });
+
+  it("give the reception venue the GhanaPost GPS Noblet entered, as the built-in text", () => {
+    expect(contentDefaults.venues.reception.gps).toBe("AX-0084-3317");
+  });
+});
+
+describe("celebrations saved before each named its venue", () => {
+  const savedBeforeVenues = () => structuredClone(celebrationsSavedBeforeVenues);
+
+  it("still parse, each at the venue its id implies", () => {
+    const parsed = sectionSchemas.celebrations.safeParse(savedBeforeVenues());
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.data?.map((celebration) => [celebration.id, celebration.venue])).toEqual([
+      ["ceremony", "church"],
+      ["reception", "reception"],
+      ["thanks", "church"],
+    ]);
+  });
+
+  it("lose their own place and directions link, and a place detail that is only the GhanaPost GPS", () => {
+    const parsed = sectionSchemas.celebrations.parse(savedBeforeVenues());
+    for (const celebration of parsed) {
+      expect(celebration).not.toHaveProperty("place");
+      expect(celebration).not.toHaveProperty("directionsUrl");
+      expect(celebration).not.toHaveProperty("placeDetail");
+    }
+    // Everything else is read as it was saved.
+    expect(parsed[1]).toEqual({
+      id: "reception",
+      venue: "reception",
+      name: "Reception",
+      weekday: "Saturday",
+      weekdayShort: "Sat",
+      day: "05",
+      month: "December",
+      time: "Right after the white wedding · dinner & dancing",
+      dress: "Evening glamour",
+      date: "2026-12-05",
+      startTime: null,
+      endTime: null,
+    });
+  });
+
+  it("drop a GhanaPost GPS detail however it is written, and keep any other note", () => {
+    const value = savedBeforeVenues();
+    Object.assign(value[0], { placeDetail: "  ghanapost gps: AS-0000-0001" });
+    Object.assign(value[2], { placeDetail: "Main hall, upstairs" });
+    const parsed = sectionSchemas.celebrations.parse(value);
+    expect(parsed[0]).not.toHaveProperty("placeDetail");
+    expect(parsed[2].placeDetail).toBe("Main hall, upstairs");
+  });
+});
+
+describe("a GhanaPost GPS typed into a celebration's extra place note", () => {
+  it("is refused, saying which venue holds the GPS", () => {
+    const value = celebrations();
+    value[1].placeDetail = "GhanaPost GPS · AX-1111-2222";
+    value[2].placeDetail = " ghanapost gps AS-0000-0001";
+    expect(problems("celebrations", value)).toEqual([
+      "celebrations[1].placeDetail: Put the GPS number in Venues → Reception → GhanaPost GPS",
+      "celebrations[2].placeDetail: Put the GPS number in Venues → Church → GhanaPost GPS",
+    ]);
+  });
+
+  it("is still dropped from a celebration saved before it named its venue", () => {
+    const value = structuredClone(celebrationsSavedBeforeVenues);
+    expect(problems("celebrations", value)).toEqual([]);
+    expect(sectionSchemas.celebrations.parse(value)[1]).not.toHaveProperty("placeDetail");
+  });
+});
+
+describe("order of the day venues", () => {
+  it("name the venue of every built-in item", () => {
+    expect(contentDefaults.schedule.map((item) => [item.title, item.venue, item.place])).toEqual([
+      ["Guests arrive", "church", undefined],
+      ["White wedding", "church", undefined],
+      ["Photos with the couple", "reception", undefined],
+      ["Reception dinner", "reception", undefined],
+      ["First dance & party", "reception", undefined],
+      ["Thanksgiving service", "church", undefined],
+    ]);
+  });
+
+  it("are read from a schedule saved before items named one, with or without the town; anywhere else stays as typed", () => {
+    const parsed = sectionSchemas.schedule.safeParse(structuredClone(scheduleSavedBeforeVenues));
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.data).toEqual([
+      { time: "[Time]", title: "Guests arrive", venue: "church", day: "sat" },
+      { time: "[Time]", title: "White wedding", venue: "church", day: "sat" },
+      { time: "[Time]", title: "Photos with the couple", venue: "reception", day: "sat" },
+      { time: "[Time]", title: "Reception dinner", venue: "reception", day: "sat" },
+      { time: "[Time]", title: "After-party", place: "Rexco Junction, Tepa", day: "sat" },
+      { time: "Sun 6 Dec", title: "Thanksgiving service", venue: "church", day: "sun" },
+    ]);
+  });
+
+  it("leave an item's own place behind once it names a venue, the hotel included", () => {
+    const schedule = [
+      { time: "[Time]", title: "Breakfast", venue: "hotel", place: "Typed before the venue was chosen", day: "sat" },
+      { time: "[Time]", title: "Brunch", place: "Town park", day: "sun" },
+    ];
+    expect(sectionSchemas.schedule.parse(schedule)).toEqual([
+      { time: "[Time]", title: "Breakfast", venue: "hotel", day: "sat" },
+      { time: "[Time]", title: "Brunch", place: "Town park", day: "sun" },
+    ]);
+  });
+
+  it("ask for a place when an item names no venue, and refuse a venue that isn't one", () => {
+    const schedule = structuredClone(contentDefaults.schedule) as Record<string, unknown>[];
+    delete schedule[0].venue;
+    schedule[1].venue = "garden";
+    schedule[2] = { ...schedule[2], venue: undefined, place: "" };
+    expect(problems("schedule", schedule)).toEqual([
+      "schedule[0].place: Type the place, or choose a venue",
+      "schedule[1].venue: Choose a venue, or Other place",
+      "schedule[2].place: Cannot be empty",
     ]);
   });
 });
@@ -126,5 +261,39 @@ describe("wedding party ids", () => {
     expect(problems("party", [null, { id: "james", name: "James", role: "Best man" }])).toEqual([
       "party[0]: Invalid input: expected object, received null",
     ]);
+  });
+});
+
+describe("RSVP settings", () => {
+  const settings = () => structuredClone(contentDefaults.rsvp);
+
+  it("refuse a reply-by date on or after the wedding", () => {
+    expect(problems("rsvp", { ...settings(), replyBy: "2026-12-05" })).toEqual(["rsvp.replyBy: Use a date before the wedding"]);
+    expect(problems("rsvp", { ...settings(), replyBy: "2027-01-10" })).toEqual(["rsvp.replyBy: Use a date before the wedding"]);
+    expect(problems("rsvp", { ...settings(), replyBy: "2026-12-04" })).toEqual([]);
+  });
+
+  it("refuse a reply-by date that is not a real one, with only its own message", () => {
+    expect(problems("rsvp", { ...settings(), replyBy: "2026-11-31" })).toEqual(["rsvp.replyBy: Not a real date"]);
+    expect(problems("rsvp", { ...settings(), replyBy: "20 November" })).not.toContain("rsvp.replyBy: Use a date before the wedding");
+    expect(problems("rsvp", { ...settings(), replyBy: "20 November" })).toContain("rsvp.replyBy: Use a date like 2026-12-05");
+  });
+
+  it("refuse an empty closed message, and one over 300 characters", () => {
+    expect(problems("rsvp", { ...settings(), closedMessage: "" })).toEqual(["rsvp.closedMessage: Cannot be empty"]);
+    expect(problems("rsvp", { ...settings(), closedMessage: "  \n " })).toEqual(["rsvp.closedMessage: Cannot be empty"]);
+    expect(problems("rsvp", { ...settings(), closedMessage: "a".repeat(301) })).toEqual([
+      "rsvp.closedMessage: Use at most 300 characters",
+    ]);
+    expect(problems("rsvp", { ...settings(), closedMessage: "a".repeat(300) })).toEqual([]);
+  });
+
+  it("start open, asking for replies by 20 November", () => {
+    expect(contentDefaults.rsvp).toEqual({
+      open: true,
+      replyBy: "2026-11-20",
+      closedMessage:
+        "Replies are now closed. Thank you to everyone who let us know! If your plans have changed, please message Noblet or Nancy directly.",
+    });
   });
 });

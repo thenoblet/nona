@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { getSiteContent } from "@/lib/content/get";
+import { scheduleItemPlace } from "@/lib/content/place";
 import { liveStreamState, visibleFaq } from "@/lib/content/live";
 import { isSecondDay, resolveMode, type Mode } from "@/lib/mode";
 import { Autoplay } from "@/components/music/Autoplay";
@@ -40,7 +41,7 @@ export default function HomePage({ searchParams }: PageProps<"/home">) {
 async function Home({ searchParams }: { searchParams: PageProps<"/home">["searchParams"] }) {
   await connection();
   const content = await getSiteContent();
-  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts } = content;
+  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts, rsvp } = content;
   const faq = visibleFaq(content);
   const params = await searchParams;
   // One moment for the whole page, so the version, the schedule and the live stream agree.
@@ -58,15 +59,15 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
         {mode === "before" ? (
           <>
             <HeroBefore />
-            <InvitationLetter />
+            <InvitationLetter rsvp={rsvp} />
             <Story story={story} />
-            <Celebrations celebrations={celebrations} />
+            <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Colours />
             <Party party={party} />
             <Gallery />
             <Travel travel={travel} />
-            <RsvpBand />
+            <RsvpBand rsvp={rsvp} />
             <Gifts gifts={gifts} />
             <AlbumTeaser />
             <Faq faq={faq} />
@@ -77,14 +78,14 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
           <>
             <HeroDay
               todayLabel={todayLabel}
-              now={current ? { title: current.title, place: current.place.replace(", Tepa", "") } : null}
+              now={current ? { title: current.title, place: scheduleItemPlace(current, venues).replace(", Tepa", "") } : null}
             />
             <LiveAlbum />
             <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule}
-              reception={venues.reception}
+              venues={venues}
               liveUrl={live.show ? live.url : null}
             />
-            <Celebrations celebrations={celebrations} />
+            <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Story story={story} />
             <Party party={party} />

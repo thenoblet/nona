@@ -7,12 +7,12 @@ import { siteUrl } from "@/lib/site-url";
 export async function GET(request: Request) {
   // Read at request time so the build never needs the database.
   await connection();
-  const { celebrations } = await getSiteContent();
+  const { celebrations, venues } = await getSiteContent();
   const wanted = new Set((new URL(request.url).searchParams.get("events") ?? "").split(",").map((id) => id.trim()));
   const chosen = celebrations.filter((celebration) => wanted.has(celebration.id));
   const site = siteUrl();
   const body = buildIcs(
-    (chosen.length ? chosen : celebrations).map((celebration) => celebrationEvent(celebration, site)),
+    (chosen.length ? chosen : celebrations).map((celebration) => celebrationEvent(celebration, venues, site)),
     new Date(),
   );
   return new Response(body, {

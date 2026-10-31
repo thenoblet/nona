@@ -1,5 +1,5 @@
 import { couple } from "@/content/wedding";
-import type { Celebration, ScheduleItem, Venue } from "@/lib/content/schema";
+import type { Celebration, ScheduleItem, SiteContent } from "@/lib/content/schema";
 import { listMedia, mediaStats, SAMPLE_DEVICE } from "@/lib/data/media";
 import type { Wish } from "@/lib/data/types";
 import { listWishes } from "@/lib/data/wishes";
@@ -93,13 +93,13 @@ export function TodaySection({
   todayLabel,
   secondDay,
   schedule,
-  reception,
+  venues,
   liveUrl,
 }: {
   todayLabel: string;
   secondDay: boolean;
   schedule: ScheduleItem[];
-  reception: Venue;
+  venues: SiteContent["venues"];
   /** Set only once the live stream is showing. */
   liveUrl: string | null;
 }) {
@@ -114,12 +114,12 @@ export function TodaySection({
         <div className="flex flex-col gap-12 lg:flex-row lg:items-start lg:gap-16">
           <div className="min-w-0 flex-1">
             <h3 className="mt-0 mb-3.5 font-serif text-[30px] font-normal italic sm:text-[34px]">Order of the day</h3>
-            <OrderOfDay schedule={schedule} secondDay={secondDay} />
+            <OrderOfDay schedule={schedule} venues={venues} secondDay={secondDay} />
           </div>
           <Reveal className="flex min-w-0 flex-col gap-5.5 rounded-[var(--radius-paper)] bg-tray p-4 sm:p-7 lg:w-[420px] lg:flex-none">
             <div className="flex flex-wrap justify-center gap-x-7 gap-y-1">
               <a
-                href={reception.mapsUrl}
+                href={venues.reception.mapsUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="ember-link inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] no-underline"

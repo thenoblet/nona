@@ -31,12 +31,25 @@ export async function readSiteContent(): Promise<SiteContent> {
   return merged;
 }
 
-/** Runs `read`, and falls back to the built-in text if it throws. */
+/** How long the built-in text stands in after a failed read before the database is tried again. */
+const FALLBACK_MS = 30_000;
+/** Until this time (ms) pages get the built-in text without trying the database. */
+let fallbackUntil = 0;
+
+/**
+ * Runs `read`, and falls back to the built-in text if it throws. During an outage every page would
+ * otherwise wait out the 5 s connect timeout, so after a failed read the built-in text is served
+ * for 30 s without trying again; the first read that works after that replaces it.
+ */
 export async function contentOrDefaults(read: () => Promise<SiteContent>): Promise<SiteContent> {
+  if (Date.now() < fallbackUntil) return contentDefaults;
   try {
-    return await read();
+    const content = await read();
+    fallbackUntil = 0;
+    return content;
   } catch (error) {
-    console.error("Could not read site content; using the built-in text:", describeError(error));
+    fallbackUntil = Date.now() + FALLBACK_MS;
+    console.error("Could not read site content; using the built-in text for 30 s:", describeError(error));
     return contentDefaults;
   }
 }

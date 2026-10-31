@@ -1,0 +1,50 @@
+#cloud-config
+# nona-worker-01: the media worker, as a remote server of LuxBedding's Dokploy.
+# No public IP and no inbound service; it only connects out to Postgres, R2 and
+# GHCR. No ufw (deliberate): the NSG is the gate.
+#
+# /mnt is the local NVMe temp disk: the worker's ffmpeg scratch space, bind-
+# mounted into the container as /scratch. It is wiped by every resize or
+# deallocation and mounted late in boot (fstab: _netdev, after cloud-init), so a
+# systemd unit recreates /mnt/nona-worker on EVERY boot, after /mnt is mounted
+# and before Docker starts. A tmpfiles.d rule would run too early and create the
+# folder under the mountpoint, hidden by the mount.
+package_update: true
+package_upgrade: true
+packages:
+  - fail2ban
+  - unattended-upgrades
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-nona.conf
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
+      MaxAuthTries 3
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [sshd]
+      enabled = true
+      maxretry = 5
+      bantime = 1h
+  - path: /etc/systemd/system/nona-worker-scratch.service
+    content: |
+      [Unit]
+      Description=NONA worker scratch dir on the Azure temp disk
+      RequiresMountsFor=/mnt
+      Before=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      # uid:gid 10001 = the non-root user inside ghcr.io/thenoblet/nona-worker
+      ExecStart=/usr/bin/install -d -o 10001 -g 10001 -m 0750 /mnt/nona-worker
+
+      [Install]
+      WantedBy=multi-user.target docker.service
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now nona-worker-scratch.service
+  - sshd -t && systemctl restart ssh
+  - systemctl enable --now fail2ban
+  - while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 5; done
+  - curl -fsSL https://get.docker.com | sh

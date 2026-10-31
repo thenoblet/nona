@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
 import { contentDefaults } from "@/lib/content/defaults";
+import { celebrationPlace } from "@/lib/content/place";
 import type { Celebration, SiteContent } from "@/lib/content/schema";
 import type { RsvpRecord } from "@/lib/data/types";
 import { renderRsvpConfirmation } from "./rsvp-confirmation";
@@ -41,6 +42,15 @@ const asHtml = (value: string) =>
 /** The html's text with its tags taken out, still escaped. */
 const withoutTags = (html: string) => html.replace(/<[^>]*>/g, "");
 
+/** Where a celebration is, from its venue in the built-in text: "BN 111 Katakyie St, Tepa". */
+const placeOf = (celebration: Celebration) => celebrationPlace(celebration, contentDefaults.venues).place;
+
+/** The built-in text with the reception venue's GhanaPost GPS changed. */
+const withReceptionGps = (gps: string): SiteContent => ({
+  ...contentDefaults,
+  venues: { ...contentDefaults.venues, reception: { ...contentDefaults.venues.reception, gps } },
+});
+
 /** "Saturday 5 December". */
 const weekdayDate = (celebration: Celebration) =>
   `${celebration.weekday} ${Number(celebration.day)} ${celebration.month}`;
@@ -76,7 +86,7 @@ describe("renderRsvpConfirmation", () => {
       ] as const) {
         expect(segment).toContain(written(weekdayDate(celebration)));
         expect(segment).toContain(written(celebration.time));
-        expect(segment).toContain(written(celebration.place));
+        expect(segment).toContain(written(placeOf(celebration)));
       }
       expect(attending).toContain("Attending");
       expect(attending).not.toContain("Not attending");
@@ -87,8 +97,8 @@ describe("renderRsvpConfirmation", () => {
 
   it("links only the celebrations the guest is coming to to Google Calendar, beside the attached file", async () => {
     const mail = await render(record({ [first.id]: "yes", [second.id]: "no" }));
-    const comingTo = googleCalendarUrl(celebrationEvent(first, SITE_URL));
-    const notComingTo = googleCalendarUrl(celebrationEvent(second, SITE_URL));
+    const comingTo = googleCalendarUrl(celebrationEvent(first, contentDefaults.venues, SITE_URL));
+    const notComingTo = googleCalendarUrl(celebrationEvent(second, contentDefaults.venues, SITE_URL));
     expect(mail.html).toContain(`href="${asHtml(comingTo)}"`);
     expect(mail.text).toContain(comingTo);
     expect(mail.html).not.toContain(asHtml(notComingTo));
@@ -130,14 +140,33 @@ describe("renderRsvpConfirmation", () => {
     }
   });
 
-  it("shows a celebration's GhanaPost GPS line under its place when it has one, and none when it doesn't", async () => {
-    const withGps = contentDefaults.celebrations.filter((celebration) => celebration.placeDetail);
-    const withoutGps = contentDefaults.celebrations.filter((celebration) => !celebration.placeDetail);
-    // The built-in text gives the reception a GhanaPost GPS line and the white wedding none.
-    expect(withGps.map((celebration) => celebration.id)).toContain(second.id);
-    expect(withoutGps.map((celebration) => celebration.id)).toContain(first.id);
-    const gpsLine = second.placeDetail as string;
-    expect(gpsLine).toMatch(/^GhanaPost GPS/);
+  it("puts each celebration's day on its ticket stub in the html only, a written day as written", async () => {
+    const withDay = (day: string): SiteContent => ({
+      ...contentDefaults,
+      celebrations: contentDefaults.celebrations.map((celebration) =>
+        celebration.id === first.id ? { ...celebration, day } : celebration,
+      ),
+    });
+    const stubText = (html: string) =>
+      [...html.matchAll(/<td[^>]*class="nn-stub"[^>]*>([\s\S]*?)<\/td>/g)].map((match) =>
+        withoutTags(match[1]).trim(),
+      );
+    const numeric = await render(record({ [first.id]: "yes" }), withDay("5"));
+    expect(stubText(numeric.html)).toEqual([
+      `${first.weekday.slice(0, 3)}05${first.month.slice(0, 3)}`,
+    ]);
+    // The stub repeats the date line, so the plain text has the date once.
+    expect(numeric.text.split(`${first.weekday} 5 ${first.month}`)).toHaveLength(2);
+    expect(numeric.text).not.toContain(`\n05\n`);
+
+    const written = await render(record({ [first.id]: "yes" }), withDay("[Day]"));
+    expect(stubText(written.html)[0]).toContain(asHtml("[Day]"));
+  });
+
+  it("shows a celebration's GhanaPost GPS line under its place when its venue has one, and none when it doesn't", async () => {
+    // The built-in text gives the reception venue a GhanaPost GPS and the church a placeholder.
+    const gpsLine = "GhanaPost GPS · AX-0084-3317";
+    expect(contentDefaults.venues.church.gps).toMatch(/^\[.*\]$/);
 
     const mail = await render(record({ [first.id]: "yes", [second.id]: "yes" }));
     for (const [body, written] of [
@@ -147,21 +176,53 @@ describe("renderRsvpConfirmation", () => {
       const reception = card(body, second, null);
       expect(reception).toContain(written(gpsLine));
       // Under the place, on a line of its own.
-      expect(reception.indexOf(written(gpsLine))).toBeGreaterThan(reception.indexOf(written(second.place)));
+      expect(reception.indexOf(written(gpsLine))).toBeGreaterThan(reception.indexOf(written(placeOf(second))));
       expect(card(body, first, second)).not.toContain("GhanaPost GPS");
     }
-    expect(mail.text).toContain(`${second.place}\n${gpsLine}`);
+    expect(mail.text).toContain(`${placeOf(second)}\n${gpsLine}`);
 
-    const noGps: SiteContent = {
-      ...contentDefaults,
-      celebrations: contentDefaults.celebrations.map((celebration) => ({ ...celebration, placeDetail: undefined })),
-    };
-    const withoutLine = await render(record({ [first.id]: "yes", [second.id]: "yes" }), noGps);
+    const withoutLine = await render(record({ [first.id]: "yes", [second.id]: "yes" }), withReceptionGps("[AS-0000-0000]"));
     expect(withoutLine.html).not.toContain("GhanaPost GPS");
     expect(withoutLine.text).not.toContain("GhanaPost GPS");
     // The place ends the card's details: no empty line or stray break is left where it would have been.
-    expect(withoutLine.html).toContain(`${asHtml(second.place)}</p>`);
+    expect(withoutLine.html).toContain(`${asHtml(placeOf(second))}</p>`);
     expect(withoutLine.html).not.toContain('<span style="font-size:13px">');
+  });
+
+  it("takes each place, GhanaPost GPS and calendar location from the venue, as last edited", async () => {
+    const content: SiteContent = {
+      ...withReceptionGps("AS-1205-2026"),
+      celebrations: contentDefaults.celebrations.map((celebration) =>
+        celebration.id === first.id ? { ...celebration, venue: "reception" as const } : celebration,
+      ),
+    };
+    const mail = await render(record({ [first.id]: "yes", [second.id]: "yes" }), content);
+    for (const [body, written] of [
+      [mail.html, asHtml],
+      [mail.text, (value: string) => value],
+    ] as const) {
+      for (const segment of [card(body, first, second), card(body, second, null)]) {
+        expect(segment).toContain(written("BN 111 Katakyie St, Tepa"));
+        expect(segment).toContain(written("GhanaPost GPS · AS-1205-2026"));
+      }
+      expect(body).not.toContain("AX-0084-3317");
+      expect(body).not.toContain("Assemblies of God");
+    }
+    expect(mail.ics?.match(/^LOCATION:.*$/gm)).toEqual(["LOCATION:BN 111 Katakyie St\\, Tepa", "LOCATION:BN 111 Katakyie St\\, Tepa"]);
+    expect(mail.html).toContain(asHtml(`location=${encodeURIComponent("BN 111 Katakyie St, Tepa").replace(/%20/g, "+")}`));
+  });
+
+  it("shows a celebration's extra place note under its GhanaPost GPS line", async () => {
+    const content: SiteContent = {
+      ...contentDefaults,
+      celebrations: contentDefaults.celebrations.map((celebration) =>
+        celebration.id === second.id ? { ...celebration, placeDetail: "Main hall, upstairs" } : celebration,
+      ),
+    };
+    const mail = await render(record({ [second.id]: "yes" }), content);
+    expect(mail.text).toContain(`${placeOf(second)}\nGhanaPost GPS · AX-0084-3317\nMain hall, upstairs`);
+    const reception = card(mail.html, second, null);
+    expect(reception.indexOf("Main hall, upstairs")).toBeGreaterThan(reception.indexOf("GhanaPost GPS"));
   });
 
   it("builds a calendar file with the celebrations the guest is coming to only", async () => {
@@ -201,7 +262,7 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.html).not.toContain("data-outlook-only");
     // Straight around the 600 px container: opened inside the page's padding, closed before it ends.
     const [beforeOpen, afterOpen] = mail.html.split(outlookOpen);
-    expect(beforeOpen).toMatch(/<td style="padding:36px 14px 40px">$/);
+    expect(beforeOpen).toMatch(/<td style="padding:0 0 44px">$/);
     expect(afterOpen).toMatch(/^<table align="center" width="100%"[^>]*style="max-width:600px">/);
     const [beforeClose, afterClose] = mail.html.split(outlookClose);
     expect(beforeClose).toMatch(/nobletxnancy\.com|example\.com/);
@@ -258,9 +319,10 @@ describe("renderRsvpConfirmation", () => {
   it("escapes the guest's name and the couple's text in the html", async () => {
     const content: SiteContent = {
       ...contentDefaults,
+      venues: { ...contentDefaults.venues, church: { ...contentDefaults.venues.church, name: "Hall <img src=x> & garden" } },
       celebrations: contentDefaults.celebrations.map((celebration) =>
         celebration.id === first.id
-          ? { ...celebration, name: 'Church <b>"hall"</b>', place: "Hall <img src=x> & garden" }
+          ? { ...celebration, name: 'Church <b>"hall"</b>', placeDetail: "Side <i>door</i>" }
           : celebration,
       ),
     };
@@ -268,9 +330,11 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.html).toContain("Dear Ama O&#x27;Brien,");
     expect(mail.text).toContain("Dear Ama O'Brien,");
     expect(mail.html).toContain("Church &lt;b&gt;&quot;hall&quot;&lt;/b&gt;");
-    expect(mail.html).toContain("Hall &lt;img src=x&gt; &amp; garden");
+    expect(mail.html).toContain("Hall &lt;img src=x&gt; &amp; garden, Tepa");
+    expect(mail.html).toContain("Side &lt;i&gt;door&lt;/i&gt;");
     expect(mail.html).not.toContain("<b>");
-    expect(mail.html).not.toContain("<img");
+    expect(mail.html).not.toContain("<i>");
+    expect(mail.html).not.toContain("<img src=x");
   });
 
   it.each(["Ama Owusu", "Akosua Ɔfori", "J. Doe", "Kwame Mensah Jr."])(

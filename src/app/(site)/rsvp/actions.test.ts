@@ -5,9 +5,17 @@ import { dbConfig } from "@/lib/env";
 import { initialRsvpState } from "@/components/rsvp/options";
 import { resetDb } from "../../../../test/db";
 
-vi.mock("@/lib/content/get", () => ({
-  getSiteContent: async () => contentDefaults,
-}));
+// The site text is read from the test database as on the site; outside Next, "use cache" is a
+// plain call. A test can make the read fail, as it would while the database is unreachable.
+vi.mock("next/cache", () => ({ cacheTag: vi.fn(), cacheLife: vi.fn() }));
+const contentRead = vi.hoisted(() => ({ failure: null as Error | null }));
+vi.mock("@/lib/content/store", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/content/store")>();
+  return {
+    ...real,
+    readSiteContent: () => (contentRead.failure ? Promise.reject(contentRead.failure) : real.readSiteContent()),
+  };
+});
 
 // after() runs its task once the response is sent; the tests wait for exactly those tasks.
 const afterTasks = vi.hoisted(() => [] as Promise<unknown>[]);
@@ -49,7 +57,21 @@ vi.mock("@/lib/data/rsvp", async (importOriginal) => {
   };
 });
 
+import { getSiteContent } from "@/lib/content/get";
+import { saveSection } from "@/lib/content/store";
 import { submitRsvp } from "./actions";
+
+const TRY_AGAIN = "Sorry, your reply didn't reach us. Please try again in a moment.";
+
+async function closeReplies() {
+  await saveSection("rsvp", { ...contentDefaults.rsvp, open: false }, "test");
+}
+
+/** Lets the 30 s fallback after a failed read run out, and reads once, so no later test gets it. */
+async function endFallbackWindow() {
+  vi.advanceTimersByTime(30_000);
+  await getSiteContent();
+}
 
 function form(extra: Record<string, string> = {}) {
   const data = new FormData();
@@ -86,6 +108,7 @@ const [firstCelebration] = contentDefaults.celebrations;
 
 describe("submitRsvp", () => {
   beforeEach(async () => {
+    contentRead.failure = null;
     saveRsvp.failure = null;
     boss.fail = false;
     boss.send.mockClear();
@@ -105,6 +128,24 @@ describe("submitRsvp", () => {
     );
     expect(state.status).toBe("sent");
     expect(await rows()).toEqual([{ email: "ama@example.com" }]);
+  });
+
+  it("refuses a reply once replies are closed, with the closed message, and saves and queues nothing", async () => {
+    await closeReplies();
+    const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+    expect(state.status).toBe("error");
+    expect(state.errors).toEqual({ form: contentDefaults.rsvp.closedMessage });
+    expect(state.values.fullName).toBe("Ama Test");
+    await settle();
+    expect(await rows()).toEqual([]);
+    expect(boss.send).not.toHaveBeenCalled();
+  });
+
+  it("gives only the closed message, not the form's problems, once replies are closed", async () => {
+    await closeReplies();
+    const state = await submitRsvp(initialRsvpState, form({ fullName: "", email: "not-an-email" }));
+    expect(state.errors).toEqual({ form: contentDefaults.rsvp.closedMessage });
+    expect(await rows()).toEqual([]);
   });
 
   it("saves a reply without an email", async () => {
@@ -243,5 +284,42 @@ describe("submitRsvp", () => {
       await settle();
     }
     expect(boss.send).toHaveBeenCalledTimes(3);
+  });
+
+  it("checks whether replies are open against the database, even while pages show the built-in text", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // A failed read: for 30 s pages show the built-in text, in which replies are open.
+      contentRead.failure = new Error("database is down");
+      await getSiteContent();
+      contentRead.failure = null;
+      await closeReplies();
+      expect((await getSiteContent()).rsvp.open).toBe(true);
+
+      const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      expect(state.errors).toEqual({ form: contentDefaults.rsvp.closedMessage });
+      expect(await rows()).toEqual([]);
+    } finally {
+      await endFallbackWindow();
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks the guest to try again, keeping what was typed, when it can't tell whether replies are open", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    contentRead.failure = new Error("database is down");
+    const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+    contentRead.failure = null;
+
+    // Neither the closed message (replies may well be open) nor a save.
+    expect(state.status).toBe("error");
+    expect(state.errors).toEqual({ form: TRY_AGAIN });
+    expect(state.values).toMatchObject({ fullName: "Ama Test", email: "ama@example.com", answers: { [firstCelebration.id]: "yes" } });
+    await settle();
+    expect(await rows()).toEqual([]);
+    expect(boss.send).not.toHaveBeenCalled();
+    // Pages were not switched to the built-in text by this check.
+    expect((await getSiteContent()).faq).toEqual(contentDefaults.faq);
   });
 });

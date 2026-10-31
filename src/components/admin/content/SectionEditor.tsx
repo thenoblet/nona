@@ -5,13 +5,19 @@ import { ContentEditor } from "./ContentEditor";
 
 /** One section's saved text and versions, read at request time. Render it only inside AdminGate. */
 export async function SectionEditor({ section }: { section: ContentSection }) {
-  const [{ value, version }, versions] = await Promise.all([readSection(section.key), listVersions(section.key)]);
+  const [{ value, version }, versions, venues] = await Promise.all([
+    readSection(section.key),
+    listVersions(section.key),
+    // The celebrations show the place and GPS their venues give them.
+    section.key === "celebrations" ? readSection("venues").then((saved) => saved.value) : null,
+  ]);
   return (
     <ContentEditor
       sectionKey={section.key}
       label={section.label}
       value={value}
       version={version}
+      context={{ venues }}
       versions={versions.map((entry) => ({
         version: entry.version,
         savedAt: accraDateTime(entry.savedAt.toISOString()),

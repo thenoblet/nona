@@ -1,12 +1,13 @@
 import Image from "next/image";
 import { couple } from "@/content/wedding";
-import type { Story as StoryContent } from "@/lib/content/schema";
+import { accraDayAndFullMonth } from "@/lib/accra";
+import type { RsvpSettings, Story as StoryContent } from "@/lib/content/schema";
 import { photos, type Photo } from "@/content/images";
 import { Reveal } from "@/components/ui/Reveal";
 import { Eyebrow, Motto, Ornament } from "@/components/ui/Typography";
 
 /** The letter to guests, floating on a band of white chrysanthemums. */
-export function InvitationLetter() {
+export function InvitationLetter({ rsvp }: { rsvp: RsvpSettings }) {
   return (
     <section aria-label="Your invitation" className="relative overflow-hidden bg-blush px-4 py-20 sm:px-6 sm:py-30">
       <Image
@@ -27,7 +28,9 @@ export function InvitationLetter() {
         </p>
         <div className="flex flex-wrap justify-center gap-2.5">
           <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">Three celebrations · two days</span>
-          <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">Kindly reply by 23 November</span>
+          <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">
+            {rsvp.open ? `Kindly reply by ${accraDayAndFullMonth(rsvp.replyBy)}` : "Replies have closed"}
+          </span>
         </div>
       </Reveal>
     </section>

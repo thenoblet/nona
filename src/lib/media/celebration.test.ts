@@ -32,15 +32,14 @@ function weekend({
 }: { ceremony?: Times; reception?: Times; thanks?: Times; saturday?: string; sunday?: string } = {}): Celebration[] {
   const celebration = (id: EventId, date: string, [startTime, endTime]: Times): Celebration => ({
     id,
+    venue: "church",
     name: id,
     weekday: "Day",
     weekdayShort: "Day",
     day: date.slice(8),
     month: "December",
     time: "[Start time]",
-    place: "Tepa",
     dress: "Formal",
-    directionsUrl: "#map",
     date,
     startTime,
     endTime,

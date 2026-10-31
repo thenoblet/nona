@@ -1,6 +1,7 @@
 import postgres from "postgres";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDb } from "../../../test/db";
+import { celebrationsSavedBeforeVenues } from "../../../test/fixtures/saved-before-venues";
 import { dbConfig } from "@/lib/env";
 import { contentDefaults } from "./defaults";
 import { sectionKeys, sectionSchemas } from "./schema";
@@ -43,6 +44,24 @@ describe("readSiteContent", () => {
     expect(content.celebrations).toEqual(contentDefaults.celebrations);
   });
 
+  it("reads celebrations saved before each named its venue, rather than falling back to the built-in text", async () => {
+    // As production saved them, with a dress code the built-in text doesn't have, to tell the two apart.
+    const saved = structuredClone(celebrationsSavedBeforeVenues);
+    saved[1].dress = "Evening glamour, as saved";
+    await sql`insert into site_content (key, version, value, saved_by) values ('celebrations', 3, ${sql.json(saved)}, 'test')`;
+    const { celebrations } = await readSiteContent();
+    expect(console.error).not.toHaveBeenCalled();
+    expect(celebrations.map((celebration) => [celebration.id, celebration.venue, celebration.placeDetail])).toEqual([
+      ["ceremony", "church", undefined],
+      ["reception", "reception", undefined],
+      ["thanks", "church", undefined],
+    ]);
+    expect(celebrations[1].dress).toBe("Evening glamour, as saved");
+    const section = await readSection("celebrations");
+    expect(section.version).toBe(3);
+    expect(section.value).toEqual(celebrations);
+  });
+
   it("falls back to the default for a stored row with a bad shape", async () => {
     await sql`insert into site_content (key, version, value, saved_by) values ('faq', 1, ${sql.json({ nope: 1 })}, 'test')`;
     const content = await readSiteContent();
@@ -63,6 +82,25 @@ describe("versions", () => {
     await saveSection("faq", faqB, "test");
     expect(await restoreVersion("faq", 1, "test")).toEqual({ ok: true, version: 3 });
     expect((await readSiteContent()).faq).toEqual(faqA);
+  });
+
+  it("restores a version saved before the celebrations named their venues, in the new shape", async () => {
+    await sql`insert into site_content (key, version, value, saved_by) values ('celebrations', 1, ${sql.json(celebrationsSavedBeforeVenues)}, 'test')`;
+    expect(await saveSection("celebrations", contentDefaults.celebrations, "test")).toEqual({ ok: true, version: 2 });
+    expect(await restoreVersion("celebrations", 1, "test")).toEqual({ ok: true, version: 3 });
+
+    const [restored] = await sql<{ value: Record<string, unknown>[] }[]>`
+      select value from site_content where key = 'celebrations' and version = 3`;
+    expect(restored.value.map((celebration) => [celebration.id, celebration.venue])).toEqual([
+      ["ceremony", "church"],
+      ["reception", "reception"],
+      ["thanks", "church"],
+    ]);
+    for (const celebration of restored.value) {
+      expect(celebration).not.toHaveProperty("place");
+      expect(celebration).not.toHaveProperty("directionsUrl");
+      expect(celebration).not.toHaveProperty("placeDetail");
+    }
   });
 
   it("refuses to restore a version that does not exist", async () => {
@@ -167,7 +205,46 @@ describe("validation", () => {
 });
 
 describe("contentOrDefaults", () => {
-  it("falls back to the defaults when the read fails", async () => {
-    expect(await contentOrDefaults(() => Promise.reject(new Error("db down")))).toEqual(contentDefaults);
+  afterEach(async () => {
+    // Let any fallback window run out, then read once, so no later test is handed the defaults.
+    if (vi.isFakeTimers()) vi.advanceTimersByTime(30_000);
+    await contentOrDefaults(() => Promise.resolve(contentDefaults));
+    vi.useRealTimers();
+  });
+
+  it("falls back to the defaults when the read fails, and keeps them for 30 s without trying again", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const failing = vi.fn(() => Promise.reject(new Error("db down")));
+    expect(await contentOrDefaults(failing)).toEqual(contentDefaults);
+    expect(failing).toHaveBeenCalledOnce();
+
+    // During an outage each page would otherwise wait out the 5 s connect timeout.
+    vi.advanceTimersByTime(29_000);
+    expect(await contentOrDefaults(failing)).toEqual(contentDefaults);
+    expect(failing).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(1_000);
+    expect(await contentOrDefaults(failing)).toEqual(contentDefaults);
+    expect(failing).toHaveBeenCalledTimes(2);
+
+    // After 30 s more, the first read that works replaces the fallback, and the next read runs too.
+    vi.advanceTimersByTime(30_000);
+    const saved = { ...contentDefaults, landmarks: ["Saved landmark"] };
+    const working = vi.fn(() => Promise.resolve(saved));
+    expect(await contentOrDefaults(working)).toEqual(saved);
+    expect(await contentOrDefaults(working)).toEqual(saved);
+    expect(working).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves no fallback behind once a read works again, whatever the clock does", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await contentOrDefaults(() => Promise.reject(new Error("db down")));
+    vi.advanceTimersByTime(30_000);
+    await contentOrDefaults(() => Promise.resolve(contentDefaults));
+    // Back on the real clock, which is behind the fake one, the next read still runs.
+    vi.useRealTimers();
+    const working = vi.fn(() => Promise.resolve(contentDefaults));
+    await contentOrDefaults(working);
+    expect(working).toHaveBeenCalledOnce();
   });
 });

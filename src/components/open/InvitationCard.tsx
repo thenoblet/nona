@@ -1,6 +1,10 @@
 import Image from "next/image";
+import { connection } from "next/server";
+import { Suspense } from "react";
 import { couple, wedding } from "@/content/wedding";
 import { photos } from "@/content/images";
+import { accraDayAndFullMonth } from "@/lib/accra";
+import { getSiteContent } from "@/lib/content/get";
 import { PillLink } from "@/components/ui/Button";
 import { Motto, Ornament } from "@/components/ui/Typography";
 
@@ -56,8 +60,23 @@ export function InvitationCard() {
         className="mt-6.5 animate-rise text-center text-[13px] tracking-[0.06em] text-mist"
         style={{ animationDelay: "700ms" }}
       >
-        Kindly reply by <span className="text-white">{wedding.rsvpBy}</span>
+        {/* A space holds the line's height until the date arrives. */}
+        <Suspense fallback={"\u00a0"}>
+          <ReplyBy />
+        </Suspense>
       </p>
+    </>
+  );
+}
+
+/** Read at request time, so the reply-by date and closing replies in the admin show up without a rebuild. */
+async function ReplyBy() {
+  await connection();
+  const { rsvp } = await getSiteContent();
+  if (!rsvp.open) return "Replies have closed";
+  return (
+    <>
+      Kindly reply by <span className="text-white">{accraDayAndFullMonth(rsvp.replyBy)}</span>
     </>
   );
 }

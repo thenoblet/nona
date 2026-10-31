@@ -13,9 +13,21 @@ test("the TV controls fade after the full-screen click, and space after a click 
   const fullScreen = page.getByRole("button", { name: "Full screen" });
   await expect(fullScreen).toBeVisible();
 
-  await fullScreen.click();
+  // The controls hide after three seconds without a move, and on a slow machine they can hide
+  // before the click, which then lands on the photo's tap area. The operator's mouse reaches the
+  // button first, waking them: so does this one, and it tries again until the click lands. Each
+  // try moves to a new point, so the browser sends a move. A click that times out was never sent.
+  const controls = page.getByRole("group", { name: "Slideshow controls" });
+  const button = await fullScreen.boundingBox();
+  if (!button) throw new Error("The Full screen button has no size");
+  let nudge = 0;
+  await expect(async () => {
+    nudge = 1 - nudge;
+    await page.mouse.move(button.x + button.width / 2 + nudge, button.y + button.height / 2);
+    await fullScreen.click({ timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
   await page.waitForTimeout(4000);
-  await expect(page.getByRole("group", { name: "Slideshow controls" })).toHaveCSS("opacity", "0", { timeout: 1000 });
+  await expect(controls).toHaveCSS("opacity", "0", { timeout: 1000 });
 
   // A click on the right of the photo moves on; space then pauses, and nothing moves after that.
   await page.mouse.click(1250, 540);

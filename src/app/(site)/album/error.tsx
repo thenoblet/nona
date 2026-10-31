@@ -13,11 +13,16 @@ export default function AlbumError({ retry }: { error: unknown; retry: () => voi
     <main className="min-h-dvh bg-blush pb-28">
       <header className="bg-cocoa text-white">
         <div className="mx-auto w-full max-w-xl px-5 pt-5 pb-8 sm:px-8">
-          {/* A plain link, a full load: the right way off a broken page, and no router code to carry. */}
-          <a href="/home" aria-label="Back to the website" className="-ml-3 flex size-11 items-center justify-center rounded-full">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          {/* A plain link, a full load: the right way off a broken page, and no router code to carry.
+              The same labelled pill as PhoneHeader's way out. */}
+          <a
+            href="/home"
+            className="press -ml-1 inline-flex min-h-11 items-center gap-1.5 rounded-full border border-white/35 bg-white/10 py-2 pr-4 pl-2.5 text-[11px] uppercase tracking-[0.18em] text-white no-underline transition-[background-color,border-color] duration-200 hover:bg-white/20"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M15 6l-6 6 6 6" />
             </svg>
+            Home
           </a>
           <h1 className="m-0 mt-4 font-script text-[54px] leading-[1.1] font-normal sm:text-6xl">Capture it with us</h1>
         </div>

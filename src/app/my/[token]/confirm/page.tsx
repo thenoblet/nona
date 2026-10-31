@@ -82,7 +82,7 @@ async function ConfirmLink({ params }: Pick<PageProps<"/my/[token]/confirm">, "p
 
 function Header({ children }: { children: ReactNode }) {
   return (
-    <PhoneHeader backHref="/album" backLabel="Back to the album">
+    <PhoneHeader backHref="/album" backText="Album">
       {children}
     </PhoneHeader>
   );

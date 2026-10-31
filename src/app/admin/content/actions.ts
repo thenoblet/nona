@@ -5,8 +5,10 @@ import { requireAdmin } from "@/lib/admin/access";
 import {
   EDITOR_FIELDS,
   isSectionKey,
+  isVersionNumber,
   MAX_SECTION_BYTES,
   newerVersionMessage,
+  RELOAD,
   TOO_LONG,
   type SaveState,
 } from "@/lib/admin/content";
@@ -21,14 +23,8 @@ import { restoreVersion, saveSection, type SaveResult } from "@/lib/content/stor
 // saved after that, nothing changes and the couple are told who did and when, so neither of them
 // overwrites the other's change unseen.
 
-const RELOAD = "This page is out of date. Reload it and try again.";
-
 function refused(message: string): SaveState {
   return { status: "error", errors: [message] };
-}
-
-function isVersionNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 /** A refusal: the newer version's saver and time, or the store's messages. */

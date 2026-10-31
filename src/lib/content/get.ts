@@ -17,3 +17,12 @@ async function cachedRead(): Promise<SiteContent> {
 export async function getSiteContent(): Promise<SiteContent> {
   return contentOrDefaults(cachedRead);
 }
+
+/**
+ * The same cached site text, but it throws when the database can't be read, rather than handing
+ * over the built-in text. For decisions the built-in text must never make, such as whether a reply
+ * may be saved: in the built-in text replies are open.
+ */
+export async function getSiteContentOrThrow(): Promise<SiteContent> {
+  return cachedRead();
+}

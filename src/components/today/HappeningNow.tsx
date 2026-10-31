@@ -1,11 +1,20 @@
-import type { ScheduleItem } from "@/lib/content/schema";
+import { scheduleItemPlace } from "@/lib/content/place";
+import type { ScheduleItem, SiteContent } from "@/lib/content/schema";
 import { nowIndex } from "./day";
 
 /** The rounded strip in the header: what's on right now, and where. */
-export function HappeningNow({ schedule, secondDay }: { schedule: ScheduleItem[]; secondDay: boolean }) {
+export function HappeningNow({
+  schedule,
+  venues,
+  secondDay,
+}: {
+  schedule: ScheduleItem[];
+  venues: SiteContent["venues"];
+  secondDay: boolean;
+}) {
   const item = schedule[nowIndex(schedule, secondDay)];
   if (!item) return null;
-  const place = item.place.replace(/, Tepa$/, "");
+  const place = scheduleItemPlace(item, venues).replace(/, Tepa$/, "");
   return (
     <div className="flex items-center gap-3.5 rounded-full border border-ember/50 px-5 py-3">
       <span className="live-dot" aria-hidden />

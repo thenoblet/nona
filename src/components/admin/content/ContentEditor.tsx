@@ -13,10 +13,24 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import { restoreVersionAction, saveSectionAction } from "@/app/admin/content/actions";
-import { EDITOR_FIELDS, MAX_SECTION_BYTES, parseIssues, TOO_LONG, type SaveState } from "@/lib/admin/content";
-import type { SectionKey } from "@/lib/content/schema";
+import {
+  EDITOR_FIELDS,
+  MAX_SECTION_BYTES,
+  parseIssues,
+  TOO_LONG,
+  type ContentSectionKey,
+  type SaveState,
+} from "@/lib/admin/content";
 import { getAt, insertAt, moveItem, pathKey, removeAt, setAt, type Path } from "./editing";
-import { fieldsInOrder, sectionSpecs, type FieldSpec, type ListSpec, type SectionSpec } from "./fields";
+import {
+  fieldsFor,
+  fieldsInOrder,
+  sectionSpecs,
+  type EditorContext,
+  type FieldSpec,
+  type ListSpec,
+  type SectionSpec,
+} from "./fields";
 import { setUnsavedChanges } from "./unsaved";
 import { VersionHistory, type RestoreNotice, type VersionEntry } from "./VersionHistory";
 
@@ -29,7 +43,7 @@ const noProblems: Problems = { fields: new Map(), general: [], message: null };
 /** After a render, focus moves here: a list item's control, or the first problem after a failed save. */
 type FocusTarget = { item: string; control: "first" | "group" | "up" | "down" } | { add: true } | { problems: true };
 
-function problemsFrom(sectionKey: SectionKey, spec: SectionSpec, value: unknown, errors: string[]): Problems {
+function problemsFrom(sectionKey: ContentSectionKey, spec: SectionSpec, value: unknown, errors: string[]): Problems {
   const shown = new Set(fieldsInOrder(spec, value).map((field) => field.path));
   const problems: Problems = { fields: new Map(), general: [], message: null };
   for (const issue of parseIssues(sectionKey, errors)) {
@@ -63,12 +77,14 @@ export function ContentEditor({
   value,
   version,
   versions,
+  context,
 }: {
-  sectionKey: SectionKey;
+  sectionKey: ContentSectionKey;
   label: string;
   value: unknown;
   version: number;
   versions: VersionEntry[];
+  context: EditorContext;
 }) {
   const spec = sectionSpecs[sectionKey];
   const formId = useId();
@@ -234,6 +250,7 @@ export function ContentEditor({
     path,
     id: `${idBase}-${field.path.join("-") || "value"}`,
     error: problems.fields.get(pathKey(path)),
+    context,
     onChange: change,
   });
 
@@ -292,7 +309,7 @@ export function ContentEditor({
                     <legend>{legend}</legend>
                     {note && <p className="admin-item-note">{note}</p>}
                     <div className="admin-fields">
-                      {spec.fields.map((field) => (
+                      {fieldsFor(spec, item).map((field) => (
                         <Field
                           key={field.path.join(".") || "value"}
                           {...fieldProps(field, item, [index, ...field.path], `${formId}-${itemKey}`)}
@@ -428,6 +445,7 @@ function Field({
   path,
   id,
   error,
+  context,
   onChange,
 }: {
   field: FieldSpec;
@@ -435,12 +453,13 @@ function Field({
   path: Path;
   id: string;
   error: string | undefined;
+  context: EditorContext;
   onChange: (path: Path, value: unknown) => void;
 }) {
   const value = getAt(item, field.path);
   const text = typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
   const { box, keepCaretAt } = useTextBox(text);
-  const hint = typeof field.hint === "function" ? field.hint(item) : field.hint;
+  const hint = typeof field.hint === "function" ? field.hint(item, context) : field.hint;
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const control = {

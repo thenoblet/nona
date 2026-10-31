@@ -48,7 +48,7 @@ function prepareCelebration(item: unknown): unknown {
   if (!isObject(item)) return item;
   const described = typeof item.date === "string" ? describeDate(item.date) : null;
   const prepared: JsonObject = {
-    ...trimmedLink(withOptional(item, "placeDetail"), "directionsUrl"),
+    ...withOptional(item, "placeDetail"),
     startTime: optionalTime(item.startTime),
     endTime: optionalTime(item.endTime),
   };
@@ -138,6 +138,9 @@ export function prepareSection(key: SectionKey, value: unknown): unknown {
       return isObject(value)
         ? Object.fromEntries(Object.entries(value).map(([name, venue]) => [name, prepareVenue(venue)]))
         : value;
+    case "schedule":
+      // "Other place" posts an empty venue: the item keeps its typed place instead.
+      return mapItems(value, (item) => (isObject(item) ? withOptional(item, "venue") : item));
     case "travel":
       return mapItems(value, (item) => (isObject(item) ? withOptional(item, "href") : item));
     case "party":

@@ -12,7 +12,7 @@ import { Eyebrow } from "@/components/ui/Typography";
 export default function WishesError({ retry }: { error: unknown; retry: () => void }) {
   return (
     <main className="min-h-dvh bg-white pb-28">
-      <PhoneHeader tone="light" backHref="/album" backLabel="Back to the album">
+      <PhoneHeader tone="light" backHref="/album" backText="Album">
         <div className="flex flex-col items-center gap-2.5 text-center">
           <Eyebrow className="mt-1.5">Our guestbook</Eyebrow>
           <h1 className="m-0 font-script text-[56px] leading-[1.1] font-normal sm:text-[64px]">Leave us a wish</h1>

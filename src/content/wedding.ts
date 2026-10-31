@@ -7,7 +7,8 @@ export type { Celebration, EventId, PartyMember, ScheduleItem };
  * `colours` straight from this file. The rest (celebrations, venues, landmarks, story, party,
  * travel, gifts, FAQ, live stream and schedule) is the built-in text: the site shows it until a
  * section is saved in the admin (/admin/content), and whenever the database can't be reached.
- * Once a section is saved there, changing it here no longer changes the site.
+ * Once a section is saved there, changing it here no longer changes the site. The RSVP settings
+ * work the same way, saved on the admin's Replies page (/admin/rsvps).
  * Square brackets mark details still to confirm.
  */
 
@@ -26,7 +27,8 @@ export const wedding = {
   dateShort: "05 · 12 · 2026",
   town: "Tepa",
   region: "Ashanti",
-  rsvpBy: "23 November",
+  /** The reply-by date until the couple set one in the admin; pages read `rsvp.replyBy`. */
+  rsvpBy: "2026-11-20",
   /** The wedding weekend starts at midnight on 5 Dec (Ghana is GMT all year). */
   weekendStart: "2026-12-05T00:00:00Z",
   /** The thank-you version starts at midnight on 7 Dec. */
@@ -46,7 +48,7 @@ export const venues = {
   reception: {
     name: "BN 111 Katakyie St",
     address: "Tepa, Ashanti",
-    gps: "AS-0084-3317",
+    gps: "AX-0084-3317",
     coords: { lat: 7.018556, lng: -2.145472 },
     mapsUrl: "https://www.google.com/maps/dir/?api=1&destination=7.018556,-2.145472",
     note: "About a minute's walk from the church",
@@ -62,49 +64,46 @@ export const venues = {
 /** Landmarks guests can ask for on the way. Shown as a note over the map, not as pins. */
 export const landmarks = ["Rexco", "Amel Junction"] as const;
 
+/** Each celebration's place, GhanaPost GPS and directions come from its venue, above. */
 export const celebrations: Celebration[] = [
   {
     id: "ceremony",
+    venue: "church",
     name: "White wedding",
     weekday: "Saturday",
     weekdayShort: "Sat",
     day: "05",
     month: "December",
     time: "[Start time] · please be seated early",
-    place: venues.church.name + ", Tepa",
     dress: "Formal · black tie optional",
-    directionsUrl: "#map",
     date: "2026-12-05",
     startTime: null,
     endTime: null,
   },
   {
     id: "reception",
+    venue: "reception",
     name: "Reception",
     weekday: "Saturday",
     weekdayShort: "Sat",
     day: "05",
     month: "December",
     time: "Right after the white wedding · dinner & dancing",
-    place: "BN 111 Katakyie St, Tepa",
-    placeDetail: "GhanaPost GPS · " + venues.reception.gps,
     dress: "Evening glamour",
-    directionsUrl: venues.reception.mapsUrl,
     date: "2026-12-05",
     startTime: null,
     endTime: null,
   },
   {
     id: "thanks",
+    venue: "church",
     name: "Thanksgiving service",
     weekday: "Sunday",
     weekdayShort: "Sun",
     day: "06",
     month: "December",
     time: "[Start time]",
-    place: venues.church.name + ", Tepa",
     dress: "Your Sunday best",
-    directionsUrl: "#map",
     date: "2026-12-06",
     startTime: null,
     endTime: null,
@@ -197,11 +196,20 @@ export const faq = [
 /** The live-stream link; null until the couple add it. */
 export const liveStream: { url: string | null } = { url: null };
 
+/** Replies are open until the couple close them; while closed, /rsvp shows this message instead of the form. */
+export const rsvp = {
+  open: true,
+  replyBy: wedding.rsvpBy,
+  closedMessage:
+    "Replies are now closed. Thank you to everyone who let us know! If your plans have changed, please message Noblet or Nancy directly.",
+};
+
+/** An item held at one of the venues names it; one held anywhere else types its `place`. */
 export const schedule: ScheduleItem[] = [
-  { time: "[Time]", title: "Guests arrive", place: venues.church.name + ", Tepa", day: "sat" },
-  { time: "[Time]", title: "White wedding", place: venues.church.name + ", Tepa", day: "sat" },
-  { time: "[Time]", title: "Photos with the couple", place: "BN 111 Katakyie St, Tepa", day: "sat" },
-  { time: "[Time]", title: "Reception dinner", place: "BN 111 Katakyie St, Tepa", day: "sat" },
-  { time: "[Time]", title: "First dance & party", place: "BN 111 Katakyie St, Tepa", day: "sat" },
-  { time: "Sun 6 Dec", title: "Thanksgiving service", place: venues.church.name + ", Tepa", day: "sun" },
+  { time: "[Time]", title: "Guests arrive", venue: "church", day: "sat" },
+  { time: "[Time]", title: "White wedding", venue: "church", day: "sat" },
+  { time: "[Time]", title: "Photos with the couple", venue: "reception", day: "sat" },
+  { time: "[Time]", title: "Reception dinner", venue: "reception", day: "sat" },
+  { time: "[Time]", title: "First dance & party", venue: "reception", day: "sat" },
+  { time: "Sun 6 Dec", title: "Thanksgiving service", venue: "church", day: "sun" },
 ];
