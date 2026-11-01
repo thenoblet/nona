@@ -20,6 +20,7 @@ function toRecord(row: Row, flags: RsvpFlag[] = []): RsvpRecord {
     answers: row.answers,
     otherNames: row.otherNames ?? undefined,
     song: row.song ?? undefined,
+    guestId: row.guestId ?? undefined,
     receivedAt: row.receivedAt.toISOString(),
     supersededAt: row.supersededAt?.toISOString() ?? null,
     emailStatus: row.emailStatus,
@@ -40,7 +41,8 @@ const PEOPLE: Record<string, number> = {
  * name, phone, email, party size, answers, other names and song, compared as keys) within 10
  * minutes of it is a double tap and returns that reply, so it gets no second confirmation email.
  * Only the newest counts: yes, then no, then yes again is three replies. The advisory lock makes
- * two simultaneous submissions for one name run one after the other.
+ * two simultaneous submissions for one name run one after the other. The guest a reply was sent as
+ * is kept with it, but isn't compared: a double tap keeps the first reply and its guest.
  */
 export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }> {
   const guestName = nameKey(input.fullName);
@@ -88,6 +90,7 @@ export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }
         answers: input.answers,
         otherNames,
         song,
+        guestId: input.guestId ?? null,
         // The time now, with the lock held, not when the transaction began: a reply that waited
         // for the lock is never dated before the one it waited for.
         receivedAt: sql`clock_timestamp()`,

@@ -2,10 +2,12 @@ import { readSiteContent } from "@/lib/content/store";
 import { getRsvp, setEmailStatus } from "@/lib/data/rsvp";
 import { renderRsvpConfirmation } from "@/lib/email/rsvp-confirmation";
 import { sendEmail } from "@/lib/email/send";
+import { personalLink } from "@/lib/guests/personal-link";
 import { siteUrl } from "@/lib/site-url";
 
 /**
- * The confirmation job: render the reply's email and send it. Only the job queue's worker
+ * The confirmation job: render the reply's email and send it, with the personal link of the guest
+ * the reply was sent as (none for a reply sent before personal links). Only the job queue's worker
  * (start-jobs.ts) imports this, so the renderer (React Email) stays out of the pages' bundles.
  */
 export async function handleRsvpConfirmation(
@@ -19,6 +21,7 @@ export async function handleRsvpConfirmation(
       rsvp,
       await readSiteContent(),
       siteUrl(),
+      rsvp.guestId ? await personalLink(rsvp.guestId) : null,
     );
     await sendEmail({
       to: rsvp.email,

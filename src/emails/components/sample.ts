@@ -44,7 +44,13 @@ const celebrations: ConfirmationCelebration[] = [
 ];
 
 /** Coming to the wedding and the reception, not to the thanksgiving service. */
-export const sampleReply = { guestName: "Ama Owusu", celebrations, siteUrl };
+export const sampleReply = {
+  guestName: "Ama Owusu",
+  celebrations,
+  siteUrl,
+  // A made-up token, the length of a real one.
+  personalLink: `${siteUrl}/my/sample-personal-link-token-for-the-preview0`,
+};
 
 /** Can come to none of the three. */
 export const sampleDeclined = {

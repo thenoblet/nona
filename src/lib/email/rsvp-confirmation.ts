@@ -29,13 +29,17 @@ const stubFor = (weekday: string, day: string, month: string) => ({
 
 /**
  * The confirmation email for a reply, rendered from the template in `src/emails`. The same reply
- * always renders the same bytes (the calendar file is stamped with the reply's time), so a retry
- * under the same idempotency key sends exactly what the first try did.
+ * always renders the same bytes (the calendar file is stamped with the reply's time, and the
+ * personal link is the reply's guest's, read from the database), so a retry under the same
+ * idempotency key sends exactly what the first try did. `personalLink` shows only to a guest
+ * coming to at least one celebration; without one (a reply sent before personal links) the email
+ * is as it always was.
  */
 export async function renderRsvpConfirmation(
   rsvp: RsvpRecord,
   content: SiteContent,
   siteUrl: string,
+  personalLink: string | null = null,
 ): Promise<{ subject: string; text: string; html: string; ics: string | null }> {
   const answered = content.celebrations.filter(
     (celebration) => rsvp.answers[celebration.id],
@@ -68,6 +72,7 @@ export async function renderRsvpConfirmation(
         guestName: greetingName(rsvp.fullName),
         celebrations,
         siteUrl,
+        personalLink,
       }),
     ),
   );

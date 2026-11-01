@@ -6,6 +6,7 @@ import { contentDefaults } from "@/lib/content/defaults";
 import { getSiteContentOrThrow } from "@/lib/content/get";
 import type { SiteContent } from "@/lib/content/schema";
 import { saveRsvp } from "@/lib/data/rsvp";
+import { guestForReply } from "@/lib/guests/cookie";
 import { queueRsvpConfirmation } from "@/lib/jobs/rsvp-confirmation";
 import { describeError } from "@/lib/log-error";
 import type { Answer } from "@/lib/data/types";
@@ -90,6 +91,17 @@ export async function submitRsvp(
     return { status: "error", values, errors };
   }
 
+  // The guest the reply is sent as, made or found for this browser (Ruling BY): their personal
+  // link goes in the confirmation, and the album knows the phone as them. The reply never waits
+  // on it: without a guest it is saved as before, and its email has no link.
+  let guestId: string | undefined;
+  try {
+    guestId = (await guestForReply(values.fullName)).id;
+  } catch (error) {
+    // The error's name and code only: a query error repeats the guest's name.
+    console.error("RSVP could not find or make the guest:", describeError(error));
+  }
+
   let record: Awaited<ReturnType<typeof saveRsvp>>["record"];
   try {
     ({ record } = await saveRsvp({
@@ -100,6 +112,7 @@ export async function submitRsvp(
       answers: values.answers,
       otherNames: values.otherNames || undefined,
       song: values.song || undefined,
+      guestId,
     }));
   } catch (error) {
     // Never the error itself: a query error repeats the guest's name, phone and email.

@@ -30,6 +30,13 @@ function record(
 const render = (reply: RsvpRecord, content: SiteContent = contentDefaults) =>
   renderRsvpConfirmation(reply, content, SITE_URL);
 
+/** A guest's personal link, as the confirmation job reads it from the database. */
+const PERSONAL_LINK = `${SITE_URL}/my/made-up-token-for-the-confirmation-tests-0001`;
+const ON_THE_DAY = "Use this link on the day to keep your photos together.";
+
+const renderWithLink = (reply: RsvpRecord, link: string | null = PERSONAL_LINK) =>
+  renderRsvpConfirmation(reply, contentDefaults, SITE_URL, link);
+
 /** Text as React writes it into html: these five characters escaped. */
 const asHtml = (value: string) =>
   value
@@ -361,5 +368,83 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.html).toContain("Dear guest,");
     expect(mail.text).not.toContain(name);
     expect(mail.html).not.toContain(name);
+  });
+});
+
+describe("the personal link in the confirmation (Rulings BY and BZ)", () => {
+  const token = PERSONAL_LINK.split("/my/")[1];
+
+  it("gives a guest coming to a celebration their personal link, in the html and the text, with what it is for", async () => {
+    for (const answers of [{ [first.id]: "yes" }, { [first.id]: "yes", [second.id]: "no" }] as const) {
+      const mail = await renderWithLink(record(answers));
+      expect(mail.html).toContain(`href="${PERSONAL_LINK}"`);
+      expect(mail.text).toContain(PERSONAL_LINK);
+      for (const body of [mail.html, mail.text]) expect(body).toContain(`/my/${token}`);
+      expect(withoutTags(mail.html)).toContain(asHtml(ON_THE_DAY));
+      expect(mail.text).toContain(ON_THE_DAY);
+      // Said once, with the link beside it.
+      expect(mail.text.split(ON_THE_DAY)).toHaveLength(2);
+      expect(mail.text.indexOf(PERSONAL_LINK)).toBeGreaterThan(mail.text.indexOf(ON_THE_DAY));
+    }
+  });
+
+  it("puts the link after the celebrations and before how to change the reply", async () => {
+    const mail = await renderWithLink(record({ [first.id]: "yes", [second.id]: "no" }));
+    for (const body of [mail.html, mail.text]) {
+      const link = body.indexOf(PERSONAL_LINK);
+      expect(link).toBeGreaterThan(body.indexOf(second.name));
+      expect(link).toBeGreaterThan(body.indexOf("calendar file attached to this email"));
+      expect(link).toBeLessThan(body.indexOf("Need to change something?"));
+    }
+  });
+
+  it("gives a guest coming to none of the celebrations no link: the all-declined email stays as it is", async () => {
+    const declined = record({ [first.id]: "no", [second.id]: "no" });
+    const withLink = await renderWithLink(declined);
+    expect(withLink).toEqual(await render(declined));
+    for (const body of [withLink.html, withLink.text]) {
+      expect(body).not.toContain("/my/");
+      expect(body).not.toContain("on the day");
+    }
+  });
+
+  it("renders a reply with no guest, sent before personal links, as the email always was", async () => {
+    for (const answers of [{ [first.id]: "yes" }, { [first.id]: "yes", [second.id]: "no" }, { [first.id]: "no" }] as const) {
+      const reply = record(answers);
+      const withoutLink = await renderWithLink(reply, null);
+      expect(withoutLink).toEqual(await render(reply));
+      for (const body of [withoutLink.html, withoutLink.text]) {
+        expect(body).not.toContain("/my/");
+        expect(body).not.toContain("on the day");
+        expect(body).not.toContain("personal link");
+      }
+    }
+  });
+
+  it("renders a reply with its link byte for byte the same every time", async () => {
+    const reply = record({ [first.id]: "yes", [second.id]: "no" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-29T09:41:08Z"));
+      const firstTry = await renderWithLink(reply);
+      vi.setSystemTime(new Date("2026-11-20T23:59:00Z"));
+      const retry = await renderWithLink(reply);
+      expect(retry).toEqual(firstTry);
+      expect(retry.html).toBe(firstTry.html);
+      expect(retry.text).toBe(firstTry.text);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses only https links with the link in", async () => {
+    const mail = await renderWithLink(record({ [first.id]: "yes" }));
+    const htmlLinks = [...mail.html.matchAll(/(?<![\w-])(?:href|src)="([^"]*)"|url\(([^)]*)\)/g)].map(
+      (match) => match[1] ?? match[2],
+    );
+    const textLinks = mail.text.match(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi) ?? [];
+    expect(htmlLinks).toContain(PERSONAL_LINK);
+    expect(textLinks).toContain(PERSONAL_LINK);
+    for (const link of [...htmlLinks, ...textLinks]) expect(link).toMatch(/^https:\/\//);
   });
 });

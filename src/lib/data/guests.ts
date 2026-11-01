@@ -1,6 +1,6 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { guests } from "@/lib/db/schema";
 import { isUuid } from "./ids";
@@ -52,4 +52,19 @@ export async function setGuestName(id: string, name: string | null): Promise<Gue
     .where(eq(guests.id, id))
     .returning();
   return row ? toGuest(row) : null;
+}
+
+/**
+ * Gives a guest who has no name this one (trimmed, cut to 80 characters) in a single write, so a
+ * name another request gave them meanwhile is never replaced. The guest as they now are, named by
+ * this call or by the other; null when there is no such guest.
+ */
+export async function nameGuestIfUnnamed(id: string, name: string): Promise<Guest | null> {
+  if (!isUuid(id)) return null;
+  const [row] = await getDb()
+    .update(guests)
+    .set({ displayName: cleanName(name) })
+    .where(and(eq(guests.id, id), isNull(guests.displayName)))
+    .returning();
+  return row ? toGuest(row) : findGuestById(id);
 }

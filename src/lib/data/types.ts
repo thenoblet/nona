@@ -19,6 +19,11 @@ export type RsvpInput = {
   answers: Partial<Record<EventId, Answer>>;
   otherNames?: string;
   song?: string;
+  /**
+   * The guest the reply was sent as, whose personal link its confirmation carries (Ruling BY).
+   * Missing for a reply sent before personal links, or when its guest couldn't be made.
+   */
+  guestId?: string;
 };
 
 export type EmailStatus = "none" | "queued" | "sent" | "failed";

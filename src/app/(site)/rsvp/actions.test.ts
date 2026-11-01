@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { contentDefaults } from "@/lib/content/defaults";
 import { dbConfig } from "@/lib/env";
 import { initialRsvpState } from "@/components/rsvp/options";
+import { createGuest, findGuestById } from "@/lib/data/guests";
 import { resetDb } from "../../../../test/db";
+import { browserCookies } from "../../../../test/next-cookies";
+
+// One browser's cookie jar: what it sent, and the Set-Cookie the action answered with.
+vi.mock("next/headers", () => import("../../../../test/next-cookies"));
 
 // The site text is read from the test database as on the site; outside Next, "use cache" is a
 // plain call. A test can make the read fail, as it would while the database is unreachable.
@@ -59,6 +64,7 @@ vi.mock("@/lib/data/rsvp", async (importOriginal) => {
 
 import { getSiteContent } from "@/lib/content/get";
 import { saveSection } from "@/lib/content/store";
+import { guestCookieName, readGuestIds, signGuestIds } from "@/lib/guests/cookie";
 import { submitRsvp } from "./actions";
 
 const TRY_AGAIN = "Sorry, your reply didn't reach us. Please try again in a moment.";
@@ -104,6 +110,31 @@ async function savedAnswers() {
   }
 }
 
+/** Each saved reply's guest, oldest first. */
+async function replyGuests() {
+  const sql = postgres({ ...dbConfig(), max: 1 });
+  try {
+    return (await sql<{ guest_id: string | null }[]>`SELECT guest_id FROM rsvps ORDER BY received_at`).map((row) => row.guest_id);
+  } finally {
+    await sql.end();
+  }
+}
+
+async function guestCount(): Promise<number> {
+  const sql = postgres({ ...dbConfig(), max: 1 });
+  try {
+    const [{ count }] = await sql<{ count: number }[]>`SELECT count(*)::int AS count FROM guests`;
+    return count;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** The browser sends a guest cookie with these ids, its own first. */
+function sendCookie(ids: string[]) {
+  browserCookies.values.set(guestCookieName(), signGuestIds(ids));
+}
+
 const [firstCelebration] = contentDefaults.celebrations;
 
 describe("submitRsvp", () => {
@@ -113,6 +144,7 @@ describe("submitRsvp", () => {
     boss.fail = false;
     boss.send.mockClear();
     afterTasks.length = 0;
+    browserCookies.clear();
     await resetDb();
   });
 
@@ -321,5 +353,99 @@ describe("submitRsvp", () => {
     expect(boss.send).not.toHaveBeenCalled();
     // Pages were not switched to the built-in text by this check.
     expect((await getSiteContent()).faq).toEqual(contentDefaults.faq);
+  });
+
+  describe("the reply's guest (Ruling BY)", () => {
+    it("gives a browser without a guest one named after the reply, sets the guest cookie, and keeps the guest on the reply", async () => {
+      const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      expect(state.status).toBe("sent");
+      const [guestId] = await replyGuests();
+      expect(guestId).toEqual(expect.any(String));
+      expect((await findGuestById(guestId!))?.displayName).toBe("Ama Test");
+      expect(browserCookies.sets.map((cookie) => cookie.name)).toEqual([guestCookieName()]);
+      expect(await readGuestIds()).toEqual([guestId]);
+    });
+
+    it("gives a reply without an email the browser's guest too", async () => {
+      await submitRsvp(initialRsvpState, form({ email: "" }));
+      const [guestId] = await replyGuests();
+      expect(await readGuestIds()).toEqual([guestId]);
+    });
+
+    it("reuses the browser's own unnamed guest, naming it after the reply, and leaves the cookie", async () => {
+      const own = await createGuest(null);
+      sendCookie([own.id]);
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      expect(await replyGuests()).toEqual([own.id]);
+      expect((await findGuestById(own.id))?.displayName).toBe("Ama Test");
+      expect(await guestCount()).toBe(1);
+      expect(browserCookies.sets).toEqual([]);
+    });
+
+    it("reuses the browser's own guest of the same name, trimmed and in any case, without renaming it", async () => {
+      const own = await createGuest("AMA TEST");
+      sendCookie([own.id]);
+      await submitRsvp(initialRsvpState, form({ fullName: "  ama test ", email: "ama@example.com" }));
+      expect(await replyGuests()).toEqual([own.id]);
+      expect((await findGuestById(own.id))?.displayName).toBe("AMA TEST");
+      expect(await guestCount()).toBe(1);
+      expect(browserCookies.sets).toEqual([]);
+    });
+
+    it("gives a reply under another name on the same phone a separate guest, and leaves the browser's own and its cookie", async () => {
+      const own = await createGuest("Kofi Test");
+      sendCookie([own.id]);
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      const [guestId] = await replyGuests();
+      expect(guestId).not.toBe(own.id);
+      expect((await findGuestById(guestId!))?.displayName).toBe("Ama Test");
+      expect((await findGuestById(own.id))?.displayName).toBe("Kofi Test");
+      expect(browserCookies.sets).toEqual([]);
+      expect(await readGuestIds()).toEqual([own.id]);
+    });
+
+    it("makes no guest and sets no cookie while replies are closed", async () => {
+      await closeReplies();
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      expect(await guestCount()).toBe(0);
+      expect(browserCookies.sets).toEqual([]);
+    });
+
+    it("makes no guest and sets no cookie for a reply the form sends back to fix", async () => {
+      await submitRsvp(initialRsvpState, form({ fullName: "A", email: "ama@example.com" }));
+      await submitRsvp(initialRsvpState, form({ email: "not-an-email" }));
+      expect(await guestCount()).toBe(0);
+      expect(browserCookies.sets).toEqual([]);
+    });
+
+    it("still saves the reply, without a guest, when the guest can't be made, and logs no guest details", async () => {
+      // Production without the cookie's secret: the guest cookie can be neither read nor signed.
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("GUEST_COOKIE_SECRET", "");
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+        expect(state.status).toBe("sent");
+        expect(await replyGuests()).toEqual([null]);
+        expect(browserCookies.sets).toEqual([]);
+        expect(log).toHaveBeenCalled();
+        const logged = log.mock.calls.flat().map(String).join(" ");
+        expect(logged).not.toContain("Ama Test");
+        expect(logged).not.toContain("example.com");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+      await settle();
+      expect(boss.send).toHaveBeenCalledOnce();
+    });
+
+    it("keeps the first reply's guest when the same reply is sent twice from one browser", async () => {
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      const guests = await replyGuests();
+      expect(guests).toHaveLength(1);
+      expect(await readGuestIds()).toEqual(guests);
+      expect(await guestCount()).toBe(1);
+    });
   });
 });

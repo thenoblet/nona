@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test, type APIRequestContext, type Browser, type Locator, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { rsvp as builtInRsvp } from "../src/content/wedding";
@@ -65,6 +66,58 @@ test("a second reply is kept beside the first, and the guest is told nothing abo
     expect(rows.map((row) => row.superseded_at)).toEqual([null, null]);
   } finally {
     await sql.end();
+  }
+});
+
+test("a reply gives the phone its guest: the cookie is set, the reply keeps it, and My uploads is that guest's", async ({
+  browser,
+  baseURL,
+}) => {
+  const phone = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const sql = testDb();
+  const mediaId = randomUUID();
+  try {
+    const page = await phone.newPage();
+    await page.goto("/rsvp");
+    await page.getByLabel("Your full name").fill("E2E Album Link Guest");
+    await page.getByLabel("Phone or WhatsApp").fill("0244000555");
+    await page.getByLabel("Email").fill("e2e-album-link@example.com");
+    await page.getByRole("radiogroup", { name: /white wedding/i }).getByText("Joyfully accept").click();
+    await page.getByRole("button", { name: "Send my reply" }).click();
+    await expect(page.getByRole("heading", { name: "Thank you" })).toBeVisible();
+
+    // The e2e server is a production build, so the cookie carries the __Host- prefix.
+    const [cookie] = (await phone.cookies()).filter((stored) => stored.name === "__Host-nona_guest");
+    expect(cookie).toMatchObject({ httpOnly: true, secure: true, sameSite: "Lax", path: "/" });
+    const ids = decodeURIComponent(cookie.value).split(".")[0].split(",");
+    expect(ids).toHaveLength(1);
+    const [ownId] = ids;
+    const [reply] = await sql`SELECT guest_id FROM rsvps WHERE email = 'e2e-album-link@example.com'`;
+    expect(reply.guest_id).toBe(ownId);
+    const [guest] = await sql`SELECT display_name FROM guests WHERE id = ${ownId}`;
+    expect(guest.display_name).toBe("E2E Album Link Guest");
+
+    // The album's uploader asks for the phone's guest before its first upload: it is the reply's.
+    const asked = await phone.request.post("/api/guest", { data: {} });
+    expect((await asked.json()).guestId).toBe(ownId);
+
+    // My uploads shows that guest's moments: here one whose upload failed, which only its uploader sees.
+    await sql`
+      insert into media (id, purpose, kind, guest_id, uploader_name, celebration, original_key, original_filename, size_bytes,
+        content_type, status, failure_reason, uploaded_at)
+      values (${mediaId}, 'album', 'photo', ${ownId}, 'E2E Album Link Guest', 'reception', ${`originals/${mediaId}.jpg`}, 'IMG_0001.JPG', 1000,
+        'image/jpeg', 'failed', 'too-large', now())`;
+    await page.goto("/album?mode=before&view=mine");
+    const main = page.getByRole("main");
+    await expect(main.getByRole("tab", { name: "My uploads" })).toHaveAttribute("aria-selected", "true");
+    const moment = main.getByRole("list", { name: "Moments" }).locator(`[data-moment="${mediaId}"]`);
+    await expect(moment).toBeVisible();
+    await expect(moment.getByText("This photo is too large to show")).toBeVisible();
+    await expect(main.getByText("Your link opens these on any phone.")).toBeVisible();
+  } finally {
+    await sql`DELETE FROM media WHERE id = ${mediaId}`;
+    await sql.end();
+    await phone.close();
   }
 });
 
