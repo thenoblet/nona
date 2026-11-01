@@ -8,13 +8,14 @@ const allQueues = Object.values(MEDIA_QUEUES);
 const jobQueues = allQueues.filter((name) => name !== MEDIA_QUEUES.dead);
 
 describe("the media queues' options", () => {
-  it("name the eight queues", () => {
+  it("name the nine queues", () => {
     expect(MEDIA_QUEUES).toEqual({
       photo: "media.photo",
       jpeg: "media.jpeg",
       poster: "media.poster",
       wish: "media.wish",
       convert: "media.convert",
+      playable: "media.playable",
       visibility: "media.visibility",
       card: "media.card",
       dead: "media.dead",
@@ -62,11 +63,17 @@ describe("the media queues' options", () => {
     expect(totalWait(1)).toBeLessThan(14 * 24 * HOUR);
   });
 
-  it("give a conversion four hours and every other job 15 minutes, set explicitly so a drift is put right", () => {
+  it("give a conversion four hours, a playable copy an hour and every other job 15 minutes, set explicitly so a drift is put right", () => {
     expect(MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.convert].expireInSeconds).toBe(14_400);
-    for (const name of allQueues.filter((name) => name !== MEDIA_QUEUES.convert)) {
+    // A 2 GB original's download, copy and upload, with room for a slow day at R2.
+    expect(MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.playable].expireInSeconds).toBe(3_600);
+    for (const name of allQueues.filter((name) => name !== MEDIA_QUEUES.convert && name !== MEDIA_QUEUES.playable)) {
       expect(MEDIA_QUEUE_OPTIONS[name].expireInSeconds, name).toBe(900);
     }
+  });
+
+  it("keep a playable copy's finished jobs 7 days: the sweeper sends a copy's job only to a video listed within 6 days that never had one", () => {
+    expect(MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.playable].deleteAfterSeconds).toBe(7 * 24 * 60 * 60);
   });
 
   it("put a conversion someone asked for at 20, the worker's on-demand floor, above the backlog's", () => {

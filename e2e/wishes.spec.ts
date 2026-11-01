@@ -29,8 +29,9 @@ test("the home page's wall invites the first wish, then shows it", async ({ page
   await expect(page.getByRole("status").getByText("Thank you")).toBeVisible();
 
   await page.goto("/home?mode=after");
-  await expect(homeWall.getByText("The first wish on the home wall")).toBeVisible();
-  await expect(homeWall.getByText("Be the first to leave a wish.")).toHaveCount(0);
+  // Visible only, as above: the hidden streamed copy can carry the same words for a moment.
+  await expect(homeWall.getByText("The first wish on the home wall").filter({ visible: true })).toBeVisible();
+  await expect(homeWall.getByText("Be the first to leave a wish.").filter({ visible: true })).toHaveCount(0);
 });
 
 test("a written wish is saved in Postgres and stays on the wall", async ({ page }) => {

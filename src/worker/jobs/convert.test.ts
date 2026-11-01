@@ -16,14 +16,25 @@ import { storageConfig } from "@/lib/env";
 import { CONVERT_PRIORITY, MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { storageClient } from "@/lib/storage/client";
 import { originalKey } from "@/lib/storage/keys";
+import { headOriginal } from "@/lib/storage/objects";
 import { readManifest } from "@/lib/storage/manifest";
 import { resetDb } from "../../../test/db";
 import { dropBossSchema, startTestBoss } from "../../../test/uploads";
 import { workerConfig } from "../config";
-import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
+import { PermanentJobError, RetriedJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
-import { conversionMilliseconds, convertHandler, convertVideo, outputProblem, type ConvertOptions } from "./convert";
+import {
+  conversionCpuSeconds,
+  conversionMilliseconds,
+  conversionThreads,
+  convertHandler,
+  tooLongToConvert,
+  convertVideo,
+  outputProblem,
+  type ConvertOptions,
+} from "./convert";
 import { photoHandler } from "./photo";
+import { contentHashOf } from "./publishing";
 import { runVideoTool } from "./video-tools";
 
 /*
@@ -51,15 +62,20 @@ vi.mock("@/lib/storage/objects", async (importOriginal) => {
   };
 });
 
-// Every program the job runs, with its priority, so a test can see how it ran.
+// Every program the job runs, with its priority, so a test can see how it ran. A test can shorten
+// the conversion's own time limit (its x264 run's), to time it out for real.
 type ProgramRun = { args: string[]; priority: string };
-const programs = vi.hoisted(() => ({ runs: [] as ProgramRun[] }));
+const programs = vi.hoisted(() => ({ runs: [] as ProgramRun[], conversionTimeoutMilliseconds: null as number | null }));
 vi.mock("../processes", async (importOriginal) => {
   const real = await importOriginal<typeof import("../processes")>();
   return {
     ...real,
     runProcess: (...args: Parameters<typeof real.runProcess>) => {
       programs.runs.push({ args: [args[0], ...args[1]], priority: args[2].priority });
+      const shortened = programs.conversionTimeoutMilliseconds;
+      if (shortened !== null && args[1].includes("libx264")) {
+        return real.runProcess(args[0], args[1], { ...args[2], timeoutMilliseconds: shortened });
+      }
       return real.runProcess(...args);
     },
   };
@@ -113,7 +129,9 @@ function convertOptions(changes: Partial<ConvertOptions> = {}): ConvertOptions {
     decoderThreads: config.threads.decoder,
     x264Threads: config.threads.x264,
     filterThreads: config.threads.ffmpegFilters,
+    cpus: config.cpus,
     x264Preset: config.x264Preset,
+    x264Cap: config.x264Cap,
     convertMaxSeconds: config.convertMaxSeconds,
     jobQueue: async () => boss,
     ...changes,
@@ -147,6 +165,7 @@ beforeEach(async () => {
   await resetDb();
   publishing.afterPut = null;
   programs.runs = [];
+  programs.conversionTimeoutMilliseconds = null;
   scratch.bytesNeeded = [];
 });
 
@@ -222,10 +241,15 @@ async function iphoneClip(): Promise<Buffer> {
     ...["-movflags", "use_metadata_tags"],
     ...["-metadata", `com.apple.quicktime.location.ISO6709=${LOCATION}`],
     ...["-metadata", "com.apple.quicktime.creationdate=2026-12-06T01:00:00+0200"],
+    ...["-metadata", "com.apple.quicktime.make=Apple", "-metadata", "com.apple.quicktime.model=iPhone 15 Pro"],
+    ...["-metadata", "com.apple.quicktime.software=17.1.2"],
     ...["-metadata", `location=${LOCATION}`],
     ...["-f", "mov"],
   ]);
 }
+
+/** Apple's keys of the phone that made a clip, which a conversion must not carry. */
+const PHONE_KEYS = /quicktime\.(make|model|software)|iPhone 15 Pro|17\.1\.2/;
 
 /**
  * An Android phone's clip: H.264 at full range (yuvj420p), with AAC, in a MOV whose location is a
@@ -495,18 +519,69 @@ describe("outputProblem: exiting 0 isn't success (ffmpeg notes §4.17)", () => {
   });
 });
 
+describe("conversionCpuSeconds: the conversion's CPU time, sized from its length and frame rate (Ruling AR)", () => {
+  it("gives ten minutes and 30 CPU-seconds a second of video at 30 fps, or below", () => {
+    expect(conversionCpuSeconds(81.3, 30, 1800)).toBe(600 + 2439);
+    expect(conversionCpuSeconds(10, 24, 1800)).toBe(900);
+    expect(conversionCpuSeconds(10, null, 1800)).toBe(900);
+  });
+
+  it("gives more in proportion to the frames read: twice at 60 fps, eight times for 240 fps slow motion", () => {
+    expect(conversionCpuSeconds(10, 60, 1800)).toBe(600 + 600);
+    expect(conversionCpuSeconds(10, 240, 1800)).toBe(600 + 2400);
+    expect(conversionCpuSeconds(10, 59.94, 1800)).toBe(Math.ceil(600 + 10 * 30 * (59.94 / 30)));
+  });
+
+  it("gives a video of no known length the longest's", () => {
+    expect(conversionCpuSeconds(null, 30, 1800)).toBe(600 + 1800 * 30);
+  });
+
+  it("counts a file's frame rate at most 240, however absurd the rate it claims (Ruling BG)", () => {
+    for (const absurd of [90_000, 2_147_483_647, Number.POSITIVE_INFINITY]) {
+      expect(conversionCpuSeconds(10, absurd, 1800), String(absurd)).toBe(600 + 10 * 30 * 8);
+      expect(conversionMilliseconds(10, absurd), String(absurd)).toBe(10 * 60_000 + 10 * 10_000 * 8);
+    }
+    // Nonsense counts as 30 fps.
+    for (const nonsense of [0, -30, Number.NaN]) expect(conversionCpuSeconds(10, nonsense, 1800), String(nonsense)).toBe(900);
+  });
+});
+
+describe("tooLongToConvert: longer than the worker converts, or more frames than 60 a second of it (Rulings AR, BG)", () => {
+  it("takes a 30-minute video at 30 or 60 fps, and 7½ minutes of 240 fps slow motion", () => {
+    expect(tooLongToConvert(1800, 30, 1800)).toBe(false);
+    expect(tooLongToConvert(1800, 60, 1800)).toBe(false);
+    expect(tooLongToConvert(450, 240, 1800)).toBe(false);
+    expect(tooLongToConvert(null, 240, 1800)).toBe(false);
+  });
+
+  it("refuses a longer one, or more frames: 108,000 at the default 30 minutes, the rate counted at most 240", () => {
+    expect(tooLongToConvert(1801, 30, 1800)).toBe(true);
+    expect(tooLongToConvert(1800, 61, 1800)).toBe(true);
+    expect(tooLongToConvert(451, 240, 1800)).toBe(true);
+    // A crafted rate counts as 240: 10 s is 2,400 frames, well inside; 8 minutes is past.
+    expect(tooLongToConvert(10, 90_000, 1800)).toBe(false);
+    expect(tooLongToConvert(480, 90_000, 1800)).toBe(true);
+  });
+});
+
 describe("conversionMilliseconds: the conversion's time, sized from its measured speed", () => {
-  it("gives ten seconds a second of video and ten minutes more, never past three hours", () => {
-    expect(conversionMilliseconds(10)).toBe(10 * 60_000 + 100_000);
-    expect(conversionMilliseconds(180)).toBe(10 * 60_000 + 1_800_000);
-    expect(conversionMilliseconds(4 * 3600)).toBe(3 * 3600_000);
-    expect(conversionMilliseconds(null)).toBe(3 * 3600_000);
+  it("gives ten seconds a second of 30 fps video and ten minutes more, never past three hours", () => {
+    expect(conversionMilliseconds(10, 30)).toBe(10 * 60_000 + 100_000);
+    expect(conversionMilliseconds(180, null)).toBe(10 * 60_000 + 1_800_000);
+    expect(conversionMilliseconds(4 * 3600, 30)).toBe(3 * 3600_000);
+    expect(conversionMilliseconds(null, 30)).toBe(3 * 3600_000);
+  });
+
+  it("gives more in proportion to the frames read, as the CPU time is: twice at 60 fps, eight times at 240 (Ruling BH)", () => {
+    expect(conversionMilliseconds(10, 60)).toBe(10 * 60_000 + 200_000);
+    expect(conversionMilliseconds(10, 240)).toBe(10 * 60_000 + 800_000);
+    expect(conversionMilliseconds(450, 240)).toBe(3 * 3600_000);
   });
 
   it("leaves an hour of the job's four for the download, the upload and the rest", () => {
     const jobMilliseconds = (MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.convert].expireInSeconds ?? 0) * 1000;
     expect(jobMilliseconds).toBe(14_400_000);
-    expect(conversionMilliseconds(null) + 3600_000).toBeLessThanOrEqual(jobMilliseconds);
+    expect(conversionMilliseconds(null, 240) + 3600_000).toBeLessThanOrEqual(jobMilliseconds);
   });
 });
 
@@ -523,7 +598,9 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     expect(item).toMatchObject({ status: "ready", conversion: "done", width: 1080, height: 1920 });
     // The poster's files are kept beside it.
     expect(Object.keys(item.derived).sort()).toEqual(["poster-thumb", "poster-view", "video"]);
-    expect(item.derived.video).toMatch(new RegExp(`^derived/${mediaId}/[0-9a-f]{16}/video\\.mp4$`));
+    // Under its settings' second version (Task 14b), so no cache has the first's: uncapped, as by default.
+    const { etag } = (await headOriginal(item.originalKey)) ?? { etag: "" };
+    expect(item.derived.video).toBe(`derived/${mediaId}/${contentHashOf(etag, "convert-settings-2", 0)}/video.mp4`);
     const converted = await readPublic(item.derived.video ?? "");
     expect(converted.contentType).toBe("video/mp4");
     expect(converted.cacheControl).toBe("public, max-age=31536000, immutable");
@@ -555,6 +632,10 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     expect(locationsIn(converted.bytes)).toEqual([]);
     expect(description.format.tags).toMatchObject({ creation_time: "2026-12-05T23:00:00.000000Z" });
     expect(JSON.stringify(description)).not.toMatch(/location|ISO6709|creationdate|05\.6037/i);
+    // Nor the phone that made it: Apple's make, model and software keys, which the original has.
+    expect(PHONE_KEYS.test(original.toString("latin1"))).toBe(true);
+    expect(JSON.stringify(description)).not.toMatch(PHONE_KEYS);
+    expect(PHONE_KEYS.test(converted.bytes.toString("latin1"))).toBe(false);
     expect(video.tags).toMatchObject({ creation_time: "2026-12-05T23:00:00.000000Z" });
 
     expect(report).toEqual({ sizeBytes: original.length, kind: "video/hevc-hdr" });
@@ -569,12 +650,12 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
 
     const [run] = conversionRuns();
     expect(run.priority).toBe("background");
-    // Its memory cap, and its CPU time (Ruling AR): ten minutes and ten CPU-seconds a second of its
-    // 2 s, the hard limit a minute past the soft one, so ffmpeg is told (SIGXCPU) before it is killed.
+    // Its memory cap, and its CPU time (Ruling AR): ten minutes and 30 CPU-seconds a second of its
+    // 2 s at 30 fps, the hard limit a minute past the soft one, so ffmpeg is told (SIGXCPU) before it is killed.
     expect(run.args.slice(0, 2)).toEqual(["prlimit", `--as=${3 * 1024 ** 3}`]);
     const [soft, hard] = (/^--cpu=(\d+):(\d+)$/.exec(run.args[2]) ?? []).slice(1).map(Number);
-    expect(soft).toBeGreaterThanOrEqual(620);
-    expect(soft).toBeLessThanOrEqual(622);
+    expect(soft).toBeGreaterThanOrEqual(660);
+    expect(soft).toBeLessThanOrEqual(666);
     expect(hard).toBe(soft + 60);
     expect(run.args.slice(3, 5)).toEqual(["--", "ffmpeg"]);
     const args = run.args.slice(5);
@@ -585,10 +666,10 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     expect(valueAfter("-filter_threads")).toBe("1");
     expect(valueAfter("-protocol_whitelist")).toBe("file");
     expect(valueAfter("-format_whitelist")).toBe("mov,matroska");
-    // The decoder's threads before the input, x264's after it (ffmpeg notes §4.14).
+    // The decoder's threads before the input, x264's after it (ffmpeg notes §4.14): alone, every CPU (WORKER_CPUS).
     expect(args[input - 2]).toBe("-threads");
-    expect(args[input - 1]).toBe("2");
-    expect(valueAfter("-threads", input)).toBe("2");
+    expect(args[input - 1]).toBe("3");
+    expect(valueAfter("-threads", input)).toBe("3");
     expect(args[input + 1]).toMatch(/\/original$/);
     expect(args.slice(input + 2, input + 6)).toEqual(["-map", "0:0", "-map", "0:1"]);
     expect(valueAfter("-map_metadata")).toBe("-1");
@@ -597,6 +678,8 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     expect(valueAfter("-c:v")).toBe("libx264");
     expect(valueAfter("-preset")).toBe("veryfast");
     expect(valueAfter("-crf")).toBe("23");
+    // Pure CRF 23: no cap unless WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE are set (Noblet).
+    expect(args.join(" ")).not.toMatch(/-maxrate|-bufsize/);
     expect(valueAfter("-profile:v")).toBe("high");
     expect(args).not.toContain("-level");
     expect(args).not.toContain("-level:v");
@@ -622,6 +705,23 @@ describe.skipIf(!ffmpegSeven)("a conversion every phone plays (Review Focus 2)",
     // It asked the scratch disk for twice the original's size, and more.
     const [bytesNeeded] = scratch.bytesNeeded;
     expect(bytesNeeded).toBeGreaterThanOrEqual(2 * (await readItem(mediaId)).sizeBytes);
+  });
+
+  it("caps its bitrate when WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE are set, under keys of their own", async () => {
+    const mediaId = await readyVideo(await androidClip(), "mov", { width: 640, height: 360, videoCodec: "h264" });
+    const capped = convertOptions({ x264Cap: { maxRate: "5M", bufferSize: "10M" } });
+
+    await convertVideo(convertJob(mediaId), capped);
+
+    const args = conversionRuns()[0].args;
+    const valueAfter = (flag: string) => args[args.indexOf(flag) + 1];
+    expect(valueAfter("-crf")).toBe("23");
+    expect(valueAfter("-maxrate:v")).toBe("5M");
+    expect(valueAfter("-bufsize:v")).toBe("10M");
+    expect(args.indexOf("-maxrate:v")).toBeGreaterThan(args.indexOf("-c:v"));
+    const item = await readItem(mediaId);
+    const { etag } = (await headOriginal(item.originalKey)) ?? { etag: "" };
+    expect(item.derived.video).toBe(`derived/${mediaId}/${contentHashOf(etag, "convert-settings-2-maxrate-5M-bufsize-10M", 0)}/video.mp4`);
   });
 
   it("deletes a PQ clip's mastering display and light levels, which an SDR file mustn't carry (ffmpeg notes §4.6)", async () => {
@@ -706,11 +806,58 @@ async function startConversions(): Promise<QueueWorkers> {
   workers = await startQueueWorkers(
     boss,
     { [MEDIA_QUEUES.convert]: convertHandler(convertOptions()) },
-    { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
+    { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1, playable: 1 },
     { pollingIntervalSeconds: 0.5 },
   );
   return workers;
 }
+
+describe("conversionThreads: a lone conversion takes every CPU, two share them (Task 14b, Ruling R)", () => {
+  const options = { cpus: 3, decoderThreads: 2, x264Threads: 2, filterThreads: 1 };
+
+  it("gives a conversion that starts alone WORKER_CPUS for its decoder and for x264", () => {
+    expect(conversionThreads(0, options)).toMatchObject({ decoder: 3, x264: 3 });
+    expect(conversionThreads(0, { ...options, cpus: 16 })).toMatchObject({ decoder: 16, x264: 16 });
+  });
+
+  it("gives one that starts beside another the shared counts, WORKER_FFMPEG_DECODER_THREADS and WORKER_X264_THREADS", () => {
+    expect(conversionThreads(1, options)).toEqual({ decoder: 2, x264: 2, filter: 1 });
+    expect(conversionThreads(2, options)).toEqual({ decoder: 2, x264: 2, filter: 1 });
+  });
+});
+
+describe.skipIf(!ffmpegSeven)("conversions that overlap (Task 14b)", () => {
+  it("pick their threads by how many run as each starts: 3 alone, 2 each for two, and 3 again once the box is free", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    // The first runs long enough for the second to start beside it.
+    const flat = await saved(await hlgClip("1920x1080", 4, { grain: true }), "mov");
+    const first = await readyVideo(await clip("first.mov", ["-display_rotation", "-90", "-i", flat, "-c", "copy"]), "mov");
+    const second = await readyVideo(await androidClip(), "mov", { width: 640, height: 360, videoCodec: "h264" });
+    const third = await readyVideo(await androidClip(), "mov", { width: 640, height: 360, videoCodec: "h264" });
+
+    const firstConverting = convertVideo(convertJob(first), convertOptions());
+    const deadline = Date.now() + 120_000;
+    while (!conversionRuns().some((run) => run.args.includes("libx264")) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await convertVideo(convertJob(second), convertOptions());
+    const firstStillConverting = (await readItem(first)).conversion === "converting";
+    await firstConverting;
+    await convertVideo(convertJob(third), convertOptions());
+
+    const threadsOf = (run: ProgramRun) => {
+      const args = run.args;
+      const input = args.indexOf("-i");
+      return { decoder: args[args.lastIndexOf("-threads", input) + 1], x264: args[args.indexOf("-threads", input) + 1] };
+    };
+    const [firstRun, secondRun, thirdRun] = conversionRuns().filter((run) => run.args.includes("libx264"));
+    expect(firstStillConverting).toBe(true);
+    expect(threadsOf(firstRun)).toEqual({ decoder: "3", x264: "3" });
+    expect(threadsOf(secondRun)).toEqual({ decoder: "2", x264: "2" });
+    expect(threadsOf(thirdRun)).toEqual({ decoder: "3", x264: "3" });
+    for (const mediaId of [first, second, third]) expect((await readItem(mediaId)).conversion, mediaId).toBe("done");
+  }, 300_000);
+});
 
 describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
   it("is retried when the original was cut short (it passes ffprobe), still converting under its job's lease, and is corrupt for good on its third attempt", async () => {
@@ -797,6 +944,60 @@ describe.skipIf(!ffmpegSeven)("a conversion that fails", () => {
     expect(last).toBeInstanceOf(PermanentJobError);
     expect((last as PermanentJobError).reason).toBe("corrupt");
     expect(programs.runs.at(-1)?.args.slice(0, 3)).toEqual(["prlimit", `--as=${3 * 1024 ** 3}`, "--cpu=1:61"]);
+  });
+
+  it("is retried on its first two wall-clock time-outs in a row, and fails for good, too-slow, on the third; another failure between starts the count again (Ruling BH)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const mediaId = await readyVideo(await iphoneClip(), "mov");
+    const jobId = randomUUID();
+    // The conversion's own time limit, shortened: its ffmpeg is killed for running past it.
+    programs.conversionTimeoutMilliseconds = 50;
+    const attempt = (retryCount: number, previousOutput: Record<string, unknown> | null) =>
+      convertVideo({ ...convertJob(mediaId, retryCount, { id: jobId }), previousOutput }, convertOptions()).then(
+        () => null,
+        (failure: unknown) => failure as Error,
+      );
+    // As runJobs keeps a failure's facts in the job's output, for its next attempt.
+    const outputOf = (failure: Error | null) => ({
+      error: failure?.message,
+      ...(failure instanceof RetriedJobError ? failure.output : {}),
+    });
+
+    const first = await attempt(0, null);
+    expect(first).toBeInstanceOf(RetriedJobError);
+    expect(first?.message).toMatch(/^ffmpeg didn't finish with the video: it was killed \(timeout\) \(time-out 1 in a row/);
+    expect((first as RetriedJobError).output).toEqual({ consecutiveTimeouts: 1 });
+    const second = await attempt(1, outputOf(first));
+    expect(second).toBeInstanceOf(RetriedJobError);
+    expect((second as RetriedJobError).output).toEqual({ consecutiveTimeouts: 2 });
+    const third = await attempt(2, outputOf(second));
+    expect(third).toBeInstanceOf(PermanentJobError);
+    expect(third).toMatchObject({ reason: "too-slow" });
+    expect(third?.message).toContain("3 time-outs in a row");
+    // Still converting under its lease: media.dead marks it failed, too-slow, and the video keeps its poster.
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "converting", conversionJobId: jobId });
+
+    // A failure of another kind in between (the network, say): the count starts again.
+    const afterAnother = await attempt(3, { error: "Error: R2 refused the download" });
+    expect(afterAnother).toBeInstanceOf(RetriedJobError);
+    expect((afterAnother as RetriedJobError).output).toEqual({ consecutiveTimeouts: 1 });
+    expect(await readdir(scratchRoot)).toEqual([]);
+  });
+
+  it("fails at once, too-long, when the file's own frames are past the limit for its length (Ruling BG)", async () => {
+    // Under a second of 240 fps slow motion, against a 1 s limit: 216 frames, past 1 s × 60.
+    const slowMotion = await clip("slow.mp4", [
+      ...["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=240", "-t", "0.9"],
+      ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+    ]);
+    const mediaId = await readyVideo(slowMotion, "mp4", { durationSeconds: 0.9, width: 320, height: 240, videoCodec: "h264" });
+
+    const error = await failureOf(mediaId, 0, convertOptions({ convertMaxSeconds: 1 }));
+
+    expect(error).toBeInstanceOf(PermanentJobError);
+    expect(error).toMatchObject({ reason: "too-long" });
+    expect(error?.message).toMatch(/216 frames counted at its frame rate/);
+    expect(conversionRuns()).toEqual([]);
   });
 
   it("removes its scratch folder however it ends: done, a file ffmpeg refuses, or killed mid-conversion by its job's end", async () => {

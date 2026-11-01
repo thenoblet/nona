@@ -18,8 +18,10 @@ import { resetDb } from "../../test/db";
 import { dropBossSchema, startTestBoss } from "../../test/uploads";
 import {
   convertingConversionsQuery,
+  copyJobsQuery,
   createSweeper,
   liveJobsQuery,
+  missingCopiesQuery,
   queuedConversionsQuery,
   uploadedItemsQuery,
   withdrawalsQuery,
@@ -640,11 +642,117 @@ describe("the sweeper's withdrawals: hidden or deleted items whose public files 
     expect((await liveJobs(MEDIA_QUEUES.visibility, id)).map((job) => job.data)).toEqual([{ mediaId: id, action: "hide" }]);
   });
 
+  it("queues the withdrawal of a hidden video whose row still names its playable copy, or only that copy's key is left to withdraw", async () => {
+    const id = randomUUID();
+    const playable = `derived/${id}/0123456789abcdef/playable.mp4`;
+    // Its poster withdrawn by an attempt that stopped before its playable copy.
+    const named = await readyItem({ id, kind: "video", hiddenAt: minutesAgo(10), hiddenBy: "admin", derived: { playable } });
+    // A copy made for a video hidden while it was made: withdrawIfHidden recorded it, and its job is gone.
+    const recorded = await readyItem({ kind: "video", hiddenAt: minutesAgo(1), hiddenBy: "admin", derived: {}, withdrawingKeys: [playable] });
+
+    const result = await sweeper().sweep();
+
+    expect(result.requeuedWithdrawals).toBe(2);
+    for (const mediaId of [named, recorded]) {
+      expect((await liveJobs(MEDIA_QUEUES.visibility, mediaId)).map((job) => job.data), mediaId).toEqual([{ mediaId, action: "hide" }]);
+    }
+  });
+
   it("queues none twice: the next sweep finds the job it queued", async () => {
     await readyItem({ hiddenAt: minutesAgo(10), hiddenBy: "admin" });
 
     expect((await sweeper().sweep()).requeuedWithdrawals).toBe(1);
     expect((await sweeper().sweep()).requeuedWithdrawals).toBe(0);
+  });
+});
+
+describe("the sweeper's fifth step: videos whose playable copy's job was never sent (Task 14b)", () => {
+  /** A video as its poster job leaves one that plays as it is: ready, listed, its poster named, no copy. */
+  function readyVideo(values: Partial<typeof media.$inferInsert> = {}): Promise<string> {
+    const id = values.id ?? randomUUID();
+    return insertItem({
+      id,
+      kind: "video",
+      status: "ready",
+      listedAt: minutesAgo(60),
+      videoCodec: "h264",
+      browserPlayable: true,
+      derived: { "poster-thumb": `derived/${id}/0123456789abcdef/poster-thumb.webp` },
+      ...values,
+    });
+  }
+
+  /**
+   * A media.playable job for the item that has run and ended: `completed`, or `failed` for good,
+   * for this generation, or naming none (as one sent before jobs named theirs).
+   */
+  async function finishedCopyJob(mediaId: string, state: "completed" | "failed", generation?: number): Promise<void> {
+    await boss.send(MEDIA_QUEUES.playable, generation === undefined ? { mediaId } : { mediaId, generation }, { retryLimit: 0 });
+    const [job] = await boss.fetch<{ mediaId: string }>(MEDIA_QUEUES.playable);
+    if (state === "completed") await boss.complete(MEDIA_QUEUES.playable, job.id);
+    else await boss.fail(MEDIA_QUEUES.playable, job.id, { reason: "corrupt" });
+    const [finished] = await boss.findJobs(MEDIA_QUEUES.playable, { id: job.id });
+    expect(finished.state).toBe(state);
+  }
+
+  it("sends a ready H.264 or HEVC video with no copy and no copy job its job, once", async () => {
+    const h264 = await readyVideo();
+    const hevc = await readyVideo({ videoCodec: "hevc", browserPlayable: false, conversion: "queued" });
+
+    const result = await sweeper().sweep();
+
+    expect(result.requeuedCopies).toBe(2);
+    for (const id of [h264, hevc]) {
+      expect((await liveJobs(MEDIA_QUEUES.playable, id)).map((job) => job.data), id).toEqual([{ mediaId: id, generation: 0 }]);
+    }
+    expect((await sweeper().sweep()).requeuedCopies).toBe(0);
+  });
+
+  it("never sends again a copy whose job ran for its generation, completed (perhaps with no copy to make) or failed for good: no loop", async () => {
+    const completed = await readyVideo();
+    const failed = await readyVideo();
+    // A job sent before jobs named a generation counts for every one: no wave of copies after the deploy.
+    const unnamed = await readyVideo({ derivedGeneration: 2 });
+    await finishedCopyJob(completed, "completed", 0);
+    await finishedCopyJob(failed, "failed", 0);
+    await finishedCopyJob(unnamed, "completed");
+
+    expect((await sweeper().sweep()).requeuedCopies).toBe(0);
+    expect((await sweeper().sweep()).requeuedCopies).toBe(0);
+  });
+
+  it("sends the copy's job of a generation an unhide began, whose send was lost, though the generation before had one", async () => {
+    // Unhidden into generation 1 and ready again; its earlier generation's copy job ran.
+    const mediaId = await readyVideo({ derivedGeneration: 1 });
+    await finishedCopyJob(mediaId, "completed", 0);
+
+    expect((await sweeper().sweep()).requeuedCopies).toBe(1);
+    expect((await liveJobs(MEDIA_QUEUES.playable, mediaId)).map((job) => job.data)).toEqual([{ mediaId, generation: 1 }]);
+    expect((await sweeper().sweep()).requeuedCopies).toBe(0);
+  });
+
+  it("leaves a video with its copy, one with a copy job waiting, one listed under 5 minutes or over 6 days ago, a hidden or deleted one, a wish, a WebM, and a photo", async () => {
+    const id = randomUUID();
+    const leftAlone = [
+      await readyVideo({ id, derived: { playable: `derived/${id}/0123456789abcdef/playable.mp4` } }),
+      await readyVideo({ listedAt: minutesAgo(2) }),
+      await readyVideo({ listedAt: minutesAgo(7 * 24 * 60) }),
+      await readyVideo({ hiddenAt: minutesAgo(10), hiddenBy: "admin" }),
+      await readyVideo({ hiddenAt: minutesAgo(10), hiddenBy: "guest", removedByUploader: true }),
+      await readyVideo({ deletedAt: minutesAgo(10) }),
+      await readyVideo({ purpose: "wish" }),
+      await readyVideo({ videoCodec: "vp9", browserPlayable: false }),
+      // H.264 not every phone plays: its sound may be one an MP4 doesn't carry as it is, so its copy's job would make none.
+      await readyVideo({ videoCodec: "h264", browserPlayable: false, conversion: "queued" }),
+      await readyVideo({ kind: "photo", videoCodec: null }),
+      await readyVideo({ status: "uploaded", listedAt: null }),
+    ];
+    const waiting = await readyVideo();
+    await boss.send(MEDIA_QUEUES.playable, { mediaId: waiting });
+
+    expect((await sweeper().sweep()).requeuedCopies).toBe(0);
+    for (const mediaId of leftAlone) expect(await liveJobs(MEDIA_QUEUES.playable, mediaId), mediaId).toEqual([]);
+    expect(await liveJobs(MEDIA_QUEUES.playable, waiting)).toHaveLength(1);
   });
 });
 
@@ -730,6 +838,20 @@ describe("the sweeper's queries", () => {
     );
     const plan = await genericPlan(query);
     expect(plan).toMatch(/job_common_i14|job_i14/);
+    expect(plan).not.toContain("Seq Scan");
+  });
+
+  it("take videos with no playable copy oldest first, backwards along the album's own index, with no sort", async () => {
+    const plan = await genericPlan(missingCopiesQuery(1_000).toSQL());
+    expect(plan).toContain("media_album_cursor_idx");
+    expect(plan).not.toContain("Seq Scan");
+    expect(plan).not.toContain("Sort");
+  });
+
+  it("look up a batch's copy jobs, in any state, by queue on pg-boss's own index: no Seq Scan on media or on the jobs", async () => {
+    const plan = await genericPlan(new PgDialect().sqlToQuery(copyJobsQuery(BOSS_SCHEMA, [randomUUID(), randomUUID()])));
+    // pg-boss's (name, created_on) index: one queue's jobs, at most 7 days of them, filtered by item.
+    expect(plan).toMatch(/job_common_i15|job_i15/);
     expect(plan).not.toContain("Seq Scan");
   });
 

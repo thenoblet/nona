@@ -12,6 +12,7 @@ import { dbConfig, storageConfig } from "@/lib/env";
 import { PART_SIZE_BYTES } from "@/lib/media/limits";
 import { storageClient } from "@/lib/storage/client";
 import { manifestKey } from "@/lib/storage/keys";
+import { readManifest } from "@/lib/storage/manifest";
 import { abortMultipart } from "@/lib/storage/objects";
 import { resetDb } from "../../../../test/db";
 import { asBrowser, newCookieJar, type CookieJar } from "../../../../test/next-cookies";
@@ -29,7 +30,15 @@ import { jsonRequest, newFingerprint, routeContext } from "../../../../test/uplo
 // regression (a query per part, a lock) rather than a slow machine.
 
 vi.mock("next/headers", () => import("../../../../test/next-cookies"));
-vi.mock("next/server", () => ({ after: () => {}, connection: async () => {} }));
+// after() runs its task once the response has gone, as Next does: still inside the burst, so its CPU
+// work (the start's manifest write, Ruling AY) slows the other requests as it would on the server.
+const afterTasks = vi.hoisted(() => [] as Promise<unknown>[]);
+vi.mock("next/server", () => ({
+  after: (task: () => unknown) => {
+    afterTasks.push(new Promise((resolve) => setImmediate(resolve)).then(task));
+  },
+  connection: async () => {},
+}));
 vi.mock("@/lib/content/get", async () => {
   const { contentDefaults } = await import("@/lib/content/defaults");
   return { getSiteContent: async () => contentDefaults };
@@ -152,6 +161,7 @@ beforeEach(async () => {
 
 // Before the next test's reset, so every test's uploads and manifests are removed from MinIO.
 afterEach(async () => {
+  await Promise.allSettled(afterTasks.splice(0));
   const rows = await getDb()
     .select({ id: media.id, key: media.originalKey, uploadId: media.multipartUploadId })
     .from(media);
@@ -211,6 +221,10 @@ describe("the upload API under a burst", () => {
     expect(new Set(rows.map((row) => row.id))).toEqual(new Set(outcomes.map((outcome) => outcome.result.mediaId)));
     expect(new Set(rows.map((row) => row.fingerprint))).toEqual(new Set(bodies.map((body) => body.fingerprint)));
     for (const row of rows) expect(row.uploadId, row.id).toEqual(expect.any(String));
+    // Every manifest was written once the responses had gone.
+    await Promise.all(afterTasks.splice(0));
+    const manifests = await Promise.all(rows.map((row) => readManifest(row.id)));
+    expect(manifests.every((manifest) => manifest !== null)).toBe(true);
   }, 30_000);
 
   it("answers a start in under 200 ms at p95 apart from its R2 calls, when it isn't queued behind a burst", async () => {

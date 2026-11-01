@@ -822,7 +822,7 @@ describe("a file that isn't a photo the album takes (Review Focus 5)", () => {
     workers = await startQueueWorkers(
       boss,
       { [MEDIA_QUEUES.photo]: photoHandler(PHOTO_OPTIONS) },
-      { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
+      { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1, playable: 1 },
       { pollingIntervalSeconds: 0.5 },
     );
     const random = Buffer.concat([Buffer.from([0x13, 0x37, 0x00, 0x42]), randomBytes(20_000)]);

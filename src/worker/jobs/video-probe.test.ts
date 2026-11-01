@@ -61,11 +61,14 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
     expect(read).toEqual({
       streamIndex: 0,
       audioStreamIndex: 1,
+      audioCodec: "aac",
       codec: "h264",
       width: 1920,
       height: 1080,
+      rotation: 0,
       durationSeconds: 12.5,
       videoStreamSeconds: 12.5,
+      framesPerSecond: 30,
       hdr: null,
       audioCodecs: ["aac"],
       browserPlayable: true,
@@ -87,17 +90,18 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
   });
 
   it("turns the size by the display matrix's quarter turns, either way and from either ffmpeg's way of saying it", () => {
-    const rotations: [ProbeStream, number, number][] = [
-      [{ side_data_list: [{ side_data_type: "Display Matrix", rotation: -90 }] }, 1080, 1920],
-      [{ side_data_list: [{ side_data_type: "Display Matrix", rotation: 90 }] }, 1080, 1920],
-      [{ side_data_list: [{ side_data_type: "Display Matrix", rotation: 180 }] }, 1920, 1080],
-      [{ side_data_list: [{ side_data_type: "Display Matrix", rotation: -270 }] }, 1080, 1920],
+    // The turn is kept as ffprobe 7 gives it, counter-clockwise, for a clean copy's check (Task 14b).
+    const rotations: [ProbeStream, number, number, number][] = [
+      [{ side_data_list: [{ side_data_type: "Display Matrix", rotation: -90 }] }, 1080, 1920, -90],
+      [{ side_data_list: [{ side_data_type: "Display Matrix", rotation: 90 }] }, 1080, 1920, 90],
+      [{ side_data_list: [{ side_data_type: "Display Matrix", rotation: 180 }] }, 1920, 1080, 180],
+      [{ side_data_list: [{ side_data_type: "Display Matrix", rotation: -270 }] }, 1080, 1920, -270],
       // ffmpeg before 5 also gave it as a tag, in degrees clockwise.
-      [{ tags: { rotate: "270" } }, 1080, 1920],
-      [{ side_data_list: [{ side_data_type: "Mastering display metadata" }] }, 1920, 1080],
+      [{ tags: { rotate: "270" } }, 1080, 1920, -270],
+      [{ side_data_list: [{ side_data_type: "Mastering display metadata" }] }, 1920, 1080, 0],
     ];
-    for (const [changes, width, height] of rotations) {
-      expect(facts(probe([videoStream(changes)])), JSON.stringify(changes)).toMatchObject({ width, height });
+    for (const [changes, width, height, rotation] of rotations) {
+      expect(facts(probe([videoStream(changes)])), JSON.stringify(changes)).toMatchObject({ width, height, rotation });
     }
   });
 
@@ -171,6 +175,9 @@ describe("videoFactsFrom: what the album needs to know of a video", () => {
     });
     // A newer iPhone's Spatial Audio track (no codec ffmpeg 7.1 names, or one it can't decode) beside its stereo AAC.
     expect(facts(probe([videoStream(), audioStream("apac", 1), audioStream("aac", 2)])).audioStreamIndex).toBe(2);
+    expect(facts(probe([videoStream(), audioStream("apac", 1), audioStream("aac", 2)])).audioCodec).toBe("aac");
+    expect(facts(probe([videoStream(), audioStream("opus", 1)])).audioCodec).toBe("opus");
+    expect(facts(probe([videoStream()])).audioCodec).toBeNull();
     expect(facts(probe([videoStream(), { index: 1, codec_type: "audio" }, audioStream("aac", 2)])).audioStreamIndex).toBe(2);
     // Two AAC streams: the default one.
     expect(facts(probe([videoStream(), withDefault("aac", 1, false), withDefault("aac", 2, true)])).audioStreamIndex).toBe(2);

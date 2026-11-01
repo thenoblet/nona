@@ -9,6 +9,7 @@ import { describeError } from "@/lib/log-error";
 import { completeUpload, processingQueue } from "@/lib/media/completion";
 import { unfinishedUploads, type UploadCursor } from "@/lib/media/rows";
 import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch";
+import type { PlayableJobData } from "./jobs/playable";
 
 /*
  * The sweeper makes sure no item stays "processing" for good. At start-up and every 10 minutes it:
@@ -28,7 +29,13 @@ import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch
  * 4. (Task 12) queues media.visibility `hide` for items hidden, removed or deleted more than 5
  *    minutes ago whose row still names public files, and for items with a withdrawal under way
  *    (withdrawing_keys), when no job is withdrawing them (the app couldn't queue one, or it failed
- *    for good): a hidden item's files never stay public, or cached, for want of a job.
+ *    for good): a hidden item's files never stay public, or cached, for want of a job;
+ * 5. (Task 14b) queues media.playable for ready, visible album videos with no playable copy that
+ *    one is made for (HEVC, or H.264 every phone plays), listed between 5 minutes and 6 days ago,
+ *    that have never had a media.playable job for their generation, in any state: the poster
+ *    job's send was lost. pg-boss keeps a finished job 7 days, so a copy whose job finished without
+ *    one or failed for good is never sent again, and a lost send is sent once. A job that names no
+ *    generation (sent before jobs named one) counts for every generation.
  * Each step handles a bounded batch, so a sweep is never unbounded; a backlog clears over a few.
  */
 
@@ -40,6 +47,12 @@ export const SWEEP_EVERY_MILLISECONDS = 10 * 60_000;
 const STUCK_AFTER_MINUTES = 5;
 /** An upload older than this is no longer being sent by its phone. */
 const ABANDONED_AFTER_MINUTES = 30;
+/**
+ * Step 5 looks at videos listed within this many minutes: 6 days, inside the 7 days pg-boss keeps
+ * a finished media.playable job (its deleteAfterSeconds, stated in media-queues.ts), so a video
+ * whose copy's job ran is always seen to have had one.
+ */
+const COPY_WITHIN_MINUTES = 6 * 24 * 60;
 /** R2 aborts unfinished multipart uploads after 7 days; past that (and a day's margin) there is nothing left to finish. */
 const RESCUE_WITHIN_MINUTES = 8 * 24 * 60;
 /**
@@ -70,6 +83,8 @@ export type SweepResult = {
   rescuedUploads: number;
   /** Step 4: hidden or deleted items whose public files were sent to be withdrawn. */
   requeuedWithdrawals: number;
+  /** Step 5: videos whose playable copy's job was never sent, sent now. */
+  requeuedCopies: number;
 };
 
 export type SweeperOptions = {
@@ -180,6 +195,46 @@ export function withdrawalsQuery(limit: number, reader: Reader = getDb()) {
 }
 
 /**
+ * Up to `limit` ready, visible album videos a playable copy is made for (HEVC, or H.264 every phone
+ * plays: one that isn't may have sound an MP4 doesn't carry as it is, and gets none) with no
+ * playable copy, listed between 5 minutes and 6 days ago, oldest first, with their generation:
+ * read backwards along the album's own index (media_album_cursor_idx), whose condition the query
+ * repeats as literals, so no sort. Exported for its plan's test.
+ */
+export function missingCopiesQuery(limit: number, reader: Reader = getDb()) {
+  return reader
+    .select({ id: media.id, generation: media.derivedGeneration })
+    .from(media)
+    .where(
+      and(
+        eq(media.purpose, "album"),
+        sql`${media.status} = 'ready'`,
+        isNull(media.hiddenAt),
+        isNull(media.deletedAt),
+        eq(media.removedByUploader, false),
+        eq(media.kind, "video"),
+        sql`(${media.videoCodec} = 'hevc' or (${media.videoCodec} = 'h264' and ${media.browserPlayable}))`,
+        sql`${media.derived} ->> 'playable' is null`,
+        sql`${media.listedAt} > ${minutesAgo(COPY_WITHIN_MINUTES)}`,
+        sql`${media.listedAt} < ${minutesAgo(STUCK_AFTER_MINUTES)}`,
+      ),
+    )
+    .orderBy(asc(media.listedAt), asc(media.id))
+    .limit(limit);
+}
+
+/**
+ * These items' media.playable jobs in any state, live or finished (pg-boss keeps a finished one 7
+ * days), each item with the generation its job names (null for none), on pg-boss's index of a
+ * queue's jobs by name. Exported for its plan's test.
+ */
+export function copyJobsQuery(bossSchema: string, mediaIds: string[]): SQL {
+  return sql`select distinct job.data ->> 'mediaId' as "mediaId", job.data ->> 'generation' as "generation"
+    from ${sql.identifier(bossSchema)}.job as job
+    where job.name = ${MEDIA_QUEUES.playable} and ${inArray(sql`job.data ->> 'mediaId'`, mediaIds)}`;
+}
+
+/**
  * The query behind itemsWithLiveJobs, exported for its plan's test: these items' live jobs
  * (waiting, retrying or running) on these queues, read from pg-boss's job table. That is pg-boss
  * 12's own table (the parent of every queue's partition), whose index of live jobs covers name and
@@ -226,12 +281,31 @@ async function itemsWithLiveJobs(
 }
 
 /**
+ * Up to a batch of the candidates `readCandidates` finds that `readItemsWithJobs` says have no job.
+ * Both reads see one snapshot (a read-only, repeatable-read transaction), so a job that finishes
+ * between them, its item no longer stuck, can't look missing and have its item queued again. The
+ * transaction holds no locks and makes no network call; the jobs are queued after it ends.
+ */
+function amongWithoutJobs<TCandidate extends { id: string }>(
+  readCandidates: (reader: Reader) => Promise<TCandidate[]>,
+  readItemsWithJobs: (reader: Reader, candidates: TCandidate[]) => Promise<Set<string>>,
+): Promise<TCandidate[]> {
+  return getDb().transaction(
+    async (transaction) => {
+      const candidates = await readCandidates(transaction);
+      if (candidates.length === 0) return [];
+      const withJobs = await readItemsWithJobs(transaction, candidates);
+      return candidates.filter((candidate) => !withJobs.has(candidate.id)).slice(0, REQUEUE_BATCH_SIZE);
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
+}
+
+/**
  * Up to a batch of the candidates `readCandidates` finds that have no live job on these queues (at
- * least `minConvertPriorityOf` the candidate, for a conversion, when it gives one). Both reads see
- * one snapshot (a read-only, repeatable-read transaction), so a job that finishes between them, its
- * item no longer stuck, can't look missing and have its item queued again. The transaction holds
- * no locks and makes no network call; the jobs are queued after it ends. At most two reads of the
- * live jobs: one for each minimum priority the candidates have.
+ * least `minConvertPriorityOf` the candidate, for a conversion, when it gives one), in one snapshot
+ * (amongWithoutJobs). At most two reads of the live jobs: one for each minimum priority the
+ * candidates have.
  */
 function stuckAmong<TCandidate extends { id: string }>(
   bossSchema: string,
@@ -239,19 +313,14 @@ function stuckAmong<TCandidate extends { id: string }>(
   readCandidates: (reader: Reader) => Promise<TCandidate[]>,
   minConvertPriorityOf: (candidate: TCandidate) => number | undefined = () => undefined,
 ): Promise<TCandidate[]> {
-  return getDb().transaction(
-    async (transaction) => {
-      const candidates = await readCandidates(transaction);
-      const byMinPriority = Map.groupBy(candidates, minConvertPriorityOf);
-      const withJobs = new Set<string>();
-      for (const [minConvertPriority, group] of byMinPriority) {
-        const ids = group.map((candidate) => candidate.id);
-        for (const id of await itemsWithLiveJobs(transaction, bossSchema, queues, ids, minConvertPriority)) withJobs.add(id);
-      }
-      return candidates.filter((candidate) => !withJobs.has(candidate.id)).slice(0, REQUEUE_BATCH_SIZE);
-    },
-    { isolationLevel: "repeatable read", accessMode: "read only" },
-  );
+  return amongWithoutJobs(readCandidates, async (reader, candidates) => {
+    const withJobs = new Set<string>();
+    for (const [minConvertPriority, group] of Map.groupBy(candidates, minConvertPriorityOf)) {
+      const ids = group.map((candidate) => candidate.id);
+      for (const id of await itemsWithLiveJobs(reader, bossSchema, queues, ids, minConvertPriority)) withJobs.add(id);
+    }
+    return withJobs;
+  });
 }
 
 export function createSweeper(options: SweeperOptions) {
@@ -345,6 +414,33 @@ export function createSweeper(options: SweeperOptions) {
   }
 
   /**
+   * Step 5: ready videos with no playable copy whose copy's job was never sent (in any state), each
+   * sent media.playable once; one whose job ran, however it ended, is left as it is.
+   */
+  async function requeueCopies(): Promise<number> {
+    const neverSent = await amongWithoutJobs(
+      (reader) => missingCopiesQuery(CANDIDATE_BATCH_SIZE, reader),
+      async (reader, candidates) => {
+        const ids = candidates.map((candidate) => candidate.id);
+        const rows = await reader.execute<{ mediaId: string; generation: string | null }>(copyJobsQuery(bossSchema, ids));
+        const generationOf = new Map(candidates.map((candidate) => [candidate.id, String(candidate.generation)]));
+        // A job counts for its own generation, or, naming none, for every one.
+        return new Set(
+          rows.filter((row) => row.generation === null || row.generation === generationOf.get(row.mediaId)).map((row) => row.mediaId),
+        );
+      },
+    );
+    if (neverSent.length > 0) {
+      await boss.insert(
+        MEDIA_QUEUES.playable,
+        neverSent.map((item) => ({ data: { mediaId: item.id, generation: item.generation } satisfies PlayableJobData })),
+      );
+      for (const item of neverSent) console.log(`[worker] sweeper sent the playable copy's job of ${item.id}, which was never sent`);
+    }
+    return neverSent.length;
+  }
+
+  /**
    * Step 3 (Ruling W): one batch of unfinished uploads, each completed if R2 holds all of it. An
    * upload the uploads switch no longer allows (Ruling Z) is left exactly as it is: not aborted and
    * its row not deleted, since its original may exist already; R2's 7-day rule clears its parts.
@@ -385,7 +481,7 @@ export function createSweeper(options: SweeperOptions) {
     return { checked: uploads.length, rescued };
   }
 
-  /** One sweep: the four steps, each on its own, so one failing doesn't stop the others. */
+  /** One sweep: the five steps, each on its own, so one failing doesn't stop the others. */
   async function sweep(): Promise<SweepResult> {
     const result: SweepResult = {
       requeuedUploads: 0,
@@ -394,6 +490,7 @@ export function createSweeper(options: SweeperOptions) {
       checkedUploads: 0,
       rescuedUploads: 0,
       requeuedWithdrawals: 0,
+      requeuedCopies: 0,
     };
     try {
       result.requeuedUploads = await requeueUploads();
@@ -420,9 +517,16 @@ export function createSweeper(options: SweeperOptions) {
     } catch (error) {
       console.error("[worker] sweeper could not queue hidden items' withdrawals:", describeError(error));
     }
-    if (result.requeuedUploads > 0 || result.requeuedConversions > 0 || result.rescuedUploads > 0 || result.requeuedWithdrawals > 0) {
+    try {
+      result.requeuedCopies = await requeueCopies();
+    } catch (error) {
+      console.error("[worker] sweeper could not queue videos' playable copies:", describeError(error));
+    }
+    const queuedAnything =
+      result.requeuedUploads > 0 || result.requeuedConversions > 0 || result.rescuedUploads > 0 || result.requeuedWithdrawals > 0;
+    if (queuedAnything || result.requeuedCopies > 0) {
       console.log(
-        `[worker] sweep queued ${result.requeuedUploads} upload(s), ${result.requeuedConversions} conversion(s) and ${result.requeuedWithdrawals} withdrawal(s), and finished ${result.rescuedUploads} of ${result.checkedUploads} unfinished upload(s)`,
+        `[worker] sweep queued ${result.requeuedUploads} upload(s), ${result.requeuedConversions} conversion(s), ${result.requeuedWithdrawals} withdrawal(s) and ${result.requeuedCopies} playable copy(ies), and finished ${result.rescuedUploads} of ${result.checkedUploads} unfinished upload(s)`,
       );
     }
     return result;

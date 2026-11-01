@@ -64,6 +64,7 @@ const uploadColumns = {
   sizeBytes: media.sizeBytes,
   contentType: media.contentType,
   multipartUploadId: media.multipartUploadId,
+  partSizeBytes: media.partSizeBytes,
   startedAt: media.startedAt,
   status: media.status,
   failureReason: media.failureReason,
@@ -85,6 +86,8 @@ export type UploadRow = {
   sizeBytes: number;
   contentType: string;
   multipartUploadId: string | null;
+  /** Its parts' size, kept from its start (partSizeFor). */
+  partSizeBytes: number;
   startedAt: Date;
   status: MediaStatus;
   /** Why processing failed (`corrupt`, `unsupported-type`…), shown to its uploader; null otherwise. */
@@ -109,6 +112,8 @@ export type NewUpload = {
   sizeBytes: number;
   contentType: string;
   fileFingerprint: string | null;
+  /** The part size it goes up in (partSizeFor its size). */
+  partSizeBytes: number;
   startedAt: Date;
   capturedAt: Date | null;
 };
@@ -655,6 +660,66 @@ export async function markConversionDone(mediaId: string, leaseId: string, video
         eq(media.conversionJobId, leaseId),
       ),
     )
+    .returning(manifestColumns);
+  return row ?? null;
+}
+
+/*
+ * A video's clean playable copy (Task 14b): its original's own streams in an MP4 with no metadata
+ * but its capture time, `moov` first, made by the media worker's media.playable once its poster
+ * job has made it ready, and kept as `derived.playable`. Like the poster's files, it is the current
+ * generation's: a hide withdraws it, and an unhide's new poster job sends a new copy's job.
+ */
+
+/** A ready, visible album video with no playable copy yet: what media.playable makes one for. */
+function awaitsPlayableCopy(mediaId: string, derivedGeneration?: number) {
+  return and(
+    readyVideo(mediaId),
+    sql`${media.derived} ->> 'playable' is null`,
+    derivedGeneration === undefined ? undefined : eq(media.derivedGeneration, derivedGeneration),
+  );
+}
+
+/** What media.playable reads of its video when it starts. */
+export type VideoToCopy = {
+  originalKey: string;
+  /** The capture time the poster job settled on: the copy's creation_time. */
+  capturedAt: Date | null;
+  /** Which making of its derived files this is, part of the copy's key. */
+  derivedGeneration: number;
+};
+
+/**
+ * The video, if media.playable has a copy to make of it (Ruling AG): a ready, visible album video
+ * with none yet. Null for a copy made already (a second delivery), one not ready (an unhide sent it
+ * back to its poster job, whose own copy's job follows), hidden or deleted, a photo, a wish's
+ * recording, or no such id. One read on the primary key.
+ */
+export async function findVideoToCopy(mediaId: string): Promise<VideoToCopy | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .select({ originalKey: media.originalKey, capturedAt: media.capturedAt, derivedGeneration: media.derivedGeneration })
+    .from(media)
+    .where(awaitsPlayableCopy(mediaId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Names the video's playable copy (`derived.playable`), in one statement and only while it still
+ * wants one in the generation the copy was made for (awaitsPlayableCopy): a hide while the job
+ * worked, an unhide since it read the video, or another delivery that named its copy first, leaves
+ * it as it is. Returns the facts its manifest holds, or null when it changed nothing.
+ */
+export async function markPlayableCopy(
+  mediaId: string,
+  copy: { key: string; derivedGeneration: number },
+): Promise<MediaManifest | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .update(media)
+    .set({ derived: sql`${media.derived} || jsonb_build_object('playable', ${copy.key}::text)` })
+    .where(awaitsPlayableCopy(mediaId, copy.derivedGeneration))
     .returning(manifestColumns);
   return row ?? null;
 }

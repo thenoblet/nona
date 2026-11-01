@@ -2,10 +2,14 @@ import AwsS3, { type AwsS3Part, type AwsS3UploadParameters } from "@uppy/aws-s3"
 import Uppy, { type UppyFile } from "@uppy/core";
 import { createApiClient, type ApiAnswer, type ApiClient } from "./api";
 import { EventReporter } from "./events";
+import { readOnPick } from "./fingerprint";
 import {
   browserStorage,
   createPendingCancels,
   createStartedFiles,
+  setSendingHere,
+  stillSending,
+  stopSayingSending,
   type PendingCancels,
   type StartedFiles,
   type StorageLike,
@@ -13,6 +17,7 @@ import {
 import {
   completionOutcome,
   errorOutcome,
+  isUnreadable,
   OutcomeError,
   partsOutcome,
   probeOutcome,
@@ -20,10 +25,16 @@ import {
   type Outcome,
   type UploadSession,
 } from "./outcomes";
+import { browserPageGuard, type PageGuard } from "./page-guard";
 import { createPartPut, type PartPut, type PartPutResult } from "./part-put";
 import { PartUrlCache, type PartUrl } from "./presign-cache";
-import { createSentFiles, fingerprintFile, type SentFiles } from "./resume";
-import { UPLOAD_WORDS, type UploadFailure, type UploadStore } from "./state";
+import { createSentFiles, type SentFiles } from "./resume";
+import { isBusy, SLOW_SECONDS, UPLOAD_WORDS, type UploadFailure, type UploadStore } from "./state";
+import { TimeLeft } from "./time-left";
+
+// The floating progress circle rides this chunk (Ruling BE): it only shows while files send, and
+// files only send once this has loaded, so the album's first load never carries it.
+export { UploadCircle } from "../UploadCircle";
 
 /*
  * The uploader: every file a presigned multipart upload straight to R2, in the parts the server
@@ -40,18 +51,28 @@ import { UPLOAD_WORDS, type UploadFailure, type UploadStore } from "./state";
  *   localStorage until the server answers, and sent again on the next visit if it never does.
  * - Its upload() retries every failed file it still holds, its own way. A file leaves Uppy as soon
  *   as it succeeds or fails; Try again runs it through this same path.
- * - It signs each part with its own call. signPart reads presign-cache.ts, 20 parts a call.
+ * - It signs each part with its own call. signPart reads presign-cache.ts: the parts sent at once
+ *   on the first call (Ruling AY), then 20 parts a call.
  * - Its own part PUT hangs for good when the ETag can't be read, and never times out: the PUT is
  *   done by part-put.ts, which resolves without an ETag and drops a part after a minute stalled.
- * Files go two at a time and parts four at a time (Uppy's limit, across files). A part that fails
- * is retried by Uppy with backoff; a file whose trouble outlasts that (no signal for a while) tries
- * again by itself for about five minutes (offline time not counted), then waits for the guest's
- * Try again. A file shows "Added" only once its complete answers that the server verified it.
+ * Files go two at a time and parts six at a time (Uppy's limit, shared by the files: its queue
+ * serves the first file's parts first, so a lone big video, or the first of two, gets all six;
+ * Noblet, 31 Oct). A part that fails is retried by Uppy with backoff; a file whose trouble outlasts
+ * that (no signal for a while) tries again by itself for about five minutes (offline time not
+ * counted), then waits for the guest's Try again. A file shows "Added" only once its complete
+ * answers that the server verified it.
+ *
+ * Each file is read for its fingerprint the moment it is picked, alongside the guest call (Ruling
+ * BA). A file the phone can no longer read (it changed after the pick: WhatsApp finishing it) says
+ * so, with Choose again, whether that shows at the read or while its parts go. While files send,
+ * the page is guarded (the screen kept awake, a warning before leaving) and the time left is
+ * measured, for a big or slow upload's calm notice (Ruling BE).
  */
 
 /** Files sent at once (gate A: two at a time). */
 export const FILES_IN_FLIGHT = 2;
-const PARTS_IN_FLIGHT = 4;
+/** Parts sent at once, across the files on their way (Noblet, 31 Oct). */
+export const PARTS_IN_FLIGHT = 6;
 
 export type UploadTimings = {
   /** Uppy's waits before each retry of a part's PUT, or of signing it. */
@@ -62,6 +83,8 @@ export type UploadTimings = {
   cancelRetryDelays: number[];
   /** How long a file may take to open for its fingerprint (one in the cloud downloads first). */
   fingerprintTimeoutMs: number;
+  /** How often the bytes going out are measured, for the time left. */
+  timeLeftSampleMs: number;
 };
 
 export const UPLOAD_TIMINGS: UploadTimings = {
@@ -69,6 +92,7 @@ export const UPLOAD_TIMINGS: UploadTimings = {
   fileRetryDelays: [3_000, 10_000, 20_000, 30_000, 45_000, 60_000, 60_000, 60_000],
   cancelRetryDelays: [2_000, 5_000, 10_000, 20_000],
   fingerprintTimeoutMs: 60_000,
+  timeLeftSampleMs: 1_000,
 };
 
 /** Each call's timeout. A complete may take the server up to 40 s (its R2 budget). */
@@ -93,12 +117,16 @@ const browserEnvironment: EngineEnvironment = {
   isOffline: () => typeof navigator !== "undefined" && navigator.onLine === false,
 };
 
-/** What a test can stand in for: the site's API, the part PUT, storage, the network's state and the waits. */
+/**
+ * What a test can stand in for: the site's API, the part PUT, storage, the network's state, the
+ * page's guard (wake lock and leave warning) and the waits.
+ */
 export type EngineDependencies = {
   api?: ApiClient;
   putPart?: PartPut;
   storage?: StorageLike | null;
   environment?: EngineEnvironment;
+  pageGuard?: PageGuard;
   timings?: Partial<UploadTimings>;
 };
 
@@ -125,9 +153,26 @@ type Run = {
   cancelInFlight: boolean;
   /** A Cancel went to the server: from then on, the Cancel's outcome decides what the card shows. */
   cancelSent: boolean;
-  /** Asking the server about a file this phone sent before: a Cancel now only stops this copy. */
+  /**
+   * Asking the server about a file this phone sent before, until it answers that the upload is
+   * unfinished or gone: a Cancel meanwhile only stops this copy, even while a question that got no
+   * answer (a 5xx, a 429, a dropped connection) waits to be asked again.
+   */
   probing: boolean;
+  /** Checking whether a part that failed did so because the file changed on the phone. */
+  checkingReadable: boolean;
+  /** Settles once this attempt has handed the file to Uppy, or ended: a bigger file waits for it. */
+  handedOver: { promise: Promise<void>; settle: () => void };
 };
+
+/** A promise and what settles it. */
+function handOver(): Run["handedOver"] {
+  let settle: () => void = () => {};
+  const promise = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  return { promise, settle };
+}
 
 /** What a Cancel's request came to: done; refused (403: the upload isn't this browser's guest's any more); or no answer. */
 type CancelResult = "done" | "refused" | "unanswered";
@@ -175,6 +220,9 @@ class UploadEngine implements Engine {
   readonly #sentFiles: SentFiles;
   readonly #startedFiles: StartedFiles;
   readonly #pendingCancels: PendingCancels;
+  readonly #storage: StorageLike | null;
+  readonly #pageGuard: PageGuard;
+  readonly #timeLeft = new TimeLeft();
   readonly #uppy: Uppy<FileMeta, FileBody>;
   readonly #runs = new Map<string, Run>();
   readonly #active = new Set<string>();
@@ -182,6 +230,15 @@ class UploadEngine implements Engine {
   readonly #onlineWaiters: (() => void)[] = [];
   #guest: Promise<void> | null = null;
   #pumpTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Every byte sent from this page, across files (it only grows): what the time left is measured from. */
+  #sentBytes = 0;
+  #timeLeftTimer: ReturnType<typeof setInterval> | undefined;
+  /** What the card was last told of the time left (no words while there is no time to give). */
+  #toldTimeLeft: { words: string | null; slow: boolean } | null = null;
+  /** Whether the page guard was last told files are sending. */
+  #guarding = false;
+  /** When this page last told other tabs it is still sending. */
+  #lastSaidSendingAt = 0;
 
   constructor(store: UploadStore, options: EngineOptions, dependencies: EngineDependencies) {
     this.#store = store;
@@ -194,6 +251,8 @@ class UploadEngine implements Engine {
     this.#sentFiles = createSentFiles(storage);
     this.#startedFiles = createStartedFiles(storage);
     this.#pendingCancels = createPendingCancels(storage);
+    this.#storage = storage;
+    this.#pageGuard = dependencies.pageGuard ?? browserPageGuard();
     this.#events = new EventReporter(this.#api, this.#environment.onPageHide);
     this.#uppy = new Uppy<FileMeta, FileBody>({ id: "nona-album", autoProceed: false, allowMultipleUploadBatches: true });
     this.#uppy.use(AwsS3<FileMeta, FileBody>, {
@@ -224,6 +283,7 @@ class UploadEngine implements Engine {
       const item = this.#store.get(run.itemId);
       if (!item || (item.status !== "sending" && item.status !== "retrying")) return;
       const moved = sent > run.bytesSent;
+      if (moved) this.#sentBytes += sent - run.bytesSent;
       run.bytesSent = Math.max(run.bytesSent, sent);
       const percent = Math.max(item.percent, Math.floor((run.bytesSent / progress.bytesTotal) * 100));
       this.#store.update(run.itemId, { percent, status: moved ? "sending" : item.status });
@@ -234,6 +294,75 @@ class UploadEngine implements Engine {
       for (const waiter of this.#onlineWaiters.splice(0)) waiter();
       this.pump();
     });
+    this.#store.subscribe(() => this.#watchSending());
+    this.#watchSending();
+    this.#environment.onPageHide(() => stopSayingSending(this.#storage));
+  }
+
+  // ---------- While files send (Ruling BE) ----------
+
+  /** Whether any file on the card is on its way. */
+  #sending(): boolean {
+    return this.#store.getSnapshot().items.some((item) => item.status !== "cancelling" && isBusy(item));
+  }
+
+  /**
+   * Guards the page while files send, and measures the time left; lets both go once none does.
+   * Says which uploads it has on their way, so the notice on return (in this page, or another tab)
+   * never calls one of them unfinished.
+   */
+  #watchSending(): void {
+    const sending = this.#sending();
+    if (sending !== this.#guarding) {
+      this.#guarding = sending;
+      this.#pageGuard.update(sending);
+    }
+    const onTheirWay = this.#store
+      .getSnapshot()
+      .items.flatMap((item) => (item.mediaId && item.status !== "cancelling" && isBusy(item) ? [item.mediaId] : []));
+    setSendingHere(this, onTheirWay, this.#storage);
+    if (sending && this.#timeLeftTimer === undefined) {
+      this.#timeLeftTimer = setInterval(() => this.#measureTimeLeft(), this.#timings.timeLeftSampleMs);
+      this.#measureTimeLeft();
+    } else if (!sending && this.#timeLeftTimer !== undefined) {
+      clearInterval(this.#timeLeftTimer);
+      this.#timeLeftTimer = undefined;
+      this.#timeLeft.reset();
+      this.#toldTimeLeft = null;
+    }
+  }
+
+  /**
+   * Measures the bytes going out against those still to send, and tells the card the time left
+   * when its words change, or once it first passes a minute (the card's slow notice). While nothing
+   * can move (a part retrying, the phone offline, no byte out for a few seconds) and once nothing is
+   * left to send, the card is told there is no time to give, rather than a guess drawn out of a
+   * stall; only an estimate made while bytes move can call the upload slow.
+   */
+  #measureTimeLeft(): void {
+    const now = Date.now();
+    const onTheirWay = this.#store.getSnapshot().items.filter((item) => item.status !== "cancelling" && isBusy(item));
+    const estimate = this.#timeLeft.read(now, {
+      sentBytes: this.#sentBytes,
+      remainingBytes: onTheirWay.reduce((total, item) => total + item.file.size * (1 - item.percent / 100), 0),
+      held: this.#environment.isOffline() || onTheirWay.some((item) => item.status === "retrying"),
+    });
+    if (now - this.#lastSaidSendingAt >= 5_000) {
+      this.#lastSaidSendingAt = now;
+      stillSending(this.#storage, now);
+    }
+    const told = this.#toldTimeLeft;
+    if (!estimate) {
+      if (told?.words) {
+        this.#toldTimeLeft = { words: null, slow: told.slow };
+        this.#store.setTimeLeft(null);
+      }
+      return;
+    }
+    const slow = estimate.seconds > SLOW_SECONDS || (told?.slow ?? false);
+    if (told?.words === estimate.words && told.slow === slow) return;
+    this.#toldTimeLeft = { words: estimate.words, slow };
+    this.#store.setTimeLeft(estimate);
   }
 
   // ---------- The queue ----------
@@ -243,7 +372,9 @@ class UploadEngine implements Engine {
     if (this.#environment.isOffline()) return;
     const now = Date.now();
     let wakeAt = Number.POSITIVE_INFINITY;
-    for (const item of this.#store.getSnapshot().items) {
+    // Smallest first: a photo picked with a big video is Added in moments, not after the video.
+    const waiting = [...this.#store.getSnapshot().items].sort((first, second) => first.file.size - second.file.size);
+    for (const item of waiting) {
       if (this.#active.size >= FILES_IN_FLIGHT) break;
       if (this.#active.has(item.id) || (item.status !== "queued" && item.status !== "retrying")) continue;
       const run = this.#runs.get(item.id);
@@ -270,8 +401,9 @@ class UploadEngine implements Engine {
     if (run) {
       run.autoRetries = 0;
       run.retryAt = 0;
-      // A file the phone couldn't read, or took too long to open, is read afresh.
-      if (item.failure.reason === UPLOAD_WORDS.unreadable || item.failure.reason === UPLOAD_WORDS.slowToOpen) run.fingerprint = null;
+      // A file that took too long to open is read afresh. (One that changed after it was picked has
+      // no Try again: only picking it again can help.)
+      if (item.failure.reason === UPLOAD_WORDS.slowToOpen) run.fingerprint = null;
     }
     this.#store.update(itemId, { status: "queued", failure: null });
     this.pump();
@@ -352,6 +484,8 @@ class UploadEngine implements Engine {
         cancelInFlight: false,
         cancelSent: false,
         probing: false,
+        checkingReadable: false,
+        handedOver: handOver(),
       };
       this.#runs.set(itemId, run);
     }
@@ -378,11 +512,17 @@ class UploadEngine implements Engine {
     const run = this.#runOf(itemId, item.file);
     run.retryAt = 0;
     run.partOfUrl.clear();
+    run.handedOver = handOver();
     this.#store.update(itemId, { status: "sending", failure: null });
     try {
+      // Read alongside the guest call, not after it: the sooner, the smaller the window for the
+      // file to change on the phone (Ruling BA). (The pick started this read; it is shared.)
+      const fingerprinting = run.fingerprint === null ? this.#fingerprint(run.file) : null;
+      // Awaited below; a guest call that fails first leaves it for the next try.
+      fingerprinting?.catch(() => {});
       await this.#ensureGuest();
       if (run.cancelled) return;
-      run.fingerprint ??= await this.#fingerprint(run.file);
+      if (fingerprinting) run.fingerprint = await fingerprinting;
       if (run.cancelled) return;
       if (this.#isDuplicate(run)) {
         // The same file picked twice while the first is still on its way: the first one carries it.
@@ -394,17 +534,20 @@ class UploadEngine implements Engine {
       if (run.cancelled) return;
       await this.#start(run);
       if (run.cancelled) return;
+      await this.#smallerFilesHandedOver(run);
+      if (run.cancelled) return;
       await this.#send(run);
       if (run.cancelled) return;
       this.#added(run);
     } catch (error) {
       if (run.cancelled) return;
-      const outcome = errorOutcome(error);
+      const outcome = errorOutcome(error, { kind: item.kind, name: run.file.name });
       if (outcome.kind === "cancelled") return;
       if (outcome.kind === "added") this.#added(run);
       else if (outcome.kind === "failed") this.#failed(run, outcome);
       else this.#retryLater(run, outcome);
     } finally {
+      run.handedOver.settle();
       this.#active.delete(itemId);
       // Cancelled before the server knew of it, and no Cancel sent: nothing to show. A Cancel that
       // was sent decides for itself, its failure staying on the card.
@@ -414,6 +557,18 @@ class UploadEngine implements Engine {
       }
       this.pump();
     }
+  }
+
+  /**
+   * Waits until every smaller file on its way has been handed to Uppy (or has ended). Uppy serves
+   * the parts of the file it was given first, so a big video handed over first would hold a photo
+   * started beside it at 0% until most of the video had gone; a smaller file never waits on a bigger.
+   */
+  async #smallerFilesHandedOver(run: Run): Promise<void> {
+    const smaller = [...this.#runs.values()].filter(
+      (other) => other !== run && this.#active.has(other.itemId) && other.file.size < run.file.size && other.uppyFileId === null,
+    );
+    await Promise.all(smaller.map((other) => other.handedOver.promise));
   }
 
   /** Awaits POST /api/guest once for the page, before any start, so a first batch makes one guest. */
@@ -432,7 +587,10 @@ class UploadEngine implements Engine {
     return this.#guest;
   }
 
-  /** The file's fingerprint, or a plain failure (with Try again) when it takes over a minute to open. */
+  /**
+   * The file's fingerprint (the read its pick started, shared), or a plain failure (with Try again)
+   * when it takes over a minute to open.
+   */
   #fingerprint(file: File): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(
@@ -442,7 +600,7 @@ class UploadEngine implements Engine {
           ),
         this.#timings.fingerprintTimeoutMs,
       );
-      fingerprintFile(file).then(
+      readOnPick(file).then(
         (fingerprint) => {
           clearTimeout(timer);
           resolve(fingerprint);
@@ -477,21 +635,25 @@ class UploadEngine implements Engine {
   async #settledBefore(run: Run): Promise<boolean> {
     const fingerprint = run.fingerprint as string;
     const mediaId = this.#sentFiles.find(run.file.size, fingerprint);
-    if (!mediaId) return false;
-    this.#store.update(run.itemId, { mediaId });
-    run.probing = true;
-    let answer: ApiAnswer;
-    try {
-      answer = await this.#api.request(`/api/uploads/${mediaId}/complete`, {
-        method: "POST",
-        body: { parts: [] },
-        timeoutMs: TIMEOUTS.complete,
-      });
-    } finally {
+    if (!mediaId) {
+      // Nothing to ask about (any more): this copy is its own upload from here.
       run.probing = false;
+      return false;
     }
+    this.#store.update(run.itemId, { mediaId });
+    // Asked about until the server answers: a question that gets no answer (thrown, or a 5xx or 429
+    // below) leaves the run asked about while it waits to ask again, so a Cancel meanwhile only
+    // stops this copy and never takes the photo already in the album out (Task 13's parked minor).
+    run.probing = true;
+    const answer = await this.#api.request(`/api/uploads/${mediaId}/complete`, {
+      method: "POST",
+      body: { parts: [] },
+      timeoutMs: TIMEOUTS.complete,
+    });
     if (run.cancelled) return true;
     const outcome = probeOutcome(answer);
+    if (outcome.kind === "retry") throw new OutcomeError(outcome);
+    run.probing = false;
     switch (outcome.kind) {
       case "added":
         this.#added(run);
@@ -499,8 +661,6 @@ class UploadEngine implements Engine {
       case "failed":
         this.#failed(run, outcome);
         return true;
-      case "retry":
-        throw new OutcomeError(outcome);
       case "forget":
         // Gone, or removed by the guest, who picking it again wants it back: send it afresh.
         this.#sentFiles.forget(run.file.size, fingerprint);
@@ -549,15 +709,18 @@ class UploadEngine implements Engine {
       throw new OutcomeError(failedOutcome("unexpected-answer", { reason: UPLOAD_WORDS.notSent, hint: null, canRetry: true }));
     }
     // Nothing in R2 yet (a new upload, or one started again after it expired): the bar starts again.
-    if (session.uploadedParts.length === 0) {
-      run.bytesSent = 0;
-      this.#store.update(run.itemId, { percent: 0 });
-    }
+    // Carried on, it starts from what R2 holds: Uppy counts those parts in its first progress, which
+    // must not read as bytes sent just now (the time left would think the connection flew).
+    const heldBytes = session.uploadedParts.reduce((total, part) => total + part.size, 0);
+    run.bytesSent = session.uploadedParts.length === 0 ? 0 : Math.max(run.bytesSent, heldBytes);
+    this.#store.update(run.itemId, {
+      mediaId: session.mediaId,
+      percent: Math.min(99, Math.floor((run.bytesSent / Math.max(1, run.file.size)) * 100)),
+    });
     run.session = session;
     run.startParts = session.uploadedParts;
     run.partUrls = this.#partUrlsFor(run, session.uploadedParts.map((part) => part.partNumber));
-    this.#store.update(run.itemId, { mediaId: session.mediaId });
-    this.#startedFiles.record(run.file.size, run.fingerprint as string, session.mediaId);
+    this.#startedFiles.record(run.file.size, run.fingerprint as string, session.mediaId, { kind: item.kind });
     if (run.cancelled) void this.#cancelOnServer(run, session.mediaId);
   }
 
@@ -566,6 +729,8 @@ class UploadEngine implements Engine {
     return new PartUrlCache({
       partCount: session.partCount,
       uploadedParts,
+      // The first call signs only the parts sent at once (Ruling AY).
+      firstBatch: PARTS_IN_FLIGHT,
       fetchUrls: async (partNumbers, signal) => {
         const answer = await this.#api.request(`/api/uploads/${session.mediaId}/parts`, {
           method: "POST",
@@ -609,6 +774,7 @@ class UploadEngine implements Engine {
       this.#uppy.setFileState(fileId, { s3Multipart: { uploadId: session.uploadId, key: session.key } } as Partial<EngineFile>);
       // Only the file just added is waiting, so this upload() takes it alone.
       this.#uppy.upload().catch(() => {});
+      run.handedOver.settle();
     });
   }
 
@@ -707,6 +873,28 @@ class UploadEngine implements Engine {
         elapsedMs: Math.round(elapsedMs),
       },
     });
+    if (status === 0 && !failure?.stalled) void this.#checkStillReadable(run);
+  }
+
+  /**
+   * A part whose connection dropped: was it the file? One that changed on the phone after it was
+   * picked fails every PUT as a dropped connection, and would retry for minutes; a one-byte read
+   * tells, and then the file says it changed, with Choose again (Ruling BA).
+   */
+  async #checkStillReadable(run: Run): Promise<void> {
+    if (run.checkingReadable) return;
+    run.checkingReadable = true;
+    try {
+      await run.file.slice(0, 1).arrayBuffer();
+    } catch (error) {
+      const item = this.#store.get(run.itemId);
+      if (!run.cancelled && item && isUnreadable(error)) {
+        const outcome = errorOutcome(error, { kind: item.kind, name: run.file.name });
+        if (outcome.kind === "failed") this.#giveUp(run, new OutcomeError(outcome));
+      }
+    } finally {
+      run.checkingReadable = false;
+    }
   }
 
   /**
@@ -743,7 +931,8 @@ class UploadEngine implements Engine {
       kind: "failed",
       mediaId: run.session?.mediaId,
       reason: outcome.code,
-      detail: { online: !this.#environment.isOffline() },
+      // A read that failed says why (its error's name and short words) and which read it was.
+      detail: { online: !this.#environment.isOffline(), ...outcome.detail },
     });
     if (!outcome.failure.canRetry) {
       if (run.fingerprint) this.#startedFiles.finish(run.file.size, run.fingerprint);

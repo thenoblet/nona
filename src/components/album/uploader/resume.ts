@@ -1,36 +1,16 @@
 /*
  * What lets a file carry on rather than start again:
- * - its fingerprint, which the upload API matches to find this guest's unfinished upload of the same
- *   file, renamed or not: a sha-256 of its size, first MB and last MB, read in two 1 MB slices, so a
- *   2 GB video is never read into memory;
+ * - its fingerprint (fingerprint.ts), which the upload API matches to find this guest's unfinished
+ *   upload of the same file, renamed or not;
  * - the files this phone has asked the server to complete, and which upload each went to, kept in
  *   localStorage. When a complete's answer is lost (the connection drops as it comes back), the
  *   server has the file but the phone doesn't know: picked again, the file is asked about rather
  *   than sent twice (the API only resumes unfinished uploads, so a start would send it again).
  */
 
-const MEBIBYTE = 1024 * 1024;
-
-async function bytesOf(file: Blob, start: number, end: number): Promise<Uint8Array> {
-  return new Uint8Array(await file.slice(start, end).arrayBuffer());
-}
-
-/** The file's fingerprint, as the upload API takes it: sha-256 hex of `<size>:`, the first MB and the last MB. */
-export async function fingerprintFile(file: Blob): Promise<string> {
-  const { size } = file;
-  const head = await bytesOf(file, 0, Math.min(MEBIBYTE, size));
-  const tail = await bytesOf(file, Math.max(0, size - MEBIBYTE), size);
-  const label = new TextEncoder().encode(`${size}:`);
-  const joined = new Uint8Array(label.length + head.length + tail.length);
-  joined.set(label, 0);
-  joined.set(head, label.length);
-  joined.set(tail, label.length + head.length);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", joined));
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 import { browserStorage, createStartedFiles, type StorageLike } from "./local-records";
 
+export { fingerprintFile } from "./fingerprint";
 export type { StorageLike } from "./local-records";
 
 export type SentFiles = {

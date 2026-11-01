@@ -24,7 +24,7 @@ import {
   recordEvent,
   type UploadOptions,
 } from "./completion";
-import { PART_SIZE_BYTES, partCount, partSizeOf } from "./limits";
+import { partCount, partSizeFor, partSizeOf } from "./limits";
 import { syncManifest } from "./manifest-sync";
 import { attachMultipartUpload, insertUpload, type UploadRow } from "./rows";
 
@@ -73,27 +73,28 @@ export type UploadSession = {
   uploadedParts: UploadedPart[];
 };
 
+/** The upload's session, in the parts it started with (8 or 16 MiB, kept on its row). */
 function toSession(upload: UploadRow, uploadId: string, uploadedParts: UploadedPart[]): UploadSession {
   return {
     mediaId: upload.id,
     uploadId,
     key: upload.originalKey,
-    partSize: PART_SIZE_BYTES,
-    partCount: partCount(upload.sizeBytes),
+    partSize: upload.partSizeBytes,
+    partCount: partCount(upload.sizeBytes, upload.partSizeBytes),
     uploadedParts,
   };
 }
 
 /**
- * Every part of an upload R2 has already joined into its original. The ETags are gone with the
- * multipart upload, so they are empty: the phone, finding nothing left to send, completes, and
- * that answers at once.
+ * Every part of an upload R2 has already joined into its original, in its own part size. The
+ * ETags are gone with the multipart upload, so they are empty: the phone, finding nothing left to
+ * send, completes, and that answers at once.
  */
-function everyPart(sizeBytes: number): UploadedPart[] {
-  return Array.from({ length: partCount(sizeBytes) }, (_, index) => ({
-    partNumber: index + 1,
+function everyPart(upload: Pick<UploadRow, "sizeBytes" | "partSizeBytes">): UploadedPart[] {
+  return Array.from({ length: partCount(upload.sizeBytes, upload.partSizeBytes) }, (_part, partIndex) => ({
+    partNumber: partIndex + 1,
     etag: "",
-    size: partSizeOf(sizeBytes, index + 1),
+    size: partSizeOf(upload.sizeBytes, partIndex + 1, upload.partSizeBytes),
   }));
 }
 
@@ -108,33 +109,27 @@ async function partsSoFar(upload: UploadRow, uploadId: string, options: UploadOp
     parts = await listUploadedParts(upload.originalKey, uploadId, { signal: options.signal });
   } catch (error) {
     if (errorName(error) !== "NoSuchUpload") throw error;
-    return (await finishIfOriginalExists(upload, options)) === "uploaded" ? everyPart(upload.sizeBytes) : null;
+    return (await finishIfOriginalExists(upload, options)) === "uploaded" ? everyPart(upload) : null;
   }
   if (bytesHeld(parts) <= upload.sizeBytes) return parts;
   await discardOverfilled(upload, uploadId, options);
   return null;
 }
 
+/** How long the start's manifest write may take, after the response (its R2 calls have their own 15 s each). */
+const START_MANIFEST_BUDGET_MILLISECONDS = 30_000;
+
 /**
- * Starts the original's multipart upload, with its write-once metadata, and writes its manifest
- * (through syncManifest, as every manifest write goes, from the facts the new row has); then records
- * the upload id on the row. If another request recorded one first (two re-picks at once), ours is
- * dropped and theirs used.
+ * Writes a new upload's manifest (through syncManifest, as every manifest write goes) from the facts
+ * the new row has. It runs after the start's response (Ruling AY): the phone doesn't wait for it,
+ * and a burst of starts shares the CPU its signing takes with no one's answer. A write that lands
+ * after the guest cancelled is undone by syncManifest's own check (the row is gone, so the manifest
+ * goes too). One that fails is logged: the worker writes the manifest again once the item is ready,
+ * and nothing but a rebuild from R2 reads it.
  */
-async function beginMultipart(upload: UploadRow, signal: AbortSignal | undefined): Promise<string> {
-  const [uploadId] = await Promise.all([
-    startMultipart(
-      upload.originalKey,
-      upload.contentType,
-      {
-        guestId: upload.guestId,
-        uploaderName: upload.uploaderName ?? "",
-        originalFilename: upload.originalFilename,
-        startedAt: upload.startedAt,
-      },
-      { signal },
-    ),
-    syncManifest(upload.id, {
+async function writeStartManifest(upload: UploadRow): Promise<void> {
+  try {
+    await syncManifest(upload.id, {
       known: {
         celebration: upload.celebration,
         celebrationSetByAdmin: false,
@@ -143,9 +138,32 @@ async function beginMultipart(upload: UploadRow, signal: AbortSignal | undefined
         removedByUploader: false,
         deletedAt: null,
       },
-      signal,
-    }),
-  ]);
+      signal: AbortSignal.timeout(START_MANIFEST_BUDGET_MILLISECONDS),
+    });
+  } catch (error) {
+    console.error(`[uploads] ${upload.id}'s manifest wasn't written at its start; the worker writes it once ready:`, describeError(error));
+  }
+}
+
+/**
+ * Starts the original's multipart upload, with its write-once metadata, then records the upload id
+ * on the row; the manifest is written after the response. If another request recorded an upload id
+ * first (two re-picks at once), ours is dropped and theirs used.
+ */
+async function beginMultipart(upload: UploadRow, options: UploadOptions): Promise<string> {
+  const { signal } = options;
+  const uploadId = await startMultipart(
+    upload.originalKey,
+    upload.contentType,
+    {
+      guestId: upload.guestId,
+      uploaderName: upload.uploaderName ?? "",
+      originalFilename: upload.originalFilename,
+      startedAt: upload.startedAt,
+    },
+    { signal },
+  );
+  options.defer(() => writeStartManifest(upload));
   const kept = await attachMultipartUpload(upload.id, uploadId);
   if (kept === uploadId) return uploadId;
   await abortMultipart(upload.originalKey, uploadId, { signal }).catch((error) =>
@@ -173,9 +191,10 @@ export type NewUploadRequest = {
 };
 
 /**
- * Starts a new upload: its row (grouped by when it was taken, else when it started), then its
- * multipart upload and manifest. If R2 fails, the row is removed so nothing is left half-made; if
- * that fails too, the row (with no upload id) is carried on by the next re-pick of the file.
+ * Starts a new upload: its row (grouped by when it was taken, else when it started, and in parts
+ * of the size its own size takes), then its multipart upload; its manifest follows the response.
+ * If R2 fails, the row is removed so nothing is left half-made; if that fails too, the row (with
+ * no upload id) is carried on by the next re-pick of the file.
  */
 export async function createUpload(request: NewUploadRequest, options: UploadOptions): Promise<UploadSession> {
   const mediaId = randomUUID();
@@ -193,11 +212,12 @@ export async function createUpload(request: NewUploadRequest, options: UploadOpt
     sizeBytes: request.sizeBytes,
     contentType: request.contentType,
     fileFingerprint: request.fingerprint,
+    partSizeBytes: partSizeFor(request.sizeBytes),
     startedAt,
     capturedAt: request.capturedAt,
   });
   try {
-    return toSession(upload, await beginMultipart(upload, options.signal), []);
+    return toSession(upload, await beginMultipart(upload, options), []);
   } catch (error) {
     await deleteUnfinished(upload.id, options.signal).catch((cleanupError) =>
       console.error("[uploads] could not remove the row of a start that failed:", describeError(cleanupError)),
@@ -207,15 +227,15 @@ export async function createUpload(request: NewUploadRequest, options: UploadOpt
 }
 
 /**
- * Carries on a guest's unfinished upload of the same file (found by fingerprint): its session,
- * with the parts R2 already holds. A row whose multipart upload never began gets one now. Null
- * when the upload has expired with nothing made of it: the stale row is removed, and the caller
- * starts afresh.
+ * Carries on a guest's unfinished upload of the same file (found by fingerprint): its session, in
+ * the part size it started with, with the parts R2 already holds. A row whose multipart upload
+ * never began gets one now. Null when the upload has expired with nothing made of it: the stale
+ * row is removed, and the caller starts afresh.
  */
 export async function resumeUpload(upload: UploadRow, options: UploadOptions): Promise<UploadSession | null> {
   let session: UploadSession;
   if (!upload.multipartUploadId) {
-    session = toSession(upload, await beginMultipart(upload, options.signal), []);
+    session = toSession(upload, await beginMultipart(upload, options), []);
   } else {
     const parts = await partsSoFar(upload, upload.multipartUploadId, options);
     if (!parts) {
@@ -234,22 +254,27 @@ export async function resumeUpload(upload: UploadRow, options: UploadOptions): P
  * none before its multipart upload began, and null when the upload has expired.
  */
 export async function listUploadParts(upload: UploadRow, options: UploadOptions): Promise<UploadedPart[] | null> {
-  if (upload.status !== "uploading") return everyPart(upload.sizeBytes);
+  if (upload.status !== "uploading") return everyPart(upload);
   if (!upload.multipartUploadId) return [];
   return partsSoFar(upload, upload.multipartUploadId, options);
 }
 
 /**
  * Presigned PUT URLs for these parts (at most 20), each valid for an hour and bound to the part's
- * size: 8 MiB, or the remainder for the last. Local: no network.
+ * size: the upload's own part size (8 or 16 MiB), or the remainder for the last. Local: no network.
  */
 export async function presignUploadParts(upload: UploadRow, partNumbers: number[]): Promise<PartUrl[] | null> {
   if (!upload.multipartUploadId) return null;
   return presignParts(
     upload.originalKey,
     upload.multipartUploadId,
-    partNumbers.map((partNumber) => ({ partNumber, size: partSizeOf(upload.sizeBytes, partNumber) })),
+    partNumbers.map((partNumber) => ({ partNumber, size: partSizeOf(upload.sizeBytes, partNumber, upload.partSizeBytes) })),
   );
+}
+
+/** How many parts this upload has, in its own part size. */
+export function uploadPartCount(upload: Pick<UploadRow, "sizeBytes" | "partSizeBytes">): number {
+  return partCount(upload.sizeBytes, upload.partSizeBytes);
 }
 
 /**

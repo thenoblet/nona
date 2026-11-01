@@ -23,7 +23,7 @@ import { workerConfig } from "../config";
 import { ProcessError } from "../processes";
 import { PermanentJobError, startQueueWorkers, type MediaJob, type QueueWorkers } from "../queues";
 import { prepareScratchRoot } from "../scratch";
-import { posterHandler, processVideo, type PosterOptions } from "./poster";
+import { conversionWanted, posterHandler, processVideo, type PosterOptions } from "./poster";
 import { videoToolFailure } from "./video-tools";
 
 /*
@@ -339,6 +339,11 @@ async function conversionJobs(mediaId: string) {
   return boss.findJobs<{ mediaId: string }>(MEDIA_QUEUES.convert, { data: { mediaId } });
 }
 
+/** The media.playable jobs sent for an item: its clean copy's. */
+async function playableJobs(mediaId: string) {
+  return boss.findJobs<{ mediaId: string }>(MEDIA_QUEUES.playable, { data: { mediaId } });
+}
+
 /** The value after `flag` in a program's arguments. */
 function valueAfter(run: string[], flag: string): string | undefined {
   const at = run.indexOf(flag);
@@ -366,6 +371,27 @@ async function outcomeOf(mediaId: string, retryCount = 0, options = posterOption
 function expectNoLink(text: string): void {
   expect(text).not.toMatch(/X-Amz-|Signature|Credential|https?:\/\//i);
 }
+
+describe("conversionWanted: which videos get the H.264 conversion beside their clean copy (Task 14b)", () => {
+  const megabits = (bitsPerSecond: number, seconds: number) => Math.round((bitsPerSecond * 1_000_000 * seconds) / 8);
+
+  it("converts every video a phone can't play as it is: HEVC, HDR, 4K, slow motion, a browser's WebM", () => {
+    expect(conversionWanted({ browserPlayable: false, durationSeconds: 10 }, megabits(20, 10))).toBe(true);
+    expect(conversionWanted({ browserPlayable: false, durationSeconds: null }, 1000)).toBe(true);
+  });
+
+  it("leaves an H.264 video every phone plays to its copy, unless it is over 3 minutes and over 12 Mbit/s", () => {
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 60 }, megabits(20, 60))).toBe(false);
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 180 }, megabits(20, 180))).toBe(false);
+    // 6 to 9 Mbit/s: an uncapped CRF-23 conversion would be about as large, a generation worse.
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 185 }, megabits(9, 185))).toBe(false);
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 185 }, megabits(11.9, 185))).toBe(false);
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 185 }, megabits(12.1, 185))).toBe(true);
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: 1200 }, megabits(17, 1200))).toBe(true);
+    // A length the container doesn't give: nothing says it is long.
+    expect(conversionWanted({ browserPlayable: true, durationSeconds: null }, 2 * 1024 ** 3)).toBe(false);
+  });
+});
 
 it.skipIf(!inWorkerImage)("runs on the worker image's ffmpeg 7.1, which the poster's options and memory cap were measured on", () => {
   expect(versionLine).toMatch(/^ffmpeg version 7\.1\./);
@@ -581,7 +607,7 @@ describe.skipIf(!ffmpegSeven)("a video's poster (Review Focus 2)", () => {
     });
   });
 
-  it("queues a backlog conversion for a playable video longer than about three minutes", async () => {
+  it("queues no conversion of a playable video over three minutes long under 12 Mbit/s: its clean copy is enough", async () => {
     const long = await clip("long.mp4", [
       ...["-f", "lavfi", "-i", "testsrc2=size=160x90:rate=2", "-t", "185"],
       ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
@@ -591,9 +617,37 @@ describe.skipIf(!ffmpegSeven)("a video's poster (Review Focus 2)", () => {
     await processVideo(videoJob(mediaId), posterOptions());
 
     const item = await readItem(mediaId);
-    expect(item).toMatchObject({ status: "ready", browserPlayable: true, conversion: "queued" });
+    expect(item).toMatchObject({ status: "ready", browserPlayable: true, conversion: "none" });
     expect(item.durationSeconds).toBeCloseTo(185, 0);
-    expect(await conversionJobs(mediaId)).toHaveLength(1);
+    expect(await conversionJobs(mediaId)).toEqual([]);
+    expect(await playableJobs(mediaId)).toHaveLength(1);
+  });
+
+  it("sends its clean copy's job once it is ready, for a video an MP4 carries as it is, and none for a browser's VP9 and Opus", async () => {
+    const h264 = await uploadedVideo(await androidClip(), "mp4");
+    const hevc = await uploadedVideo(await rotatedClip(), "mov");
+    const webm = await uploadedVideo(
+      await clip("recording.webm", [
+        ...["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"],
+        ...["-t", "2", "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-c:a", "libopus", "-f", "webm"],
+      ]),
+      "webm",
+      { contentType: "video/webm" },
+    );
+
+    for (const mediaId of [h264, hevc, webm]) await processVideo(videoJob(mediaId), posterOptions());
+
+    for (const mediaId of [h264, hevc]) {
+      // Its generation named, for the sweeper's step 5 (the job itself reads only the id).
+      expect(await playableJobs(mediaId), mediaId).toEqual([
+        expect.objectContaining({ state: "created", data: { mediaId, generation: 0 } }),
+      ]);
+    }
+    expect(await playableJobs(webm)).toEqual([]);
+    // Each still gets the conversion it needs: none for H.264, the backlog's for HEVC and WebM.
+    expect((await conversionJobs(h264)).length).toBe(0);
+    expect((await conversionJobs(hevc)).length).toBe(1);
+    expect((await conversionJobs(webm)).length).toBe(1);
   });
 
   it("queues no conversion of a video longer than the worker converts: its conversion is failed, too-long, at once (Ruling AR)", async () => {
@@ -616,6 +670,20 @@ describe.skipIf(!ffmpegSeven)("a video's poster (Review Focus 2)", () => {
       });
       expect(await conversionJobs(mediaId)).toEqual([]);
     }
+  });
+
+  it("queues no conversion of a video with more frames than the worker converts for its length: too-long, at once (Ruling BG)", async () => {
+    // Under a second of 240 fps slow motion against a 1 s limit: 216 frames, past 1 s × 60.
+    const slowMotion = await clip("slow.mp4", [
+      ...["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=240", "-t", "0.9"],
+      ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+    ]);
+    const mediaId = await uploadedVideo(slowMotion, "mp4");
+
+    await processVideo(videoJob(mediaId), posterOptions({ convertMaxSeconds: 1 }));
+
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "failed", conversionFailureReason: "too-long" });
+    expect(await conversionJobs(mediaId)).toEqual([]);
   });
 
   it("makes a 4K HDR video's poster well inside the photo's 20 s budget, on one thread", async () => {
@@ -681,7 +749,7 @@ describe.skipIf(!ffmpegSeven)("a file that isn't a video the album takes (Review
     workers = await startQueueWorkers(
       boss,
       { [MEDIA_QUEUES.poster]: posterHandler(posterOptions()) },
-      { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1 },
+      { photo: 1, jpeg: 1, poster: 1, wish: 1, visibility: 1, card: 1, convertOnDemand: 1, convertBacklog: 1, playable: 1 },
       { pollingIntervalSeconds: 0.5 },
     );
     const jpeg = await clip("photo.jpg", ["-f", "lavfi", "-i", "testsrc2=size=640x480", "-frames:v", "1"]);
@@ -953,13 +1021,14 @@ describe.skipIf(!ffmpegSeven)("a job delivered twice, or for an item that has mo
     expect(programs.runs).toEqual([]);
   });
 
-  it("sends one conversion however often the job is delivered", async () => {
+  it("sends one conversion and one copy however often the job is delivered", async () => {
     const mediaId = await uploadedVideo(await rotatedClip(), "mov");
 
     await processVideo(videoJob(mediaId), posterOptions());
     await processVideo(videoJob(mediaId), posterOptions());
 
     expect(await conversionJobs(mediaId)).toHaveLength(1);
+    expect(await playableJobs(mediaId)).toHaveLength(1);
   });
 
   it("sends the conversion an unhide left queued once the poster is made again: at 20 for a highlight or a phone's ask", async () => {
@@ -1005,6 +1074,7 @@ describe.skipIf(!ffmpegSeven)("a job delivered twice, or for an item that has mo
     expect(await readItem(mediaId)).toMatchObject({ status: "ready", thumbhash: "the other delivery's", conversion: "none" });
     expect(await publicKeysOf(mediaId)).toHaveLength(2);
     expect(await conversionJobs(mediaId)).toEqual([]);
+    expect(await playableJobs(mediaId)).toEqual([]);
   });
 
   it("removes what it published when the item is hidden while it works, and leaves it uploaded", async () => {
@@ -1018,9 +1088,10 @@ describe.skipIf(!ffmpegSeven)("a job delivered twice, or for an item that has mo
     expect(await readItem(mediaId)).toMatchObject({ status: "uploaded", listedAt: null, thumbhash: null, conversion: "none" });
     expect(await publicKeysOf(mediaId)).toEqual([]);
     expect(await conversionJobs(mediaId)).toEqual([]);
+    expect(await playableJobs(mediaId)).toEqual([]);
   });
 
-  it("is ready though its conversion couldn't be sent: the sweeper sends it from the row's queued state", async () => {
+  it("is ready though its conversion and its copy couldn't be sent: the sweeper sends the conversion from the row's queued state", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const mediaId = await uploadedVideo(await rotatedClip(), "mov");
     const unreachableQueue = async () => {
@@ -1032,6 +1103,7 @@ describe.skipIf(!ffmpegSeven)("a job delivered twice, or for an item that has mo
     expect(report).toMatchObject({ kind: "video/hevc" });
     expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "queued" });
     expect(errors.mock.calls.flat().join(" ")).toContain(`media=${mediaId} is ready, but its conversion wasn't sent`);
+    expect(errors.mock.calls.flat().join(" ")).toContain(`media=${mediaId} is ready, but its playable copy's job wasn't sent`);
   });
 });
 

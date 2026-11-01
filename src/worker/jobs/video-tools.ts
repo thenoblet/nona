@@ -25,6 +25,14 @@ const FILE_BLAMED_FROM_RETRY = 2;
 const PROBE_BYTES = 5_000_000;
 const PROBE_MICROSECONDS = 5_000_000;
 
+/**
+ * A tool killed for running past its time. Retried by every job, as any failure the worker can't
+ * tell from a busy box is; a conversion counts them in a row, and its third is for good (Ruling BH).
+ */
+export class ToolTimeoutError extends Error {
+  override name = "ToolTimeoutError";
+}
+
 /** How a tool opens the original: what it may read it through (a link, or a scratch file), and as what. */
 export type ReadingArgs = string[];
 
@@ -161,6 +169,7 @@ export function videoToolFailure(tool: "ffprobe" | "ffmpeg", error: unknown, con
   if (error.ending === "too-much-output") {
     return blameFileFromThirdAttempt(`${tool} printed far too much reading the video: ${ending}`, context.retryCount, source);
   }
+  if (error.ending === "timeout") return new ToolTimeoutError(`${tool} didn't finish with the video: ${ending}`);
   if (error.ending !== "exit") return new Error(`${tool} didn't finish with the video: ${ending}`);
   if (toolDidNotRun(error)) return new Error(`${tool} couldn't run: ${ending}: ${lastLine}`);
   if (UNKNOWN_OPTION.test(error.stderrTail)) {

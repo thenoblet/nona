@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { workerConfig } from "./config";
+import { conversionPeakBytes, workerConfig } from "./config";
 
 describe("workerConfig", () => {
   it("defaults to what a 3 CPU / 12 GB box runs at once (Ruling Q)", () => {
@@ -14,6 +14,7 @@ describe("workerConfig", () => {
       card: 1,
       convertOnDemand: 1,
       convertBacklog: 1,
+      playable: 1,
     });
   });
 
@@ -26,6 +27,43 @@ describe("workerConfig", () => {
       poster: 1,
       decoder: 2,
     });
+  });
+
+  it("gives a conversion that runs alone every CPU the container has: 3 unless WORKER_CPUS says otherwise (Ruling R)", () => {
+    expect(workerConfig({ NODE_ENV: "development" }).cpus).toBe(3);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CPUS: "" }).cpus).toBe(3);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16" }).cpus).toBe(16);
+    for (const value of ["0", "1.5", "all", "65"]) {
+      expect(() => workerConfig({ NODE_ENV: "development", WORKER_CPUS: value }), value).toThrow(/WORKER_CPUS/);
+    }
+  });
+
+  it("caps no conversion's bitrate unless both WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE are set: pure CRF 23 (Noblet)", () => {
+    expect(workerConfig({ NODE_ENV: "development" }).x264Cap).toBeNull();
+    expect(workerConfig({ NODE_ENV: "development", WORKER_X264_MAXRATE: "", WORKER_X264_BUFSIZE: "" }).x264Cap).toBeNull();
+    expect(workerConfig({ NODE_ENV: "development", WORKER_X264_MAXRATE: "5M", WORKER_X264_BUFSIZE: "10M" }).x264Cap).toEqual({
+      maxRate: "5M",
+      bufferSize: "10M",
+    });
+    expect(
+      workerConfig({ NODE_ENV: "development", WORKER_X264_MAXRATE: "4500k", WORKER_X264_BUFSIZE: "9000000" }).x264Cap,
+    ).toEqual({ maxRate: "4500k", bufferSize: "9000000" });
+  });
+
+  it("refuses one of the two without the other, and anything but a bitrate", () => {
+    for (const half of [{ WORKER_X264_MAXRATE: "5M" }, { WORKER_X264_BUFSIZE: "10M" }, { WORKER_X264_MAXRATE: "5M", WORKER_X264_BUFSIZE: "" }]) {
+      expect(() => workerConfig({ NODE_ENV: "development", ...half }), JSON.stringify(half)).toThrow(
+        /WORKER_X264_MAXRATE and WORKER_X264_BUFSIZE: set both/,
+      );
+    }
+    for (const value of ["0", "5 M", "5Mi", "-5M", "5M -crf 0", "fast"]) {
+      expect(() => workerConfig({ NODE_ENV: "development", WORKER_X264_MAXRATE: value, WORKER_X264_BUFSIZE: "10M" }), value).toThrow(
+        /WORKER_X264_MAXRATE/,
+      );
+      expect(() => workerConfig({ NODE_ENV: "development", WORKER_X264_MAXRATE: "5M", WORKER_X264_BUFSIZE: value }), value).toThrow(
+        /WORKER_X264_BUFSIZE/,
+      );
+    }
   });
 
   it("opens a job-queue pool big enough for every handler at once", () => {
@@ -43,6 +81,7 @@ describe("workerConfig", () => {
       WORKER_CARD_CONCURRENCY: "2",
       WORKER_CONVERT_ON_DEMAND_CONCURRENCY: "2",
       WORKER_CONVERT_BACKLOG_CONCURRENCY: "5",
+      WORKER_PLAYABLE_CONCURRENCY: "3",
       WORKER_X264_THREADS: "4",
       WORKER_SHARP_THREADS: "3",
       WORKER_FFMPEG_FILTER_THREADS: "2",
@@ -60,6 +99,7 @@ describe("workerConfig", () => {
       card: 2,
       convertOnDemand: 2,
       convertBacklog: 5,
+      playable: 3,
     });
     expect(config.threads).toEqual({ x264: 4, sharp: 3, ffmpegFilters: 2, heif: 4, poster: 2, decoder: 3 });
     expect(config.queuePoolSize).toBe(20);
@@ -103,6 +143,39 @@ describe("workerConfig", () => {
     expect(workerConfig({ NODE_ENV: "development", WORKER_CONVERT_MEMORY_BYTES: "4294967296" }).convertMemoryBytes).toBe(
       4 * 1024 ** 3,
     );
+  });
+
+  it("raises a conversion's default cap with WORKER_CPUS, as its threads raise its need (Task 14b's measurements)", () => {
+    // 3 threads: 1,900 MiB measured need, under the 3 GiB floor. 8: 2,650 × 1.6. 16: 3,850 × 1.6, in whole 256 MiB.
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CPUS: "3" }).convertMemoryBytes).toBe(3072 * 1024 ** 2);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CPUS: "8" }).convertMemoryBytes).toBe(4352 * 1024 ** 2);
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16" }).convertMemoryBytes).toBe(6400 * 1024 ** 2);
+    expect(conversionPeakBytes(16)).toBe(3850 * 1024 ** 2);
+  });
+
+  it("counts every filter thread past the first in a conversion's need, about 85 MiB each", () => {
+    expect(conversionPeakBytes(3, 1)).toBe(1900 * 1024 ** 2);
+    expect(conversionPeakBytes(3, 3)).toBe(2070 * 1024 ** 2);
+    // 16 threads and 3 filter threads: (1,450 + 2,400 + 170) × 1.6, in whole 256 MiB.
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16", WORKER_FFMPEG_FILTER_THREADS: "3" }).convertMemoryBytes).toBe(
+      6656 * 1024 ** 2,
+    );
+    expect(() =>
+      workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16", WORKER_FFMPEG_FILTER_THREADS: "3", WORKER_CONVERT_MEMORY_BYTES: String(3900 * 1024 ** 2) }),
+    ).toThrow(/WORKER_CONVERT_MEMORY_BYTES/);
+  });
+
+  it("refuses to start with a conversion cap under what a lone conversion on WORKER_CPUS threads needs, rather than fail every video as corrupt", () => {
+    expect(() => workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16", WORKER_CONVERT_MEMORY_BYTES: String(3 * 1024 ** 3) })).toThrow(
+      /WORKER_CONVERT_MEMORY_BYTES: 3221225472 bytes is under the 4037017600 a 4K HDR conversion needs on 16 threads \(WORKER_CPUS\)/,
+    );
+    expect(workerConfig({ NODE_ENV: "development", WORKER_CPUS: "16", WORKER_CONVERT_MEMORY_BYTES: String(6 * 1024 ** 3) }).convertMemoryBytes).toBe(
+      6 * 1024 ** 3,
+    );
+    // The shared counts too, if someone sets them above WORKER_CPUS.
+    expect(() =>
+      workerConfig({ NODE_ENV: "development", WORKER_X264_THREADS: "16", WORKER_CONVERT_MEMORY_BYTES: String(3 * 1024 ** 3) }),
+    ).toThrow(/on 16 threads/);
   });
 
   it.each(["1073741824", "3GB", "-1", "1.5", String(128 * 1024 ** 3)])(

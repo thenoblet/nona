@@ -210,8 +210,11 @@ that fails for good marks its item `failed`, with the reason its uploader sees.
   one is under 2 minutes old and 503 otherwise, for the uptime check.
 - Every 10 minutes a sweeper queues anything left behind: items uploaded with no job, conversions
   with no job (or, for one a phone asked for or a highlight, no on-demand job), uploads whose
-  phone dropped at the very last step (it completes them when R2 holds every part), and hidden or
-  deleted items whose public files no job has taken down.
+  phone dropped at the very last step (it completes them when R2 holds every part), hidden or
+  deleted items whose public files no job has taken down, and videos listed in the last 6 days
+  that a playable copy is made for (HEVC, or H.264 every phone plays) whose copy's job was never
+  sent for their generation (one that ran, however it ended, is never sent again: pg-boss keeps
+  finished jobs 7 days).
 - **Hiding** (`media.visibility`): an item the couple hide (or its uploader removes, or the couple
   delete for good) leaves every list at once; then the worker deletes every public file under its
   folder and purges their exact URLs from Cloudflare's cache (`CF_PURGE_TOKEN`, `CF_ZONE_ID`, 30 URLs
@@ -219,23 +222,50 @@ that fails for good marks its item `failed`, with the reason its uploader sees.
   purges every one; a permanent delete's original is deleted the same way, once its 30-day lock
   allows. An unhide processes the item again, its files under new keys, and it keeps its place in
   the album.
+- **Playable copies** (`media.playable`): once a video's poster is ready, every video whose streams
+  an MP4 carries as they are (H.264 or HEVC, with AAC or no sound) gets a clean copy: its own video
+  and sound stream-copied (nothing decoded, so in seconds), no metadata but its capture time (so no
+  location), `moov` first, its display matrix kept so players turn it, HEVC tagged `hvc1` (as
+  Apple's players want, whatever the original's tag). It runs nice'd, under the probe's memory cap
+  and five minutes of CPU time (a 2 GB copy takes about 7 CPU-seconds). It is checked before it is
+  published (its codec and tag, turn, sound and length, `moov` first, no location in its index) and
+  named `derived.playable`. An H.264 video every phone plays (the Android case) plays from this copy;
+  its original is never used for playback. A copy that fails never fails the video: it keeps its
+  poster, and its conversion goes on where it has one. A browser's VP8/VP9/AV1 or non-AAC sound gets
+  no copy: its conversion plays.
 - **Conversions** (`media.convert`) make a version of a video every phone plays: H.264 High in MP4,
-  within 1920 × 1080 either way up, HDR tone-mapped to SDR, at most 30 fps, AAC stereo, no
-  metadata but its capture time, `moov` first. A phone that can't play an original asks
-  `POST /api/media/[id]/playable`, which sends its conversion at priority 20; the worker takes
-  those (and the couple's highlights) at once. Everything else waits in the backlog, which runs only
-  while the admin's backlog switch is on: the worker reads the switch every 30 s and again before
-  each backlog job, and a job fetched as the switch went off goes back to wait, never failed. Each
-  conversion downloads its original to scratch (twice its size must be free), runs `nice -n 19`
-  under its own memory cap and a CPU-time cap (10 CPU-seconds a second of video and ten minutes:
-  a file that makes ffmpeg work harder than any phone's is blamed on its third attempt), and is
-  checked before it is published: exiting 0 isn't enough. Only the job that claimed a conversion
-  (its lease) carries it on, through its retries; the sweeper puts one whose job is gone back in
-  the queue. A video longer than `WORKER_CONVERT_MAX_SECONDS` isn't converted: its conversion is
-  `failed` with the reason `too-long`, and it plays from its original where a phone can. Measured
-  under `--cpus=3` at the defaults, one conversion alone takes 1 to 3 s a second of video for 4K
-  HEVC HDR (8K: 1.4 to 3.4 s) and 0.4 to 1 s for 1080p60 H.264, on a dev host whose speed varied
-  twofold; each job logs its own speed.
+  within 1920 × 1080 either way up, HDR tone-mapped to SDR, at most 30 fps, CRF 23 with no bitrate
+  cap (one can be set: `WORKER_X264_MAXRATE`), AAC stereo, no metadata but its capture time, `moov`
+  first. Every video a phone can't play as it is (HEVC, HDR, 4K, slow motion, a browser's WebM) is
+  converted; an H.264 video that plays everywhere only when it is over 3 minutes long and over
+  about 12 Mbit/s (uncapped CRF 23 makes about 8.7 Mbit/s of a phone's grainy 1080p, so converting
+  less would save nothing and cost a generation of quality), otherwise its playable copy is enough. A conversion that starts while no other
+  runs gives its decoder and x264 every CPU (`WORKER_CPUS`); one that starts beside another, 2
+  each. A phone that can't play an original asks `POST /api/media/[id]/playable`, which sends its
+  conversion at priority 20; the worker takes those (and the couple's highlights) at once.
+  Everything else waits in the backlog, which runs only while the admin's backlog switch is on: the
+  worker reads the switch every 30 s and again before each backlog job, and a job fetched as the
+  switch went off goes back to wait, never failed. Each conversion downloads its original to
+  scratch (twice its size must be free), runs `nice -n 19` under its own memory cap, a CPU-time
+  cap and a time limit, and is checked before it is published: exiting 0 isn't enough. Both limits
+  are ten minutes plus so much a second of video, times the frame rate over 30 (60 fps gets twice,
+  240 fps slow motion eight times; a file's own rate counts at most 240, however absurd the rate it
+  claims): 30 CPU-seconds (a phone's 1080p HDR measured 4.4 to 7.8, so only a file that makes
+  ffmpeg work several times harder than any phone's runs out, blamed on its third attempt) and 10
+  seconds of time (at most three hours). A conversion that runs past its time is tried again,
+  since a busy box can't be told from a slow file by the clock, but its third time-out in a row
+  fails it for good, `too-slow`: the video keeps its poster and its playable copy, and the couple
+  can retry it from the admin, at priority 20. Only the job that claimed a conversion (its lease)
+  carries it on, through its retries; the sweeper puts one whose job is gone back in the queue. A
+  video longer than `WORKER_CONVERT_MAX_SECONDS`, or with more frames than 60 a second of it
+  (108,000 at the default: half an hour at 60 fps, or 7½ minutes of 240 fps slow motion), isn't
+  converted: its conversion is `failed` with the reason `too-long` at once, with no job, and it
+  plays from its playable copy where a phone can. Measured under `--cpus=3` at
+  the defaults (Task 14b), one conversion alone takes 1.8 to 2.5 s a second of video for 1080 ×
+  1920 HEVC HLG with a phone's detail (the first real one, on two threads each: 2.05 s) and 2.2 to
+  3.1 s for 4K HEVC HLG, on a shared dev host whose speed varied by a third. The time is CPU, not
+  waiting: decoding the HEVC, tone-mapping it (float RGB) and x264 each take about a third. Each
+  job logs its own speed and threads.
 - On SIGTERM it stops taking jobs, kills ffmpeg and the other tools, and exits within 8 s; the
   interrupted jobs go back to their queues.
 
@@ -256,9 +286,19 @@ settings, under Update Config, and defaults to start-first, so change it there w
 `nona26-worker`. Each start removes the scratch folders it
 finds (an earlier run's leftovers) and runs its own sweeper, so a second container running beside it,
 even for the seconds of a deploy, could remove a running job's files or queue an item twice. The
-old container stops within 8 s of SIGTERM and its interrupted jobs go back to their queues, so
-stop-first costs only those seconds. To process more at once, raise the concurrency variables
-below, never the replicas.
+worker guards against that itself too (Ruling AZ), since Dokploy's form can quietly bring
+start-first back: before it removes anything or sweeps, it takes a Postgres session advisory lock
+(`pg_try_advisory_lock(1313820225, 1465011026)`, the two-key form, so no single-key lock elsewhere
+can be the same) on a connection of its own that stays open, and a second worker logs "waiting
+for the previous worker to stop" and tries again every 5 s. The lock goes when the first stops (it
+lets it go last, as it exits), dies, or its box vanishes (Postgres notices within about a minute),
+and the second then starts within seconds. When a running worker's lock connection drops
+(Postgres restarting, a network blip), it takes the lock again on a new connection, ending its own
+cut-off session if Postgres still has it, and carries on with its jobs; only if another worker
+holds the lock by then does it stop (exit 1), so its restart waits for the lock again. The old container
+stops within 8 s of SIGTERM and its interrupted jobs go back to their queues, so stop-first costs
+only those seconds. To process more at once, raise the concurrency variables below, never the
+replicas.
 
 `pg-boss` is pinned to one exact version in `package.json`: the sweeper reads pg-boss's own `job`
 table to see which items have a job, so upgrading pg-boss is a deliberate change, made with
@@ -270,7 +310,7 @@ Its environment:
 |---|---|---|
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | | The site's database. |
 | `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`, `MEDIA_BASE_URL` | | Cloudflare R2, as the site has them. |
-| `WORKER_SCRATCH_DIR` | required | `/scratch`, where the scratch folder is mounted. Without it the worker refuses to start, rather than fill the container's own disk. |
+| `WORKER_SCRATCH_DIR` | required | `/scratch`, where the scratch folder is mounted. Without it the worker refuses to start, rather than fill the container's own disk. A folder it can't make, that isn't a folder, or that uid 10001 can't write stops it with one line: "[worker] can't use the scratch folder /scratch: mount /mnt/nona-worker at /scratch, writable by uid 10001". |
 | `CF_PURGE_TOKEN` | required | A Cloudflare API token allowed only "Zone · Cache Purge" on the site's zone. When an item is hidden or deleted, the worker deletes its public files and purges their URLs from Cloudflare's cache with it. Without it (or `CF_ZONE_ID`) in production, every hide's job fails and is retried, and the sweeper sends it again, until both are set. |
 | `CF_ZONE_ID` | required | The site's Cloudflare zone id, for the purge. |
 | `WORKER_PHOTO_CONCURRENCY` | 2 | Photos processed at once. |
@@ -281,17 +321,21 @@ Its environment:
 | `WORKER_CARD_CONCURRENCY` | 1 | Link-preview cards at once. |
 | `WORKER_CONVERT_ON_DEMAND_CONCURRENCY` | 1 | Conversions a phone asked for, or highlights, at once. |
 | `WORKER_CONVERT_BACKLOG_CONCURRENCY` | 1 | Backlog conversions at once, while the admin's backlog switch is on. |
-| `WORKER_X264_THREADS` | 2 | x264's threads in each conversion (x264 adds a lookahead thread of its own). |
+| `WORKER_PLAYABLE_CONCURRENCY` | 1 | Videos' clean playable copies made at once (a download, a stream copy and an upload each; nothing decoded). |
+| `WORKER_CPUS` | 3 | The CPUs the container may use (its limit in Dokploy). A conversion that starts while no other runs gives its decoder and x264 this many threads each. Raise it with the container's CPUs (the backlog week's bigger box): the conversion's memory cap follows it unless `WORKER_CONVERT_MEMORY_BYTES` is set. |
+| `WORKER_X264_THREADS` | 2 | x264's threads in a conversion that starts beside another (x264 adds a lookahead thread of its own); a lone one takes `WORKER_CPUS`. |
+| `WORKER_X264_MAXRATE` | off | Off by default; set to cap a phone copy's bitrate if mobile data becomes a concern (x264's `-maxrate:v`, e.g. `5M`), together with `WORKER_X264_BUFSIZE`: both or neither. In ffmpeg's notation: bits a second, or with `k` or `M`. Off, a conversion is pure CRF 23: a cap holds the bitrate down in exactly the scenes that need it (dancing, confetti, low light, grain). On, CRF 23 is kept and only its peaks are held to the cap; any T seconds of video then hold at most T × the cap plus the buffer. Changing it gives new conversions keys of their own. |
+| `WORKER_X264_BUFSIZE` | off | The cap's buffer (x264's `-bufsize:v`, e.g. `10M`): how far the bitrate may run over the cap for a moment. Off by default; set with `WORKER_X264_MAXRATE`, both or neither. |
 | `WORKER_X264_PRESET` | `veryfast` | x264's preset in each conversion, at CRF 23: one of `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. A slower one compresses better and takes longer: measure a 4K clip before changing it. |
-| `WORKER_CONVERT_MAX_SECONDS` | 1800 | The longest video converted, in seconds, from 60 to 86400. A longer one's conversion is `failed` at once with the reason `too-long` (no job, no retries); the video stays in the album with its poster, plays from its original where a phone can, and its original stays downloadable. |
-| `WORKER_FFMPEG_DECODER_THREADS` | 2 | ffmpeg's decoder threads in each conversion (its `-threads` before the input), which would otherwise be the host's CPUs. Two decode 4K HEVC in about real time. |
+| `WORKER_CONVERT_MAX_SECONDS` | 1800 | The longest video converted, in seconds, from 60 to 86400, and, times 60, the most frames (its length times its frame rate, counted at most 240). A longer one's, or one with more frames, is `failed` at once with the reason `too-long` (no job, no retries); the video stays in the album with its poster, plays from its playable copy where a phone can, and its original stays downloadable. |
+| `WORKER_FFMPEG_DECODER_THREADS` | 2 | ffmpeg's decoder threads in a conversion that starts beside another (its `-threads` before the input), which would otherwise be the host's CPUs; a lone one takes `WORKER_CPUS`. Two decode 4K HEVC in about real time. |
 | `WORKER_SHARP_THREADS` | 1 | sharp's threads in each photo. |
-| `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job. Measured under `--cpus=3`, 2 made a 4K HDR conversion slower (18.4 s against 12 to 17 s, and 43 s against 31 s, for 10 s of video), not faster. |
+| `WORKER_FFMPEG_FILTER_THREADS` | 1 | ffmpeg's filter threads (scaling, tone-mapping) in each job, a lone conversion's too. Measured under `--cpus=3`, more made a conversion slower, not faster, since x264 and the decoder already keep the CPUs busy: for 20 s of 1080 × 1920 HLG on 3 decoder and x264 threads, 1.56 s a second of video at 1, 2.00 at 2 and 2.15 at 3 (Task 14b); earlier, 2 made a 4K HDR conversion 18.4 s against 12 to 17 s. |
 | `WORKER_HEIF_THREADS` | 1 | `heif-dec`'s codec and tile threads for each HEIC (libheif would otherwise decode 4 tiles at once). |
 | `WORKER_HEIF_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `heif-info` and `heif-dec` may take for one HEIC, at least 256 MiB: a backstop against a crafted file. A 48 MP iPhone photo decodes in about 300 MB; a file that hits the cap fails as `corrupt`. |
 | `WORKER_POSTER_THREADS` | 1 | ffmpeg's `-threads` for each video's poster: decoding its frame and writing it. Each thread takes its own stack and heap within `WORKER_FFMPEG_MEMORY_BYTES`: measure the cap again before raising this or `WORKER_FFMPEG_FILTER_THREADS`. |
 | `WORKER_FFMPEG_MEMORY_BYTES` | 2147483648 (2 GiB) | The most memory (address space) `ffprobe` and `ffmpeg` may take for one video's probe and poster, at least 1 GiB: a backstop against a crafted file. Measured on one thread each (`WORKER_POSTER_THREADS` and `WORKER_FFMPEG_FILTER_THREADS` at 1), a 4K HDR poster needs about 830 MiB and an 8K one about 980 MiB. A file that runs out of memory under the cap three times fails as `corrupt`; a thread ffmpeg can't start (`pthread_create`, "Resource temporarily unavailable") is the worker's trouble and retries. |
-| `WORKER_CONVERT_MEMORY_BYTES` | 3221225472 (3 GiB) | The most memory (address space) a conversion's `ffmpeg` may take, at least 2 GiB: a backstop against a crafted file. Measured in the worker image under `--cpus=3` at the default threads, a 4K HEVC HLG conversion peaks at about 1,720 MiB (RSS about 730 MiB), an 8K HEVC one at about 1,790 MiB (RSS about 830 MiB), 1080p60 H.264 at about 1,310 MiB. More decoder, x264 or filter threads raise it: measure again before raising them. As for posters, running out of memory under the cap three times fails the conversion, and the video keeps its poster. |
+| `WORKER_CONVERT_MEMORY_BYTES` | 3 GiB, more for a higher `WORKER_CPUS` | The most memory (address space) a conversion's `ffmpeg` may take, at least 2 GiB: a backstop against a crafted file. Its need grows with its threads (each takes a stack and a heap of its own, mostly reserved). Measured in the worker image, a lone portrait 4K HEVC HLG conversion peaks at 1,873 MiB on 3 decoder and x264 threads (RSS about 790 MiB), 2,614 MiB on 8 and 3,834 MiB on 16; 8K HEVC on 3, 1,753 MiB; two each (two conversions at once), 1,727 MiB. Each filter thread past the first adds about 85 MiB (1080p HLG on 3 each: 1,562 MiB with one, 1,730 with three). Unset, it is 3 GiB, or 1.6 times about 1,450 MiB plus 150 MiB a thread and 85 MiB a filter thread past the first, where that is more (`WORKER_CPUS=16`: 6,400 MiB). Set below that need, the worker refuses to start, rather than fail every conversion as the file's fault. As for posters, running out of memory under the cap three times fails the conversion, and the video keeps its poster. |
 | `WORKER_QUEUE_POOL_SIZE` | 10 | Database connections for the job queue. |
 
 The defaults suit about 3 CPUs and 12 GB. Thread counts never follow the machine's core count,

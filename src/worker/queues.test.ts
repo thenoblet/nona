@@ -14,6 +14,7 @@ import { dropBossSchema, startTestBoss } from "../../test/uploads";
 import { runProcess } from "./processes";
 import {
   PermanentJobError,
+  RetriedJobError,
   startQueueWorkers,
   type MediaHandlers,
   type QueueWorkers,
@@ -46,6 +47,7 @@ const ONE_EACH = {
   card: 1,
   convertOnDemand: 1,
   convertBacklog: 1,
+  playable: 1,
 };
 
 /** Starts the workers for the queues a test gives handlers; the others have none, as in production until their task. */
@@ -228,6 +230,49 @@ describe("a job that fails for good", () => {
     );
     expect(errors.mock.calls.flat().join(" ")).not.toContain("marked failed");
     expect(await readItem(mediaId)).toMatchObject({ status: "ready", conversion: "done" });
+  });
+});
+
+describe("a job retried with facts for its next attempt (RetriedJobError)", () => {
+  it("hands its next attempt what the last one left in its output, and a first attempt nothing", async () => {
+    const seen: (Record<string, unknown> | null | undefined)[] = [];
+    await start({
+      [MEDIA_QUEUES.visibility]: async (job) => {
+        seen.push(job.previousOutput);
+        if (job.retryCount < 2) throw new RetriedJobError(`timed out ${job.retryCount + 1}`, { consecutiveTimeouts: job.retryCount + 1 });
+      },
+    });
+    const mediaId = await insertItem();
+    const jobId = await boss.send(MEDIA_QUEUES.visibility, { mediaId, action: "hide" }, { retryDelay: 1, retryBackoff: false });
+
+    await eventually(async () => expect(await jobState(MEDIA_QUEUES.visibility, jobId ?? "")).toBe("completed"), 30_000);
+    expect(seen).toEqual([
+      null,
+      { error: "RetriedJobError: timed out 1", consecutiveTimeouts: 1 },
+      { error: "RetriedJobError: timed out 2", consecutiveTimeouts: 2 },
+    ]);
+  });
+});
+
+describe("a playable copy that fails for good", () => {
+  it("leaves the video ready, its conversion as it was, and says so in the log with its id only", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await start({
+      [MEDIA_QUEUES.playable]: async () => {
+        throw new PermanentJobError("corrupt", "ffmpeg couldn't copy the video");
+      },
+    });
+    const mediaId = await insertItem({ kind: "video", status: "ready", conversion: "queued", listedAt: new Date() });
+    await boss.send(MEDIA_QUEUES.playable, { mediaId });
+
+    await eventually(async () =>
+      expect(errors.mock.calls.flat().join(" ")).toContain(
+        `media.playable job for ${mediaId} failed for good (corrupt): the video keeps its poster, and plays from its conversion`,
+      ),
+    );
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("marked failed");
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("Ama");
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", failureReason: null, conversion: "queued" });
   });
 });
 
