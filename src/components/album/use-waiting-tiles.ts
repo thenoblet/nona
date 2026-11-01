@@ -4,14 +4,12 @@ import { useEffect, useRef } from "react";
 import type { AlbumItem } from "@/lib/media/album-item";
 import { itemWatch } from "./item-watch";
 
-/** How long the album asks after the guest's own moments being made ready, after the page shows them. */
-const WAITING_GIVE_UP_MILLISECONDS = 3 * 60_000;
-
 /**
  * The guest's own moments being made ready ("Getting it ready" tiles) ask after themselves through
- * the page's shared check (item-watch.ts: all of them in one request every 5 s, rounds never
- * overlapping; fix round 1, Important #2), for three minutes. Each one's news comes once: the moment
- * as it is now (ready, or failed), or null once it has gone. Still being made, it says nothing.
+ * the page's shared check (item-watch.ts: all of them in one request a round, rounds never
+ * overlapping; fix round 1, Important #2) until each arrives: every 5 s for its first 3 minutes,
+ * then every 30 s, paused while the page is hidden (ruling BQ). Each one's news comes once: the
+ * moment as it is now (ready, or failed), or null once it has gone. Still being made, it says nothing.
  */
 export function useWaitingTiles(waitingIds: readonly string[], onNews: (mediaId: string, item: AlbumItem | null) => void): void {
   const key = waitingIds.join(",");
@@ -30,10 +28,6 @@ export function useWaitingTiles(waitingIds: readonly string[], onNews: (mediaId:
       });
       return stop;
     });
-    const giveUp = window.setTimeout(() => stops.forEach((stop) => stop()), WAITING_GIVE_UP_MILLISECONDS);
-    return () => {
-      window.clearTimeout(giveUp);
-      stops.forEach((stop) => stop());
-    };
+    return () => stops.forEach((stop) => stop());
   }, [key]);
 }

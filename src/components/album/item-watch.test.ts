@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RATE_LIMITS, takeToken } from "@/lib/guests/rate-limit";
 import type { AlbumItem } from "@/lib/media/album-item";
-import { createItemWatch, ITEM_WATCH_MILLISECONDS } from "./item-watch";
+import { createItemWatch, ITEM_WATCH_MILLISECONDS, SLOW_AFTER_MILLISECONDS, type Visibility } from "./item-watch";
 
 /*
  * Fix round 1, Important #2: the album's waiting tiles and the uploader's cards ask after their
@@ -11,6 +11,23 @@ import { createItemWatch, ITEM_WATCH_MILLISECONDS } from "./item-watch";
 
 const moment = (id: string, status: AlbumItem["status"] = "uploaded") => ({ id, status, thumb: status === "ready" ? `https://media.example/${id}.webp` : null }) as AlbumItem;
 const ids = (count: number, prefix = "moment") => Array.from({ length: count }, (_unused, index) => `${prefix}-${index}`);
+
+/** A page whose visibility the test sets, telling its listeners as a browser's visibilitychange would. */
+function fakeVisibility(visible: boolean): Visibility & { set: (visible: boolean) => void } {
+  let current = visible;
+  const listeners = new Set<() => void>();
+  return {
+    isVisible: () => current,
+    onChange(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set(next) {
+      current = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -103,16 +120,73 @@ describe("createItemWatch", () => {
     expect(new Set([...asked[1], ...asked[2]]).size).toBe(70);
   });
 
-  it("asks nothing while the page isn't on screen, and carries on once it is", async () => {
-    let visible = false;
+  it("Ruling BQ: asks every 5 s for a moment's first 3 minutes, then every 30 s, until it is no longer watched", async () => {
+    const askedAt: number[] = [];
+    const watch = createItemWatch({ maxIds: 50, fetchItems: async (named) => (askedAt.push(Date.now()), named.map((id) => moment(id))) });
+    const begun = Date.now();
+    watch.watch("slow-photo", () => {});
+
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+
+    const offsets = askedAt.map((time) => time - begun);
+    expect(offsets.filter((offset) => offset <= SLOW_AFTER_MILLISECONDS)).toHaveLength(SLOW_AFTER_MILLISECONDS / ITEM_WATCH_MILLISECONDS);
+    expect(offsets.filter((offset) => offset > SLOW_AFTER_MILLISECONDS)).toEqual([210_000, 240_000, 270_000, 300_000, 330_000, 360_000]);
+  });
+
+  it("Ruling BQ: a moment watched for long is asked after every 30 s, while a new one beside it is asked every 5 s, one request a round", async () => {
+    const asked: string[][] = [];
+    const watch = createItemWatch({ maxIds: 50, fetchItems: async (named) => (asked.push(named), named.map((id) => moment(id))) });
+    watch.watch("old-one", () => {});
+    await vi.advanceTimersByTimeAsync(SLOW_AFTER_MILLISECONDS + 1_000);
+    asked.length = 0;
+    watch.watch("new-one", () => {});
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(asked.filter((named) => named.includes("new-one"))).toHaveLength(12);
+    expect(asked.filter((named) => named.includes("old-one"))).toHaveLength(2);
+    expect(asked.every((named) => new Set(named).size === named.length)).toBe(true);
+  });
+
+  it("Ruling BQ: pauses while the page is hidden, and checks again as soon as it is visible", async () => {
+    const page = fakeVisibility(true);
     let calls = 0;
-    const watch = createItemWatch({ maxIds: 50, isVisible: () => visible, fetchItems: async () => (calls += 1, []) });
+    const watch = createItemWatch({ maxIds: 50, visibility: page, fetchItems: async () => (calls += 1, []) });
     watch.watch("moment-1", () => {});
-    await vi.advanceTimersByTimeAsync(4 * ITEM_WATCH_MILLISECONDS);
-    expect(calls).toBe(0);
-    visible = true;
     await vi.advanceTimersByTimeAsync(ITEM_WATCH_MILLISECONDS);
     expect(calls).toBe(1);
+
+    page.set(false);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(calls).toBe(1);
+
+    page.set(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(2);
+    // Then on its usual pace (a moment watched for over 3 minutes: every 30 s).
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(calls).toBe(3);
+  });
+
+  it("keeps 50 waiting tiles inside the guest's `item` bucket for ten minutes", async () => {
+    const guestId = `guest-${Math.random()}`;
+    let requests = 0;
+    let refused = 0;
+    const watch = createItemWatch({
+      maxIds: 50,
+      fetchItems: async (named) => {
+        requests += 1;
+        if (!takeToken(guestId, "item", Date.now()).allowed) refused += 1;
+        return named.map((id) => moment(id));
+      },
+    });
+    for (const id of ids(50, "tile")) watch.watch(id, () => {});
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    // 36 rounds in the first 3 minutes, then one every 30 s.
+    expect(requests).toBe(36 + 14);
+    expect(refused).toBe(0);
   });
 
   it("keeps 50 waiting tiles and a batch's cards inside the guest's `item` bucket for two minutes", async () => {
