@@ -177,7 +177,8 @@ describe("renderRsvpConfirmation", () => {
 
     const mail = await render(record({ [first.id]: "yes", [second.id]: "yes" }));
     for (const [body, written] of [
-      [mail.html, asHtml],
+      // The html's text: the GPS code sits in a span of its own.
+      [withoutTags(mail.html), asHtml],
       [mail.text, (value: string) => value],
     ] as const) {
       const reception = card(body, second, null);
@@ -205,7 +206,8 @@ describe("renderRsvpConfirmation", () => {
     };
     const mail = await render(record({ [first.id]: "yes", [second.id]: "yes" }), content);
     for (const [body, written] of [
-      [mail.html, asHtml],
+      // The html's text: the GPS code sits in a span of its own.
+      [withoutTags(mail.html), asHtml],
       [mail.text, (value: string) => value],
     ] as const) {
       for (const segment of [card(body, first, second), card(body, second, null)]) {
@@ -256,6 +258,24 @@ describe("renderRsvpConfirmation", () => {
     }
     // The plain text ends on the site's address, said once.
     expect(mail.text.trim().split("\n").at(-1)).toBe("example.com");
+  });
+
+  it("narrows the margins on phones on the cells that carry them, so 16 px replaces their padding rather than adding to it", async () => {
+    const mail = await render(record({ [first.id]: "yes", [second.id]: "no" }));
+    expect(mail.html).toContain("@media only screen and (max-width: 480px)");
+    expect(mail.html).not.toMatch(/<table[^>]*class="nn-pad"/);
+    const padded = [...mail.html.matchAll(/<(\w+)[^>]*class="nn-pad"[^>]*>/g)];
+    expect(padded.length).toBeGreaterThanOrEqual(3);
+    for (const [element, tag] of padded) {
+      expect(element, tag).toMatch(/^<td class="nn-pad" style="padding:\d+px \d+px 0">$/);
+    }
+  });
+
+  it("lets a GhanaPost GPS line wrap on a narrow phone, before the code, never inside it", async () => {
+    const mail = await render(record({ [second.id]: "yes" }));
+    expect(mail.html).toContain('GhanaPost GPS · <span style="white-space:nowrap">AX-0084-3317</span>');
+    expect(mail.html).not.toContain('<span style="white-space:nowrap">GhanaPost GPS');
+    expect(mail.text).toContain("GhanaPost GPS · AX-0084-3317");
   });
 
   it("holds the email at 600 px in classic Outlook for Windows, which ignores max-width", async () => {
@@ -408,7 +428,7 @@ describe("the personal link in the confirmation (Rulings BY and BZ)", () => {
     }
   });
 
-  it("renders a reply with no guest, sent before personal links, as the email always was", async () => {
+  it("renders a reply with no guest, sent before personal links, as the same email with no link in it", async () => {
     for (const answers of [{ [first.id]: "yes" }, { [first.id]: "yes", [second.id]: "no" }, { [first.id]: "no" }] as const) {
       const reply = record(answers);
       const withoutLink = await renderWithLink(reply, null);

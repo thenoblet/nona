@@ -72,7 +72,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
             <Container style={{ maxWidth: "600px" }}>
               <Header siteUrl={siteUrl} />
 
-              <Section className="nn-pad" style={{ padding: "4px 40px 0" }}>
+              <Section tdClassName="nn-pad" style={{ padding: "4px 40px 0" }}>
                 <Heading
                   as="h1"
                   style={{
@@ -91,7 +91,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
                 <Text style={{ ...paragraph, margin: "10px auto 0", maxWidth: "440px" }}>{intro}</Text>
               </Section>
 
-              <Section className="nn-pad" style={{ padding: "32px 34px 0" }}>
+              <Section tdClassName="nn-pad" style={{ padding: "32px 34px 0" }}>
                 {celebrations.map((celebration) => (
                   <CelebrationCard key={celebration.id} celebration={celebration} />
                 ))}
@@ -104,7 +104,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
 
               {comingToAny && personalLink ? <PersonalLinkCard link={personalLink} /> : null}
 
-              <Section className="nn-pad" style={{ padding: "36px 40px 0", textAlign: "center" }}>
+              <Section tdClassName="nn-pad" style={{ padding: "36px 40px 0", textAlign: "center" }}>
                 <Text style={{ ...paragraph, margin: "0 0 20px", fontSize: "16px", lineHeight: "26px" }}>
                   Need to change something? Send a new reply with the same name and phone or email.
                 </Text>
@@ -122,6 +122,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
                   Change my reply
                 </Button>
                 <Text
+                  className="nn-sign"
                   style={{
                     margin: "42px 0 0",
                     textAlign: "center",
@@ -132,7 +133,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
                     color: colours.emberInk,
                   }}
                 >
-                  {/* Too long for a narrow screen, it breaks after "With love,". */}
+                  {/* Too long for a narrow screen, it breaks after "With love,"; on a phone it is a little smaller (nn-sign). */}
                   With love, <span style={{ whiteSpace: "nowrap" }}>Noblet &amp; Nancy</span>
                 </Text>
                 <Text style={{ ...smallCaps, margin: "10px 0 0", textAlign: "center", color: colours.mocha }}>
@@ -155,7 +156,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
  */
 function PersonalLinkCard({ link }: { link: string }) {
   return (
-    <Section className="nn-pad" style={{ padding: "22px 34px 0" }}>
+    <Section tdClassName="nn-pad" style={{ padding: "22px 34px 0" }}>
       <Section
         style={{
           backgroundColor: colours.white,

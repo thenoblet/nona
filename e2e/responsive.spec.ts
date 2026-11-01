@@ -1,4 +1,8 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { contentDefaults } from "../src/lib/content/defaults";
+import type { RsvpRecord } from "../src/lib/data/types";
+import { renderRsvpConfirmation } from "../src/lib/email/rsvp-confirmation";
 
 // No page may scroll sideways on any phone, tablet or laptop (Noblet, 30 Oct). The admin's data
 // pages need a Cloudflare Access sign-in, which this production build can't fake, so only the
@@ -35,6 +39,62 @@ for (const { path, marker } of pages) {
           innerWidth: window.innerWidth,
         }));
         expect(scrollWidth, `${path} is ${scrollWidth}px wide in a ${innerWidth}px window`).toBeLessThanOrEqual(innerWidth);
+      });
+    }
+  });
+}
+
+// The RSVP confirmations fit a phone too: its mail app shows an email at the screen's width
+// (Ruling CA). Rendered as the confirmation job renders them, in Georgia as Gmail shows them (it
+// strips web fonts, and Georgia is the wider), with the header photo from the build's own file.
+const EMAIL_SITE = "https://wedding.example";
+const [ceremony, reception, thanks] = contentDefaults.celebrations;
+
+function reply(answers: RsvpRecord["answers"]): RsvpRecord {
+  return {
+    id: "r1",
+    fullName: "Ama Owusu",
+    phone: "024 000 0000",
+    email: "ama@example.com",
+    partySize: "Just me",
+    answers,
+    receivedAt: "2026-10-29T09:41:07.123Z",
+    supersededAt: null,
+    emailStatus: "queued",
+    flags: [],
+  };
+}
+
+const emails = {
+  "the confirmation for a guest who is coming, with their personal link": () =>
+    renderRsvpConfirmation(
+      reply({ [ceremony.id]: "yes", [reception.id]: "yes", [thanks.id]: "no" }),
+      contentDefaults,
+      EMAIL_SITE,
+      `${EMAIL_SITE}/my/made-up-token-for-the-width-check-000000000`,
+    ),
+  "the confirmation for a guest who can come to none": () =>
+    renderRsvpConfirmation(reply({ [ceremony.id]: "no", [reception.id]: "no", [thanks.id]: "no" }), contentDefaults, EMAIL_SITE),
+};
+
+for (const [name, render] of Object.entries(emails)) {
+  test.describe(name, () => {
+    for (const width of [...widths, 1280]) {
+      test(`does not scroll sideways at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 800 });
+        const header = await readFile("public/email/header.jpg");
+        await page.route("https://fonts.gstatic.com/**", (route) => route.abort());
+        await page.route(`${EMAIL_SITE}/email/header.jpg`, (route) => route.fulfill({ body: header, contentType: "image/jpeg" }));
+        await page.setContent((await render()).html, { waitUntil: "load" });
+        await expect(page.getByRole("heading", { level: 1, name: "Dear Ama Owusu," })).toBeVisible();
+        const { scrollWidth, innerWidth, codeLines } = await page.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          // The reception's GhanaPost GPS code, which may move to a line of its own but never splits.
+          codeLines: [...document.querySelectorAll("span")].find((span) => span.textContent === "AX-0084-3317")?.getClientRects().length,
+        }));
+        expect(scrollWidth, `${name} is ${scrollWidth}px wide in a ${innerWidth}px window`).toBeLessThanOrEqual(innerWidth);
+        expect(codeLines).toBe(1);
       });
     }
   });

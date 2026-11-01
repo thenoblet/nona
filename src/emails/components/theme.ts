@@ -53,8 +53,10 @@ export const fontFaces = `
 /**
  * The email stays light: the header photo fades into the blush page, and a dark page would cut
  * it off with a hard edge. `light only` keeps Apple Mail and Outlook for Mac from darkening it.
- * Also keeps iOS from turning dates and places into blue links, and narrows the margins on phones.
- * Kept apart from the font faces: a client that rejects one style block keeps the other.
+ * Also keeps iOS from turning dates and places into blue links, and narrows the margins on phones:
+ * `nn-pad` and `nn-ticket` sit on the cells that carry the padding (a Section's `tdClassName`), so
+ * on a phone 16 px replaces their padding rather than adding to it. Kept apart from the font
+ * faces: a client that rejects one style block keeps the other.
  */
 export const clientStyles = `
 :root { color-scheme: light only; supported-color-schemes: light; }
@@ -63,5 +65,7 @@ a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !im
   .nn-pad { padding-left: 16px !important; padding-right: 16px !important; }
   .nn-stub { width: 64px !important; }
   .nn-ticket { padding-left: 16px !important; padding-right: 16px !important; }
+  /* "Noblet & Nancy" stays on one line: in Georgia, where the script font can't load, 36 px is too wide for 320 px. */
+  .nn-sign { font-size: 32px !important; line-height: 42px !important; }
 }
 `;

@@ -32,6 +32,24 @@ const smallCaps: CSSProperties = {
   textTransform: "uppercase",
 };
 
+const GPS_SEPARATOR = " · ";
+
+/**
+ * "GhanaPost GPS · AX-0084-3317", free to wrap on a narrow phone, but only before the code: the
+ * code itself stays whole (it breaks at its hyphens otherwise), so a guest can read it off as typed.
+ */
+function GpsLine({ line }: { line: string }) {
+  const separator = line.lastIndexOf(GPS_SEPARATOR);
+  if (separator === -1) return <>{line}</>;
+  const codeStart = separator + GPS_SEPARATOR.length;
+  return (
+    <>
+      {line.slice(0, codeStart)}
+      <span style={{ whiteSpace: "nowrap" }}>{line.slice(codeStart)}</span>
+    </>
+  );
+}
+
 /**
  * One celebration as a keepsake ticket: a stub with the day, a dashed perforation, then the name,
  * the guest's answer, when and where, and a Google Calendar link. A celebration they're coming to
@@ -106,7 +124,7 @@ export function CelebrationCard({ celebration }: { celebration: ConfirmationCele
             {celebration.gpsLine ? (
               <>
                 <br />
-                <span style={{ whiteSpace: "nowrap" }}>{celebration.gpsLine}</span>
+                <GpsLine line={celebration.gpsLine} />
               </>
             ) : null}
             {celebration.placeDetail ? (
