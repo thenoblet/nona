@@ -11,7 +11,8 @@ import { mediaBaseUrl } from "@/lib/env";
 /**
  * Every derived file the worker writes. A video's `video` is its H.264 conversion; its `playable`
  * is a clean copy of the original's own streams (Task 14b): no metadata but its capture time,
- * `moov` first.
+ * `moov` first. A site photo (Task 19) has two sizes more, by width: `medium` (960 px) and `large`
+ * (2400 px); `card` is a link preview card the worker drew from one.
  */
 export const DERIVED_VARIANTS = [
   "thumb",
@@ -23,6 +24,8 @@ export const DERIVED_VARIANTS = [
   "playable",
   "audio",
   "card",
+  "medium",
+  "large",
 ] as const;
 
 export type DerivedVariant = (typeof DERIVED_VARIANTS)[number];

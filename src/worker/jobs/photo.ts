@@ -5,7 +5,7 @@ import { assignCelebration } from "@/lib/media/celebration";
 import { errorMessage } from "@/lib/log-error";
 import { plausibleCaptureTime, readPhotoCaptureTime } from "@/lib/media/capture-time";
 import { findItemToProcess, markPhotoReady } from "@/lib/media/rows";
-import { derivedKey } from "@/lib/storage/keys";
+import { derivedKey, type DerivedVariant } from "@/lib/storage/keys";
 import { headOriginal, putPublicObject } from "@/lib/storage/objects";
 import { ProcessError } from "../processes";
 import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
@@ -13,7 +13,7 @@ import { saveOriginal, withScratch } from "../scratch";
 import { describeEnding, killedFromOutside, runCapped, toolDidNotRun } from "./capped-tools";
 import { PHOTO_TYPE_HEAD_BYTES, photoTypeOf, type PhotoFormat } from "./photo-type";
 import { contentHashOf, rewriteManifest, withdrawIfHidden, type JobQueue } from "./publishing";
-import { decoder, deriveStills, sharpFailure, type Stills, type StillSource } from "./stills";
+import { decoder, deriveSiteSizes, deriveStills, sharpFailure, type SiteSizes, type Stills, type StillSource } from "./stills";
 
 /*
  * media.photo: an uploaded photo becomes what the album shows. In its job's scratch folder:
@@ -26,7 +26,9 @@ import { decoder, deriveStills, sharpFailure, type Stills, type StillSource } fr
  *    and the 100 px copy the ThumbHash and average colour are made from (stills.ts, which a video's
  *    poster shares). Each is WebP, which sharp writes with no EXIF and so no location.
  * 4. The capture time comes from the EXIF (capture-time.ts).
- * Then the two files go to the public bucket under a content hash, and the item turns `ready`,
+ * 5. A site photo (purpose "site", the couple's own from the admin, Task 19) gets two sizes more by
+ *    width, 960 and 2400 px (Ruling CI), from a second decode at the larger; the album's stay as they are.
+ * Then the files go to the public bucket under a content hash, and the item turns `ready`,
  * listed, in the celebration its capture time falls in (unless the couple moved it), and its
  * manifest is written again. A HEIC's full-size JPEG is made later, on its first download (media.jpeg).
  *
@@ -107,7 +109,12 @@ type Decodable = StillSource & { kind: PhotoFormat | "heic" | "avif" };
 type Derived = Stills & {
   kind: Decodable["kind"];
   capturedAt: Date | null;
+  /** A site photo's extra sizes; null for the album's. */
+  site: SiteSizes | null;
 };
+
+/** The settings a site photo's files are made with, beside the album's: raise it when its sizes change. */
+const SITE_SETTINGS_VERSION = 1;
 
 /** The first bytes of a file, for its magic numbers. */
 export async function readHead(path: string): Promise<Uint8Array> {
@@ -268,8 +275,8 @@ async function decodable(original: string, format: PhotoFormat, context: HeifCon
   return { path: decoded, maxPixels: MAX_JPEG_PIXELS, autoOrient: false, kind: "heic" };
 }
 
-/** Everything the job makes from the original, in its scratch folder. */
-async function deriveFromOriginal(originalKey: string, context: HeifContext): Promise<Derived> {
+/** Everything the job makes from the original, in its scratch folder: a site photo's extra sizes too. */
+async function deriveFromOriginal(originalKey: string, forSite: boolean, context: HeifContext): Promise<Derived> {
   const original = join(context.folder, "original");
   await saveOriginal(originalKey, original, context.signal);
   const type = photoTypeOf(await readHead(original));
@@ -277,7 +284,9 @@ async function deriveFromOriginal(originalKey: string, context: HeifContext): Pr
   const source = await decodable(original, type.format, context);
   // A HEIC's EXIF is read from its decoded JPEG, which heif-dec writes it into in the standard way.
   const capturedAt = await readPhotoCaptureTime(source.path);
-  return { ...(await deriveStills(source)), kind: source.kind, capturedAt };
+  const stills = await deriveStills(source);
+  const site = forSite ? await deriveSiteSizes(source) : null;
+  return { ...stills, kind: source.kind, capturedAt, site };
 }
 
 /** media.photo's work for one job, whose data is `{ mediaId }`. */
@@ -291,22 +300,27 @@ export async function processPhoto(job: MediaJob, options: PhotoOptions): Promis
   const original = await headOriginal(item.originalKey, { signal: job.signal });
   if (!original) throw new Error(`The original ${item.originalKey} isn't in the private bucket`);
 
+  const forSite = item.purpose === "site";
   const derived = await withScratch(original.size + DECODED_JPEG_BYTES, (folder) =>
-    deriveFromOriginal(item.originalKey, { ...options, folder, signal: job.signal }),
+    deriveFromOriginal(item.originalKey, forSite, { ...options, folder, signal: job.signal }),
   );
   // A time from a reset or wrong clock counts as none: the file's, then the phone's, then the upload's.
   const capturedAt =
     plausibleCaptureTime(derived.capturedAt, item.startedAt) ?? plausibleCaptureTime(item.capturedAt, item.startedAt);
   const { value: celebrations } = await readSection("celebrations");
-  const contentHash = contentHashOf(original.etag, `photo-settings-${PHOTO_SETTINGS_VERSION}`, item.derivedGeneration);
-  const keys = {
-    thumb: derivedKey(mediaId, contentHash, "thumb", "webp"),
-    view: derivedKey(mediaId, contentHash, "view", "webp"),
-  };
-  await Promise.all([
-    putPublicObject(keys.thumb, derived.thumb, "image/webp", { signal: job.signal }),
-    putPublicObject(keys.view, derived.view, "image/webp", { signal: job.signal }),
-  ]);
+  const settings = `photo-settings-${PHOTO_SETTINGS_VERSION}${forSite ? `+site-${SITE_SETTINGS_VERSION}` : ""}`;
+  const contentHash = contentHashOf(original.etag, settings, item.derivedGeneration);
+  const files: [DerivedVariant, Buffer][] = [
+    ["thumb", derived.thumb],
+    ["view", derived.view],
+    ...(derived.site ? ([["medium", derived.site.medium], ["large", derived.site.large]] as [DerivedVariant, Buffer][]) : []),
+  ];
+  const keys: Partial<Record<DerivedVariant, string>> = Object.fromEntries(
+    files.map(([variant]) => [variant, derivedKey(mediaId, contentHash, variant, "webp")]),
+  );
+  await Promise.all(
+    files.map(([variant, bytes]) => putPublicObject(keys[variant] as string, bytes, "image/webp", { signal: job.signal })),
+  );
 
   const manifest = await markPhotoReady(mediaId, {
     derived: keys,
@@ -319,7 +333,7 @@ export async function processPhoto(job: MediaJob, options: PhotoOptions): Promis
     celebration: assignCelebration(capturedAt, item.startedAt, celebrations),
   });
   if (!manifest) {
-    await withdrawIfHidden(job.queue, mediaId, [keys.thumb, keys.view], {
+    await withdrawIfHidden(job.queue, mediaId, Object.values(keys) as string[], {
       signal: job.signal,
       jobQueue: options.jobQueue,
       derivedGeneration: item.derivedGeneration,
@@ -327,7 +341,7 @@ export async function processPhoto(job: MediaJob, options: PhotoOptions): Promis
     return;
   }
   await rewriteManifest(job.queue, mediaId, manifest, job.signal);
-  return { sizeBytes: original.size, kind: `photo/${derived.kind}` };
+  return { sizeBytes: original.size, kind: `${forSite ? "site-photo" : "photo"}/${derived.kind}` };
 }
 
 /** media.photo's handler, with the worker's settings. */

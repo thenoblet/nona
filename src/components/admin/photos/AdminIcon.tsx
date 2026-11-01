@@ -1,4 +1,4 @@
-/** The Photos page's icons (gate B): stroked, 24 × 24, coloured by the text around them. */
+/** The Photos and Site photos pages' icons (gate B): stroked, 24 × 24, coloured by the text around them. */
 const PATHS = {
   search: (
     <>
@@ -42,6 +42,14 @@ const PATHS = {
     </>
   ),
   play: <path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none" />,
+  upload: <path d="M12 16V5M7 10l5-5 5 5M5 20h14" />,
+  chevron: <path d="M6 9l6 6 6-6" />,
+  user: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </>
+  ),
   open: (
     <>
       <path d="M14 4h6v6" />

@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { listWishes } from "@/lib/data/wishes";
 import { readGuestIds } from "@/lib/guests/cookie";
+import { getSiteImages, storedCardImages } from "@/lib/site-images/get";
 import { shareDefaults } from "@/lib/share";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { Paper } from "@/components/ui/Paper";
@@ -11,16 +12,25 @@ import { Eyebrow, Motto, Ornament } from "@/components/ui/Typography";
 import { TextWish, VideoWish, VoiceWish } from "@/components/wishes/WishCards";
 import { WishComposer } from "@/components/wishes/WishComposer";
 
-export const metadata: Metadata = {
-  title: "Wishes",
-  description: "Leave Noblet and Nancy a wish: words, a voice note or a short video.",
-  openGraph: {
-    ...shareDefaults,
-    title: "Leave us a wish · Noblet & Nancy",
-    description: "Words, a voice note or a short video. We'll treasure every one.",
-    url: "/wishes",
-  },
-};
+/**
+ * Read at request time (as the root layout's metadata already is): once the couple change the
+ * wishes card's photo in the admin and the worker has drawn it, og:image is that card; until then,
+ * the build-time one from opengraph-image.tsx.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  await connection();
+  return {
+    title: "Wishes",
+    description: "Leave Noblet and Nancy a wish: words, a voice note or a short video.",
+    openGraph: {
+      ...shareDefaults,
+      title: "Leave us a wish · Noblet & Nancy",
+      description: "Words, a voice note or a short video. We'll treasure every one.",
+      url: "/wishes",
+      ...storedCardImages(await getSiteImages(), "wishes"),
+    },
+  };
+}
 
 /** The guestbook: a composer on a tray band, then the wishes wall. */
 export default function WishesPage() {

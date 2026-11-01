@@ -2,7 +2,9 @@ import Image from "next/image";
 import type { CSSProperties } from "react";
 import { couple, wedding } from "@/content/wedding";
 import { photos } from "@/content/images";
+import type { SlotPhoto } from "@/lib/site-images/photos";
 import { PillLink, TextLink } from "@/components/ui/Button";
+import { SitePhoto } from "@/components/ui/SitePhoto";
 import { Eyebrow, Motto, Ornament } from "@/components/ui/Typography";
 import { Countdown } from "./Countdown";
 
@@ -20,15 +22,30 @@ function Names({ className = "" }: { className?: string }) {
 }
 
 const wrap = "relative bg-cocoa px-5 text-center text-white sm:px-6";
-const inner = "mx-auto flex max-w-[900px] flex-col items-center";
+const inner = "relative mx-auto flex max-w-[900px] flex-col items-center";
 
 /**
- * Before the wedding. The pre-wedding shoot photo will go behind this hero
- * (add it as a darkened next/image with `fill` when the shoot is done).
+ * The couple's photo behind the names (the admin's "Home hero", the pre-wedding shoot), under the
+ * cards' cocoa wash so the names stay clear. Nothing until they add one: the hero is plain cocoa.
  */
-export function HeroBefore() {
+function HeroBackdrop({ photo }: { photo: SlotPhoto | null }) {
+  if (!photo) return null;
+  return (
+    <div aria-hidden className="absolute inset-0 overflow-hidden">
+      <SitePhoto photo={photo} fill priority decorative sizes="100vw" className="object-cover" />
+      <div
+        className="absolute inset-0"
+        style={{ backgroundImage: "linear-gradient(180deg, rgb(61 41 39 / 0.8) 0%, rgb(61 41 39 / 0.7) 45%, rgb(61 41 39 / 0.88) 100%)" }}
+      />
+    </div>
+  );
+}
+
+/** Before the wedding, with the couple's photo behind it once they add one (Site photos). */
+export function HeroBefore({ photo }: { photo: SlotPhoto | null }) {
   return (
     <section id="top" className={`${wrap} pt-16 pb-20 sm:pt-22 sm:pb-26`}>
+      <HeroBackdrop photo={photo} />
       <div className={`${inner} gap-6 sm:gap-7`}>
         <Eyebrow tone="ember" className="animate-rise" >Together with their families</Eyebrow>
         <Names />
@@ -62,9 +79,18 @@ export function HeroBefore() {
  * Wedding weekend: photo sharing comes first. `now` is what is on right now; nothing is shown
  * for it when the schedule is empty.
  */
-export function HeroDay({ todayLabel, now }: { todayLabel: string; now: { title: string; place: string } | null }) {
+export function HeroDay({
+  todayLabel,
+  now,
+  photo,
+}: {
+  todayLabel: string;
+  now: { title: string; place: string } | null;
+  photo: SlotPhoto | null;
+}) {
   return (
     <section id="top" className={`${wrap} pt-14 pb-20 sm:pt-20 sm:pb-24`}>
+      <HeroBackdrop photo={photo} />
       <div className={`${inner} gap-6`}>
         <Eyebrow tone="ember" className="animate-rise">
           {todayLabel} · {wedding.town}

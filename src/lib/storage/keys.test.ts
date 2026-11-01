@@ -40,6 +40,8 @@ describe("derivedKey", () => {
       "playable",
       "audio",
       "card",
+      "medium",
+      "large",
     ]);
     for (const variant of DERIVED_VARIANTS) {
       expect(derivedKey(mediaId, contentHash, variant, "bin")).toBe(

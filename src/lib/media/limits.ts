@@ -9,8 +9,14 @@ import type { MEDIA_FILE_KINDS } from "@/lib/db/schema";
 
 type MediaFileKind = (typeof MEDIA_FILE_KINDS)[number];
 
-/** What a guest's upload is for. Site photos (Task 19) go through the admin, not these checks. */
+/** What a guest's upload is for. */
 export type GuestUploadPurpose = "album" | "wish";
+
+/**
+ * What any upload is for: a guest's, or one of the site's own photos, which only the admin's route
+ * starts (Task 19; the guests' API refuses "site" before it reaches these checks).
+ */
+export type UploadPurpose = GuestUploadPurpose | "site";
 
 const MEBIBYTE = 1024 * 1024;
 
@@ -124,7 +130,7 @@ function accepting(
   );
 }
 
-const ACCEPTED: Record<GuestUploadPurpose, Record<string, Accepted>> = {
+const ACCEPTED: Record<UploadPurpose, Record<string, Accepted>> = {
   album: {
     ...accepting(PHOTO_TYPES, "photo", SIZE_LIMITS.photo, "This photo is over 50 MB, the most the album takes."),
     ...accepting(
@@ -138,11 +144,14 @@ const ACCEPTED: Record<GuestUploadPurpose, Record<string, Accepted>> = {
     ...accepting(VOICE_TYPES, "audio", SIZE_LIMITS.voiceWish, "This voice message is over 20 MB, the most a wish takes."),
     ...accepting(VIDEO_TYPES, "video", SIZE_LIMITS.videoWish, "This video message is over 400 MB, the most a wish takes."),
   },
+  // The couple's own photos for the site: the album's photo types and limit.
+  site: accepting(PHOTO_TYPES, "photo", SIZE_LIMITS.photo, "This photo is over 50 MB. Please choose a smaller copy."),
 };
 
-const UNSUPPORTED: Record<GuestUploadPurpose, string> = {
+const UNSUPPORTED: Record<UploadPurpose, string> = {
   album: "Only photos and videos can be shared here.",
   wish: "Only voice and video recordings can be sent here.",
+  site: "Only photos can be used here.",
 };
 
 /** Extensions refused outright, whatever type the file declares: documents, pages and programs. */
@@ -206,7 +215,7 @@ export type UploadCheck =
  * filename's when it agrees with the type, else the type's own) and its parts.
  */
 export function checkUpload(upload: {
-  purpose: GuestUploadPurpose;
+  purpose: UploadPurpose;
   filename: string;
   contentType: string;
   size: number;
@@ -217,7 +226,7 @@ export function checkUpload(upload: {
   if (REFUSED_EXTENSIONS.has(extension)) return unsupported;
 
   let contentType = normalizeContentType(upload.contentType);
-  if (contentType === UNKNOWN_BINARY && purpose === "album" && HEIC_EXTENSIONS.has(extension)) {
+  if (contentType === UNKNOWN_BINARY && purpose !== "wish" && HEIC_EXTENSIONS.has(extension)) {
     contentType = "image/heic";
   }
   const accepted = Object.hasOwn(ACCEPTED[purpose], contentType) ? ACCEPTED[purpose][contentType] : undefined;

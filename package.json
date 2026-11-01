@@ -37,6 +37,7 @@
     "react-dom": "19.3.0",
     "react-email": "6.11.6",
     "resend": "^6.35.0",
+    "satori": "0.29.0",
     "server-only": "^0.0.1",
     "sharp": "^0.35.5",
     "thumbhash": "0.1.1",

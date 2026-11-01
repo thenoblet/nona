@@ -32,6 +32,8 @@ COPY tsconfig.json ./
 COPY scripts/build-worker.mjs scripts/
 COPY src src
 COPY drizzle drizzle
+# The link preview cards' built-in photos, which media.card draws from (copied into card-assets/).
+COPY public/images/story public/images/story
 RUN npm run build:worker
 
 # Production dependencies only: the bundle leaves every package to node_modules, and its build

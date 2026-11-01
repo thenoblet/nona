@@ -364,6 +364,35 @@ describe("a photo's derived files", () => {
     expect(report).toEqual({ sizeBytes: jpeg.length, kind: "photo/jpeg" });
   });
 
+  it("are, for a site photo (Task 19), two sizes more by width, 960 and 2400 px, upright: the album's sizes stay as they are", async () => {
+    // Taken on its side (orientation 6), so upright it is 2000 × 3000: a portrait.
+    const jpeg = await phonePhoto(3000, 2000).jpeg().toBuffer();
+    const siteId = await uploadedPhoto(jpeg, "jpg", { purpose: "site", uploaderName: null });
+    const albumId = await uploadedPhoto(jpeg, "jpg");
+
+    await processPhoto(photoJob(siteId), PHOTO_OPTIONS);
+    await processPhoto(photoJob(albumId), PHOTO_OPTIONS);
+
+    const site = await readItem(siteId);
+    expect(site).toMatchObject({ status: "ready", width: 2000, height: 3000 });
+    expect(Object.keys(site.derived).sort()).toEqual(["large", "medium", "thumb", "view"]);
+    expect(site.derived.medium).toMatch(new RegExp(`^derived/${siteId}/[0-9a-f]{16}/medium\\.webp$`));
+    expect((await publicKeysOf(siteId)).sort()).toEqual(Object.values(site.derived).sort());
+    expect(await sizeOf((await readPublic(site.derived.medium ?? "")).bytes)).toEqual({ width: 960, height: 1440, format: "webp" });
+    const large = await readPublic(site.derived.large ?? "");
+    // Never enlarged: 2000 px is all the photo has.
+    expect(await sizeOf(large.bytes)).toEqual({ width: 2000, height: 3000, format: "webp" });
+    expect(large.cacheControl).toBe("public, max-age=31536000, immutable");
+    expect(await sizeOf((await readPublic(site.derived.view ?? "")).bytes)).toEqual({ width: 1067, height: 1600, format: "webp" });
+    // Upright: the blue band the EXIF turns runs along the top.
+    expect(isBlue(await colourAt(large.bytes, 0.5, 0.05))).toBe(true);
+    expect(isBlue(await colourAt(large.bytes, 0.5, 0.95))).toBe(false);
+
+    const album = await readItem(albumId);
+    expect(Object.keys(album.derived).sort()).toEqual(["thumb", "view"]);
+    expect((await publicKeysOf(albumId)).sort()).toEqual([album.derived.thumb, album.derived.view].sort());
+  });
+
   it("turn a JPEG with EXIF orientation 6 into an upright portrait thumbnail", async () => {
     const mediaId = await uploadedPhoto(await phonePhoto(1200, 900).jpeg().toBuffer(), "jpg");
 

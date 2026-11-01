@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { previewPhotos } from "@/content/preview-photos";
+import { CARD_FONTS } from "@/lib/preview-cards/layout";
 import { buildWorker } from "../../scripts/build-worker.mjs";
 
 const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -62,5 +64,16 @@ describe("the worker's bundle build", () => {
     const journal = JSON.parse(await readFile(join(outdir, "drizzle", "meta", "_journal.json"), "utf8"));
     const migrations = await readdir(join(outdir, "drizzle"));
     for (const entry of journal.entries as { tag: string }[]) expect(migrations).toContain(`${entry.tag}.sql`);
+
+    // The preview cards' fonts and built-in photos travel in the image, so drawing one fetches nothing (Task 19).
+    expect((await readdir(join(outdir, "card-assets", "fonts"))).sort()).toEqual(
+      CARD_FONTS.map((font) => font.file).sort(),
+    );
+    for (const { file } of Object.values(previewPhotos)) {
+      const copied = await readFile(join(outdir, "card-assets", "public", file));
+      expect(copied.equals(await readFile(join(projectRoot, "public", file))), file).toBe(true);
+    }
+    // satori and its layout engine are production dependencies the image installs.
+    expect(packageNames).toContain("satori");
   });
 });

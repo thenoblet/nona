@@ -23,6 +23,7 @@ Mobile-first: every page is designed for a phone, then widened for larger screen
 | `/admin/rsvps` | Every current reply, with totals per celebration, search, filters, each reply's confirmation email ("Sent", "Sending", "Not sent", "Failed" or "No email") and the replies to check ("Keep this one", "Keep both"). |
 | `/admin/rsvps.csv` | The replies as a spreadsheet (CSV), times in Accra. |
 | `/admin/content/[section]` | Edit the site's times, venues and text, one section at a time (`celebrations`, `schedule`, `venues`, `landmarks`, `faq`, `travel`, `gifts`, `party`, `story`, `live-stream`), with every saved version kept for undo. |
+| `/admin/photos/site` | The site's own photos (the landing cover and print, the home hero, the invitation band, the story, the gallery, each link preview card's photo and one portrait per wedding-party member): replace any, set its alt text and focal point, or go back to an earlier one. A link preview's card is drawn again by the media worker; the built-in photos in `src/content/images.ts` stay as defaults. |
 
 ### Previewing the homepage versions
 

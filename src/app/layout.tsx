@@ -5,6 +5,7 @@ import { cormorant, jost, pinyon } from "./fonts";
 import { MusicProvider } from "@/components/music/MusicProvider";
 import { accraDayAndFullMonth } from "@/lib/accra";
 import { getSiteContent } from "@/lib/content/get";
+import { getSiteImages, storedCardImages } from "@/lib/site-images/get";
 import { shareDefaults } from "@/lib/share";
 import { siteUrl } from "@/lib/site-url";
 import "./globals.css";
@@ -12,11 +13,13 @@ import "./globals.css";
 /**
  * Read at request time, so the reply-by date set in the admin, or replies being closed, reach link
  * previews without a rebuild (the build has no database). Browsers get the tags streamed in after the page's static
- * shell; link-preview bots (WhatsApp, Facebook, X) still get them in the <head>.
+ * shell; link-preview bots (WhatsApp, Facebook, X) still get them in the <head>. The same goes for the
+ * invitation card's photo: once the couple change it in the admin and the worker has drawn the card,
+ * og:image is that card (on MEDIA_BASE_URL); until then, opengraph-image.tsx's build-time one.
  */
 export async function generateMetadata(): Promise<Metadata> {
   await connection();
-  const { rsvp } = await getSiteContent();
+  const [{ rsvp }, siteImages] = await Promise.all([getSiteContent(), getSiteImages()]);
   return {
     metadataBase: new URL(siteUrl()),
     title: {
@@ -33,6 +36,7 @@ export async function generateMetadata(): Promise<Metadata> {
         rsvp.open ? `Kindly reply by ${accraDayAndFullMonth(rsvp.replyBy)}.` : "Replies have closed."
       }`,
       url: "/",
+      ...storedCardImages(siteImages, "invitation"),
     },
     twitter: { card: "summary_large_image" },
   };

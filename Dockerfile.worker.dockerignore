@@ -11,6 +11,8 @@
 !src
 !test
 !drizzle
+# The built-in photos the link preview cards are drawn from (src/content/preview-photos.ts).
+!public/images/story
 
 # never these, even inside the folders above
 **/.env*

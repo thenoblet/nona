@@ -7,14 +7,18 @@ import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { Icon } from "@/components/ui/Icon";
 import { Eyebrow } from "@/components/ui/Typography";
 import { getSiteContent } from "@/lib/content/get";
+import { getSiteImages, storedCardImages } from "@/lib/site-images/get";
 import { siteUrl } from "@/lib/site-url";
 import { RepliesClosed } from "@/components/rsvp/RepliesClosed";
 import { RsvpForm } from "@/components/rsvp/RsvpForm";
 
-/** Read at request time, so the reply-by date, or replies being closed, reach link previews without a rebuild. */
+/**
+ * Read at request time, so the reply-by date, or replies being closed, reach link previews without a
+ * rebuild, and so does the card's photo once the couple change it (the worker's card on og:image).
+ */
 export async function generateMetadata(): Promise<Metadata> {
   await connection();
-  const { rsvp } = await getSiteContent();
+  const [{ rsvp }, siteImages] = await Promise.all([getSiteContent(), getSiteImages()]);
   const description = rsvp.open
     ? `We'd love to know if you can celebrate with us. Please reply by ${accraDayAndFullMonth(rsvp.replyBy)}; it only takes a minute.`
     : "Replies have closed.";
@@ -26,6 +30,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title: "Kindly respond · Noblet & Nancy",
       description,
       url: "/rsvp",
+      ...storedCardImages(siteImages, "rsvp"),
     },
   };
 }
