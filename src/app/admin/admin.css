@@ -45,13 +45,11 @@
 .admin .admin-brand { display: inline-flex; align-items: center; gap: 0.25em; min-height: 44px; font-weight: 600; text-decoration: none; color: var(--admin-text); white-space: nowrap; }
 .admin-brand span { font-weight: 400; color: var(--admin-muted); }
 .admin-tabs { display: flex; gap: 4px; }
-.admin .admin-tabs > a, .admin-tabs > span {
+.admin .admin-tabs > a {
   display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px;
   text-decoration: none; color: var(--admin-muted); border-bottom: 2px solid transparent; white-space: nowrap;
 }
 .admin .admin-tabs a[aria-current="page"] { color: var(--admin-text); border-bottom-color: var(--admin-accent); font-weight: 600; }
-.admin-tabs .admin-tab-disabled { color: var(--admin-disabled); cursor: not-allowed; }
-.admin-tab-disabled small { font-size: 11px; }
 .admin .admin-viewsite { display: inline-flex; align-items: center; min-height: 44px; margin-left: auto; white-space: nowrap; text-decoration: none; font-size: 14px; }
 @media (max-width: 599px) {
   .admin-topbar-inner { gap: 0 12px; padding-top: 6px; }
@@ -340,4 +338,212 @@
 }
 @media (pointer: coarse) {
   .admin .admin-btn-small { min-height: 44px; }
+}
+
+/* ---------- Photos (Task 17, gate B) ---------- */
+
+.admin-icon { display: block; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.admin .admin-btn-danger { color: var(--admin-bad); border-color: #f1b8b1; }
+.admin .admin-btn-danger-solid { background: var(--admin-bad); border-color: var(--admin-bad); color: #fff; }
+.admin .admin-btn-danger-solid:hover:not(:disabled) { background: #912018; border-color: #912018; }
+.admin .admin-btn:disabled:hover, .admin .admin-btn[aria-disabled="true"]:hover { background: var(--admin-surface); border-color: var(--admin-border); }
+.admin .admin-btn-primary:disabled:hover { background: var(--admin-accent); border-color: var(--admin-accent); }
+.admin-notice-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+
+/* The album and the wishes sit under small tabs of their own. */
+.admin-subtabs { display: flex; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid var(--admin-border); }
+.admin .admin-subtabs a {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; margin-bottom: -1px;
+  border-bottom: 2px solid transparent; color: var(--admin-muted); text-decoration: none; white-space: nowrap;
+}
+.admin .admin-subtabs a[aria-current="page"] { color: var(--admin-text); border-bottom-color: var(--admin-accent); font-weight: 600; }
+.admin-count { padding: 1px 7px; border-radius: 999px; background: var(--admin-soft); color: var(--admin-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* The two switches, and the TV delay beside them */
+.admin-switches { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); align-items: start; gap: 12px; margin-bottom: 20px; }
+.admin-switchcard { min-width: 0; padding: 12px 16px 14px; background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius); }
+.admin-switchcard[data-confirming] { border-color: #e7b38f; }
+.admin .admin-switch {
+  width: 100%; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.admin-switch-label { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 16px; font-weight: 700; }
+.admin-switch-label h2 { margin: 0; font-size: 16px; font-weight: 700; }
+.admin-track { position: relative; flex: none; width: 52px; height: 32px; border-radius: 999px; background: #c9c5c2; transition: background-color 200ms ease; }
+.admin-track::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 999px; background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25); transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.admin-switch[aria-checked="true"] .admin-track { background: var(--admin-accent); }
+.admin-switch[aria-checked="true"] .admin-track::after { transform: translateX(20px); }
+.admin-switch-text { margin: 0; font-size: 14px; color: var(--admin-muted); overflow-wrap: anywhere; }
+.admin-switch-hint { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--admin-accent-soft); color: var(--admin-accent-text); font-size: 13.5px; }
+.admin-switchcard .admin-confirm { margin-top: 10px; padding-top: 10px; overflow-wrap: anywhere; }
+.admin-switchcard .admin-confirm p + p { margin-top: 4px; font-weight: 400; color: var(--admin-muted); font-size: 14px; }
+.admin-switchcard .admin-notice { margin: 10px 0 0; }
+.admin-switchcard .admin-notice:empty { margin: 0; }
+.admin-delay-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 48px; }
+.admin-delay-head h2 { margin: 0; font-size: 16px; font-weight: 700; }
+.admin-delay-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; margin-top: 10px; }
+.admin-delay-form .admin-field { flex: 0 1 140px; }
+.admin-delay-form .admin-field input { font-variant-numeric: tabular-nums; }
+.admin-delay-form .admin-field-hint { flex: 1 1 100%; }
+
+/* The album: a grid of tiles and the item's panel */
+.admin-toolbar .admin-celebration, .admin-toolbar .admin-kind { flex: 0 1 200px; min-width: 0; }
+.admin-toolbar select, .admin-move select {
+  width: 100%; min-width: 0; min-height: 44px; padding: 0 10px; border: 1px solid var(--admin-border); border-radius: 8px;
+  background: var(--admin-surface); color: inherit; font: inherit; font-size: 16px;
+}
+.admin-toolbar select:focus, .admin-move select:focus, .admin-search input:focus { border-color: var(--admin-accent); }
+.admin-filter b { font-variant-numeric: tabular-nums; }
+.admin-searchnote { margin: -4px 0 12px; color: var(--admin-muted); font-size: 13.5px; overflow-wrap: anywhere; }
+/* While a search is on, the chips' numbers aren't the search's: dimmed, and the note says so. */
+.admin-filters-searching .admin-filter b { opacity: 0.45; font-weight: 500; }
+.admin-filters-searching .admin-filter[aria-pressed="true"] b { opacity: 0.7; }
+.admin-mod { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+.admin-mod[data-busy] .admin-mod-grid { opacity: 0.55; transition: opacity 120ms ease 150ms; }
+.admin-mod-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px 12px; }
+.admin .admin-tile {
+  width: 100%; display: flex; flex-direction: column; gap: 6px; padding: 0; border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 8px;
+}
+.admin-thumb {
+  position: relative; display: block; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background-color: var(--admin-soft);
+  background-size: cover; background-position: center; box-shadow: 0 0 0 0 var(--admin-accent); transition: box-shadow 160ms ease;
+}
+.admin-tile:hover .admin-thumb { box-shadow: 0 0 0 2px #bfbbb8; }
+.admin-tile[aria-pressed="true"] .admin-thumb { box-shadow: 0 0 0 3px var(--admin-accent); }
+.admin-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* A hidden or removed item shows only its ThumbHash, greyed (Ruling BV); one being processed, blurred. */
+.admin-tile.is-withdrawn .admin-thumb { filter: grayscale(0.6); }
+.admin-tile.is-processing .admin-thumb { filter: saturate(0.8); }
+.admin-thumb .admin-badge { position: absolute; left: 6px; top: 6px; max-width: calc(100% - 12px); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.admin-badge-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.admin-star {
+  position: absolute; right: 6px; bottom: 6px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 999px;
+  background: #fff; color: var(--admin-accent); box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+.admin-length {
+  position: absolute; left: 6px; bottom: 6px; display: flex; align-items: center; gap: 4px; padding: 1px 7px 1px 5px;
+  border-radius: 999px; background: rgb(255 255 255 / 0.95); color: var(--admin-text); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.admin-nothumb {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: repeating-linear-gradient(135deg, #f7f6f5 0 8px, #efedeb 8px 16px); color: var(--admin-bad);
+}
+.admin-tile-name { display: block; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.admin-tile-when { display: block; min-width: 0; margin-top: -4px; font-size: 13px; color: var(--admin-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.admin-more { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; }
+
+.admin-panel {
+  position: sticky; top: 76px; max-height: calc(100dvh - 96px); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius);
+}
+.admin-panel-head {
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 6px 6px 16px; background: var(--admin-surface); border-bottom: 1px solid var(--admin-soft);
+}
+.admin-panel-head h2 { margin: 0; min-width: 0; font-size: 16px; font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.admin .admin-iconbtn {
+  width: 44px; height: 44px; display: grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 8px;
+  background: none; color: var(--admin-muted); cursor: pointer;
+}
+.admin .admin-iconbtn:hover { background: var(--admin-subtle); color: var(--admin-text); }
+.admin-preview {
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center;
+  height: 240px; padding: 12px; background: #2a2725;
+}
+.admin-preview img { display: block; width: auto; height: 100%; max-width: 100%; border-radius: 2px; object-fit: contain; }
+.admin-preview-blur { width: 100%; height: 100%; border-radius: 4px; background-color: #3a3533; background-size: cover; background-position: center; filter: grayscale(0.4); }
+.admin-preview .admin-nothumb { position: static; width: 100%; height: 100%; border-radius: 4px; }
+.admin .admin-preview-open {
+  position: absolute; right: 12px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px;
+  border-radius: 999px; background: rgb(255 255 255 / 0.94); color: var(--admin-text); font-size: 13.5px; font-weight: 600; text-decoration: none;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+.admin .admin-preview-open:hover { background: #fff; }
+.admin-panel-body { padding: 14px 16px 16px; display: grid; gap: 16px; }
+.admin-status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.admin-reason { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--admin-bad-bg); color: var(--admin-bad); font-size: 14px; overflow-wrap: anywhere; }
+.admin-reason small { display: block; margin-top: 2px; color: #7a2a22; font-size: 12.5px; }
+.admin-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 14px; }
+.admin-facts dt { color: var(--admin-muted); }
+.admin-facts dd { margin: 0; overflow-wrap: anywhere; }
+.admin-facts dd span { color: var(--admin-muted); }
+.admin-actions { display: grid; gap: 14px; padding-top: 14px; border-top: 1px solid var(--admin-soft); }
+.admin-action { display: grid; gap: 4px; min-width: 0; }
+.admin-action > .admin-btn { justify-self: start; }
+.admin-label { font-size: 13px; font-weight: 500; }
+.admin-move { display: flex; gap: 8px; }
+.admin-move select { flex: 1 1 auto; }
+.admin-panel-empty { margin: 0; padding: 40px 20px; color: var(--admin-muted); text-align: center; font-size: 14px; }
+.admin-panel .admin-notice { margin: 0; }
+.admin-panel .admin-confirm p + p { margin-top: 2px; font-weight: 400; color: var(--admin-muted); font-size: 14px; }
+.admin-scrim { display: none; }
+
+/* Wishes: a table on wide screens, a card per wish on phones (as Replies). */
+.admin-wishes { width: 100%; border-collapse: collapse; }
+.admin-wishes th {
+  padding: 10px 12px; border-bottom: 1px solid var(--admin-border); background: var(--admin-subtle);
+  color: var(--admin-muted); font-size: 12.5px; font-weight: 600; text-align: left; white-space: nowrap;
+}
+.admin-wishes td { padding: 12px; border-bottom: 1px solid var(--admin-soft); vertical-align: top; }
+.admin-wishes tbody tr:last-child td { border-bottom: 0; }
+.admin-wishes tr.is-hidden .admin-wish-body { color: var(--admin-muted); }
+.admin-wish-body { display: block; max-width: 46ch; overflow-wrap: anywhere; }
+.admin-wish-recording { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.admin-wish-who { font-weight: 600; white-space: nowrap; }
+.admin-wish-when { white-space: nowrap; color: var(--admin-muted); font-size: 14px; }
+.admin-wish-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.admin-wish-actions .admin-field-hint { flex-basis: 100%; }
+.admin-wishes .admin-confirm { flex-basis: 100%; overflow-wrap: anywhere; }
+.admin-wish-error { flex-basis: 100%; margin: 0; color: var(--admin-bad); font-size: 13.5px; font-weight: 500; }
+
+@media (max-width: 1099px) {
+  .admin-mod { grid-template-columns: minmax(0, 1fr) 320px; }
+}
+/* Under 900 px the panel becomes a sheet from the bottom of the screen. */
+@media (max-width: 899px) {
+  .admin-mod { grid-template-columns: minmax(0, 1fr); }
+  .admin-panel {
+    position: fixed; z-index: 21; left: 0; right: 0; bottom: 0; top: auto; max-height: 86dvh; border-radius: 16px 16px 0 0; border-bottom: 0;
+    box-shadow: 0 -12px 40px rgb(0 0 0 / 0.18); transform: translateY(105%); visibility: hidden;
+    transition: transform 380ms cubic-bezier(0.16, 1, 0.3, 1), visibility 0s linear 380ms;
+  }
+  .admin-panel.is-open { transform: none; visibility: visible; transition: transform 380ms cubic-bezier(0.16, 1, 0.3, 1), visibility 0s; }
+  .admin-panel-head::before {
+    content: ""; position: absolute; left: 50%; top: 6px; width: 36px; height: 4px; margin-left: -18px; border-radius: 4px; background: var(--admin-border);
+  }
+  .admin-panel-head { padding-top: 12px; }
+  .admin-scrim {
+    display: block; position: fixed; z-index: 20; inset: 0; background: rgb(28 26 25 / 0.4); opacity: 0; visibility: hidden;
+    transition: opacity 300ms ease, visibility 0s linear 300ms;
+  }
+  .admin-scrim.is-on { opacity: 1; visibility: visible; transition: opacity 300ms ease, visibility 0s; }
+  .admin-preview { height: 200px; }
+}
+@media (max-width: 859px) {
+  .admin-wishes, .admin-wishes tbody, .admin-wishes td { display: block; }
+  .admin-wishes thead { display: none; }
+  .admin-wishes tbody { display: grid; gap: 10px; }
+  .admin-wishes tr {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px 0;
+    background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius);
+  }
+  .admin-wishes td { min-width: 0; padding: 6px 14px; border: 0; }
+  .admin-wishes td[data-label]::before { content: attr(data-label); display: block; color: var(--admin-muted); font-size: 12px; }
+  .admin-wishes td.admin-wish-cell, .admin-wishes td.admin-wish-actions-cell, .admin-wishes td[data-label="Status"] { grid-column: 1 / -1; }
+  .admin-wishes td.admin-wish-cell { padding-top: 10px; }
+  .admin-wishes td.admin-wish-actions-cell { padding-bottom: 12px; }
+  .admin-wish-who, .admin-wish-when { white-space: normal; overflow-wrap: anywhere; }
+}
+@media (max-width: 599px) {
+  .admin-mod-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; }
+  .admin-thumb .admin-badge { left: 4px; top: 4px; padding: 1px 7px; font-size: 12px; }
+  .admin-tile-name, .admin-tile-when { font-size: 12.5px; }
+  .admin-toolbar .admin-celebration, .admin-toolbar .admin-kind { flex: 1 1 140px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-track, .admin-track::after, .admin-thumb, .admin-panel, .admin-scrim { transition: none !important; }
 }

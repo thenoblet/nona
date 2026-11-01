@@ -6,6 +6,7 @@ import { confirmLeave } from "./content/unsaved";
 
 const tabs = [
   { href: "/admin/rsvps", label: "Replies" },
+  { href: "/admin/photos", label: "Photos" },
   { href: "/admin/content", label: "Site text" },
 ];
 
@@ -30,9 +31,6 @@ export function AdminTabLinks({ currentPath }: { currentPath: string | null }) {
           </Link>
         );
       })}
-      <span className="admin-tab-disabled" aria-disabled="true">
-        Photos <small>soon</small>
-      </span>
     </nav>
   );
 }

@@ -16,6 +16,12 @@ export type SettingValues = {
   convert_backlog: boolean;
   /** The worker's last heartbeat (ISO time), or null before it has ever run. */
   worker_heartbeat: string | null;
+  /**
+   * The venue TV's delay (Task 17): how many seconds after a moment is listed the slideshow may
+   * show it, 0 to 900, so the couple can hide anything first. Null until the admin saves one, when
+   * SLIDESHOW_DELAY_SECONDS applies (slideshow-delay.ts reads it).
+   */
+  slideshow_delay_seconds: number | null;
 };
 
 export type SettingKey = keyof SettingValues;
@@ -26,6 +32,7 @@ export const SETTING_DEFAULTS: SettingValues = {
   uploads_closed_at: null,
   convert_backlog: true,
   worker_heartbeat: null,
+  slideshow_delay_seconds: null,
 };
 
 /** The setting's saved value, or `fallback` when none has been saved. A saved null stays null. */
@@ -62,4 +69,9 @@ export async function setSetting<TKey extends SettingKey>(key: TKey, value: Sett
     .insert(settings)
     .values({ key, value: json })
     .onConflictDoUpdate({ target: settings.key, set: { value: json, updatedAt: sql`now()` } });
+}
+
+/** Forgets the setting's saved value, so readers fall back to their default again. */
+export async function deleteSetting(key: SettingKey): Promise<void> {
+  await getDb().delete(settings).where(eq(settings.key, key));
 }

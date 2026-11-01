@@ -8,12 +8,13 @@ import { getSetting, getSettings, SETTING_DEFAULTS, setSetting, type SettingKey 
 beforeEach(resetDb);
 
 describe("the settings' defaults", () => {
-  it("keep uploads closed until the couple open them, and convert the backlog", () => {
+  it("keep uploads closed until the couple open them, convert the backlog, and leave the TV delay to the environment", () => {
     expect(SETTING_DEFAULTS).toEqual({
       uploads_open: false,
       uploads_closed_at: null,
       convert_backlog: true,
       worker_heartbeat: null,
+      slideshow_delay_seconds: null,
     });
   });
 

@@ -106,6 +106,43 @@ function atMost(column: AnyPgColumn, maxCharacters: number): SQL {
 
 const withTimezone = { withTimezone: true } as const;
 
+/** An album item's moderation state in the admin (Task 17), or none: visible, with nothing under way. */
+export type AdminStateName = "removed" | "hidden" | "failed" | "processing" | "converting" | "queued";
+
+/** The media columns the admin reads an item's state from: the table's own, or an alias's. */
+export type AdminStateColumns = {
+  removedByUploader: AnyPgColumn;
+  hiddenAt: AnyPgColumn;
+  status: AnyPgColumn;
+  conversion: AnyPgColumn;
+};
+
+/**
+ * An album item's state in the admin (Task 17): its tile's one badge, and the filter chip that lists
+ * it. The first that applies: removed by its uploader, hidden by the couple, failed (its processing,
+ * or a ready video's conversion), processing, converting, or queued for conversion; null for an
+ * item with nothing to say. media_admin_state_idx is built on this very expression, and the admin's
+ * queries compare it with literals, so Postgres matches the two and reads the index. Literals only:
+ * a bound value here would stop the match.
+ */
+export function adminStateOf(columns: AdminStateColumns): SQL<AdminStateName | null> {
+  const { removedByUploader, hiddenAt, status, conversion } = columns;
+  return sql<AdminStateName | null>`(case when ${removedByUploader} then 'removed' when ${hiddenAt} is not null then 'hidden'
+    when ${status} = 'failed' or (${status} = 'ready' and ${conversion} = 'failed') then 'failed'
+    when ${status} = 'uploaded' then 'processing'
+    when ${status} = 'ready' and ${conversion} = 'converting' then 'converting'
+    when ${status} = 'ready' and ${conversion} = 'queued' then 'queued' end)`;
+}
+
+/**
+ * What the admin's album lists (Task 17): album items that finished uploading (processing, ready or
+ * failed), hidden and removed ones included, never a deleted tombstone. Every media_admin_* index's
+ * condition, written as literals so a generic plan can prove the index applies.
+ */
+export function adminScopeOf(columns: { purpose: AnyPgColumn; deletedAt: AnyPgColumn; uploadedAt: AnyPgColumn }): SQL {
+  return sql`${columns.purpose} = 'album' and ${columns.deletedAt} is null and ${columns.uploadedAt} is not null`;
+}
+
 /**
  * Each browser that has RSVPed or uploaded. Guests are never merged: a browser's cookie lists every
  * guest it knows (its own, plus any opened through a personal link).
@@ -233,6 +270,44 @@ export const media = pgTable(
         sql`${table.purpose} = 'album' and ${table.status} = 'ready' and ${table.hiddenAt} is null and ${table.deletedAt} is null and not ${table.removedByUploader}`,
       ),
     index("media_guest_id_idx").on(table.guestId),
+    // The admin's album (Task 17), newest upload first, the id breaking ties, read without a sort.
+    // Its trailing columns are what the admin filters a page on, so a page's ids and a search of
+    // who shared it (uploader_name, case-insensitively) read this index alone, never the table:
+    // the search walks it in order, so it never sorts either. Key columns, not INCLUDE ones, as
+    // drizzle-kit writes no INCLUDE; past the first two they only ride along.
+    index("media_admin_idx")
+      .on(table.uploadedAt.desc().nullsFirst(), table.id.desc().nullsFirst(), table.uploaderName, table.celebration, table.kind)
+      .where(adminScopeOf(table)),
+    // The admin's counts: every chip's, per celebration and kind, in one grouped query that reads
+    // this narrow index alone, already in its groups' order.
+    index("media_admin_counts_idx")
+      .on(table.celebration, table.kind, table.status, table.conversion, table.highlight, table.removedByUploader, table.hiddenAt)
+      .where(adminScopeOf(table)),
+    // The admin's album by celebration, "More moments" (a few dozen items) above all.
+    index("media_admin_celebration_idx")
+      .on(table.celebration, table.uploadedAt.desc().nullsFirst(), table.id.desc().nullsFirst(), table.kind)
+      .where(adminScopeOf(table)),
+    // The admin's state chips (Failed, Processing, Converting, Queued, Hidden, Removed): only the
+    // items with a state, a few dozen, by state and then newest first. The columns the state is
+    // read from ride along, so a chip's page reads the index alone.
+    index("media_admin_state_idx")
+      .on(
+        adminStateOf(table),
+        table.uploadedAt.desc().nullsFirst(),
+        table.id.desc().nullsFirst(),
+        table.uploaderName,
+        table.celebration,
+        table.kind,
+        table.removedByUploader,
+        table.hiddenAt,
+        table.status,
+        table.conversion,
+      )
+      .where(sql`${adminScopeOf(table)} and ${adminStateOf(table)} is not null`),
+    // The admin's Highlights chip: the couple's favourites, newest first.
+    index("media_admin_highlight_idx")
+      .on(table.uploadedAt.desc().nullsFirst(), table.id.desc().nullsFirst(), table.uploaderName, table.celebration, table.kind)
+      .where(sql`${adminScopeOf(table)} and ${table.highlight}`),
     // Re-picking a file finds its unfinished upload.
     index("media_resume_idx")
       .on(table.guestId, table.sizeBytes, table.fileFingerprint)
@@ -295,6 +370,10 @@ export const wishes = pgTable(
     index("wishes_wall_idx")
       .on(table.createdAt.desc().nullsFirst(), table.id.desc().nullsFirst())
       .where(sql`${table.hiddenAt} is null and ${table.deletedAt} is null`),
+    // The admin's Wishes (Task 17): every wish but the deleted, hidden ones too, newest first.
+    index("wishes_admin_idx")
+      .on(table.createdAt.desc().nullsFirst(), table.id.desc().nullsFirst())
+      .where(sql`${table.deletedAt} is null`),
     check("wishes_kind_check", oneOf(table.kind, WISH_KINDS)),
     check("wishes_text_has_message", sql`${table.kind} <> 'text' or ${table.message} is not null`),
     check("wishes_recording_has_media", sql`${table.kind} = 'text' or ${table.mediaId} is not null`),
