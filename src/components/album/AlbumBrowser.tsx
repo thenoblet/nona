@@ -21,6 +21,7 @@ import { fetchFirstPageWithStats, fetchItem, fetchNewCount, fetchNewer, fetchPag
 import { AlbumUploadsContext } from "./album-uploads";
 import { MediaTile } from "./MediaTile";
 import { useWaitingTiles } from "./use-waiting-tiles";
+import { useFreshGuestOnReturn } from "./use-fresh-guest";
 import { usePersonalLink } from "./uploader/personal-link";
 import { loadViewer, prefetchViewerWhenIdle } from "./viewer/load";
 import type { ViewerProps } from "./viewer/Viewer";
@@ -120,7 +121,9 @@ export function AlbumBrowser({
   const [opened, setOpened] = useState<Opened | null>(null);
   const [news, setNews] = useState<(NewCountAnswer & { key: string }) | null>(null);
   const clientLink = usePersonalLink();
-  const personalLink = serverLink ?? clientLink;
+  // The link this page learned last: the server's, until the uploader or a return to the page asks again.
+  const personalLink = clientLink ?? serverLink;
+  useFreshGuestOnReturn(personalLink !== null);
   const uploads = use(AlbumUploadsContext);
   const gridTop = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);

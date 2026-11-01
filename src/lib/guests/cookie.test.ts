@@ -17,6 +17,7 @@ import {
   personalLink,
   readGuestIds,
   rememberGuest,
+  renameOwnGuest,
   signGuestIds,
   verifyGuestIds,
 } from "./cookie";
@@ -261,13 +262,29 @@ describe("ensureOwnGuest", () => {
     expect(browserCookies.sets).toHaveLength(setsBefore);
   });
 
-  it("takes a new name for the browser's own guest, but never clears one with a blank", async () => {
+  it("never renames the browser's own guest, nor clears its name with a blank: only Change does (Ruling CG)", async () => {
     const guest = await ensureOwnGuest("Kofi");
+    for (const name of [" Kofi Boateng ", "Ama Owusu", "", "   ", null]) {
+      expect((await ensureOwnGuest(name)).displayName).toBe("Kofi");
+    }
+    expect((await findGuestById(guest.id))?.displayName).toBe("Kofi");
+  });
+
+  it("names the browser's own guest when it has no name, as a phone's first upload does", async () => {
+    const own = await createGuest(null);
+    sendCookie([own.id]);
     expect((await ensureOwnGuest(" Kofi Boateng ")).displayName).toBe("Kofi Boateng");
-    expect((await ensureOwnGuest("")).displayName).toBe("Kofi Boateng");
-    expect((await ensureOwnGuest("   ")).displayName).toBe("Kofi Boateng");
-    expect((await ensureOwnGuest(null)).displayName).toBe("Kofi Boateng");
-    expect((await findGuestById(guest.id))?.displayName).toBe("Kofi Boateng");
+    expect((await findGuestById(own.id))?.displayName).toBe("Kofi Boateng");
+    expect(browserCookies.sets).toHaveLength(0);
+  });
+
+  it("keeps a linked guest's own name after a phone takes it over, whatever name that phone typed (Ruling CG)", async () => {
+    const earlier = await ensureOwnGuest("Kofi");
+    const linked = await createGuest("Ama Owusu");
+    await adoptGuest(linked.id);
+    expect(await ensureOwnGuest("Kofi")).toEqual(linked);
+    expect((await findGuestById(linked.id))?.displayName).toBe("Ama Owusu");
+    expect((await findGuestById(earlier.id))?.displayName).toBe("Kofi");
   });
 
   it("Ruling D: after one awaited call, three parallel calls with that cookie reuse the guest and create none", async () => {
@@ -308,6 +325,28 @@ describe("ensureOwnGuest", () => {
     await rememberGuest(linked.id);
     expect((await ensureOwnGuest()).id).toBe(linked.id);
     expect(await guestCount()).toBe(1);
+  });
+});
+
+describe("renameOwnGuest (Change)", () => {
+  it("renames the browser's own guest, trimmed, and leaves the cookie", async () => {
+    const own = await createGuest("Kofi");
+    sendCookie([own.id]);
+    expect((await renameOwnGuest(" Kofi Boateng "))?.displayName).toBe("Kofi Boateng");
+    expect((await findGuestById(own.id))?.displayName).toBe("Kofi Boateng");
+    expect(browserCookies.sets).toHaveLength(0);
+  });
+
+  it("leaves the name for a blank one", async () => {
+    const own = await createGuest("Kofi");
+    sendCookie([own.id]);
+    expect((await renameOwnGuest("   "))?.displayName).toBe("Kofi");
+  });
+
+  it("makes no guest and sets no cookie for a browser without one", async () => {
+    expect(await renameOwnGuest("Kofi")).toBeNull();
+    expect(await guestCount()).toBe(0);
+    expect(browserCookies.sets).toHaveLength(0);
   });
 });
 

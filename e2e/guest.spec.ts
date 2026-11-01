@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { expect, test, type APIRequestContext, type BrowserContext } from "@playwright/test";
 import postgres from "postgres";
 import { TEST_DB_ENV } from "../test/env";
+import { TAKE_OVER_LINE } from "./personal-link";
 
 // The e2e server is a production build, so the cookie carries the __Host- prefix.
 const COOKIE = "__Host-nona_guest";
@@ -75,11 +76,16 @@ test("a phone without a guest is asked first, and \"Yes, that's me\" brings the 
     expect(redirect.headers()["location"]).toBe(`/my/${token}/confirm`);
     expect(redirect.headers()["cache-control"]).toBe("private, no-store");
     expect(redirect.headers()["set-cookie"]).toBeUndefined();
+    // Never inside another site's frame: "Yes, that's me" takes a phone over (Ruling CG).
+    expect(redirect.headers()["content-security-policy"]).toBe("frame-ancestors 'none'");
+    expect(redirect.headers()["x-frame-options"]).toBe("DENY");
 
     const page = await secondPhone.newPage();
     const confirm = await page.goto(`/my/${token}`);
     await expect(page).toHaveURL(new RegExp(`/my/${token}/confirm$`));
     expect(confirm?.headers()["cache-control"]).toBe("private, no-store");
+    expect(confirm?.headers()["content-security-policy"]).toBe("frame-ancestors 'none'");
+    expect(confirm?.headers()["x-frame-options"]).toBe("DENY");
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
     await expect(page.getByRole("heading", { name: "Is this you, E2E Linked Guest?" })).toBeVisible();
     await expect(page.getByText("This link keeps one guest's photos and videos together on any phone.")).toBeVisible();
@@ -118,8 +124,6 @@ test("\"No, I'm someone else\" gives the phone its own guest and keeps the link'
   }
 });
 
-const TAKE_OVER = "From now on, what you share here goes with this link. What you shared before stays in My uploads on this phone.";
-
 test("a phone that has its own guest is asked too, and told what Yes does: the link becomes its own, its earlier guest remembered (Ruling CG)", async ({
   browser,
   baseURL,
@@ -140,7 +144,7 @@ test("a phone that has its own guest is asked too, and told what Yes does: the l
     const page = await otherPhone.newPage();
     await page.goto(`/my/${owner.token}`);
     await expect(page.getByRole("heading", { name: "Is this you, E2E Second Owner?" })).toBeVisible();
-    await expect(page.getByText(TAKE_OVER)).toBeVisible();
+    await expect(page.getByText(TAKE_OVER_LINE).filter({ visible: true })).toBeVisible();
     await page.getByRole("button", { name: "Yes, that's me" }).click();
     await expect(page).toHaveURL(/\/album\?view=mine$/);
     expect(await cookieIds(otherPhone)).toEqual([owner.guestId, other.guestId]);
@@ -177,6 +181,42 @@ test("a phone whose own guest is the link's goes straight to its uploads", async
     expect(response.headers()["set-cookie"]).toBeUndefined();
     expect(await cookieIds(phone)).toEqual([own.guestId]);
   } finally {
+    await phone.close();
+  }
+});
+
+test("an album left open while its phone takes over a link offers the link's guest once it's back in view (Ruling CG)", async ({
+  browser,
+  baseURL,
+}) => {
+  const ownerPhone = await browser.newContext({ baseURL });
+  const phone = await browser.newContext({ baseURL });
+  try {
+    await phone.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const owner = await makeGuest(ownerPhone.request, "E2E Fresh Link Owner");
+    const own = await makeGuest(phone.request, "E2E Fresh Link Phone");
+    const album = await phone.newPage();
+    await album.goto("/album?view=mine");
+    const copyLink = album.getByText("Your link opens these on any phone.").locator("..").getByRole("button", { name: "Copy link" });
+    const copied = async () => {
+      await copyLink.click();
+      return album.evaluate(() => navigator.clipboard.readText());
+    };
+    expect(await copied()).toMatch(new RegExp(`/my/${own.token}$`));
+
+    // In another tab, the phone takes over the owner's link.
+    const linkTab = await phone.newPage();
+    await linkTab.goto(`/my/${owner.token}`);
+    await linkTab.getByRole("button", { name: "Yes, that's me" }).click();
+    await expect(linkTab).toHaveURL(/\/album\?view=mine$/);
+
+    // Back in view, the album asks again which guest the phone is, and offers that guest's link.
+    const askedAgain = album.waitForResponse((response) => new URL(response.url()).pathname === "/api/guest" && response.request().method() === "POST");
+    await album.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect((await askedAgain).status()).toBe(200);
+    await expect.poll(copied).toMatch(new RegExp(`/my/${owner.token}$`));
+  } finally {
+    await ownerPhone.close();
     await phone.close();
   }
 });

@@ -4,6 +4,7 @@ import postgres from "postgres";
 import sharp from "sharp";
 import { rsvp as builtInRsvp } from "../src/content/wedding";
 import { TEST_DB_ENV } from "../test/env";
+import { TAKE_OVER_LINE } from "./personal-link";
 import { ACCESS_HEADER, accessToken } from "./cloudflare-access";
 
 // The e2e server is a production build, so the guest cookie carries the __Host- prefix.
@@ -234,9 +235,7 @@ test("a phone that shared before opening its emailed link lets the link take it 
     await linkTab.goto(`/my/${reply.token}`);
     await expect(linkTab).toHaveURL(new RegExp(`/my/${reply.token}/confirm$`));
     await expect(linkTab.getByRole("heading", { name: "Is this you, Kojo Shared-First?" })).toBeVisible();
-    await expect(
-      linkTab.getByText("From now on, what you share here goes with this link. What you shared before stays in My uploads on this phone."),
-    ).toBeVisible();
+    await expect(linkTab.getByText(TAKE_OVER_LINE).filter({ visible: true })).toBeVisible();
     await linkTab.getByRole("button", { name: "Yes, that's me" }).click();
     await expect(linkTab).toHaveURL(/\/album\?view=mine$/);
     expect(await cookieIds(sharedFirst)).toEqual([reply.guestId, earlierGuest]);
@@ -268,6 +267,55 @@ test("a phone that shared before opening its emailed link lets the link take it 
     if (guestIds.length > 0) await sql`DELETE FROM media WHERE guest_id IN ${sql(guestIds)}`;
     await sql.end();
     for (const context of [sharedFirst, sender, otherPhone]) await context.close();
+  }
+});
+
+test("a phone that shared as Kofi and takes over Ama's link shares as Ama from then on, and Ama's guest keeps her name (Ruling CG)", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const phone = () => browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const [kofiPhone, sender] = [await phone(), await phone()];
+  const sql = testDb();
+  const guestIds: string[] = [];
+  try {
+    // The phone gives its name, Kofi, and shares as him.
+    const page = await kofiPhone.newPage();
+    await page.goto("/album?mode=before");
+    await page.getByRole("button", { name: "Add your name" }).click();
+    await page.getByLabel("Your name").fill("Kofi");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText(/^Sharing as Kofi/)).toBeVisible();
+    await sharePhoto(page, "kofi.jpg");
+    const [kofiGuest] = await cookieIds(kofiPhone);
+    guestIds.push(kofiGuest);
+
+    // Then it takes over Ama's emailed link.
+    const ama = await replyWithLink(sender, sql, "Ama Owusu", "0244000888", "e2e-kofi-takes-ama@example.com");
+    guestIds.push(ama.guestId);
+    await page.goto(`/my/${ama.token}`);
+    await expect(page.getByText(TAKE_OVER_LINE).filter({ visible: true })).toBeVisible();
+    await page.getByRole("button", { name: "Yes, that's me" }).click();
+    await expect(page).toHaveURL(/\/album\?view=mine$/);
+    // The server says whose phone it is now: it shares as Ama, with no Change.
+    await expect(page.getByText(/^Sharing as Ama Owusu/)).toBeVisible();
+
+    // After a reload, its next upload goes with Ama's name, and nothing renamed her guest.
+    await sharePhoto(page, "after-taking-over.jpg");
+    const uploads = await sql<{ guest_id: string; uploader_name: string }[]>`
+      SELECT guest_id, uploader_name FROM media WHERE guest_id IN ${sql(guestIds)} ORDER BY started_at`;
+    expect(uploads).toEqual([
+      { guest_id: kofiGuest, uploader_name: "Kofi" },
+      { guest_id: ama.guestId, uploader_name: "Ama Owusu" },
+    ]);
+    const names = await sql<{ id: string; display_name: string }[]>`SELECT id, display_name FROM guests WHERE id IN ${sql(guestIds)}`;
+    expect(Object.fromEntries(names.map((guest) => [guest.id, guest.display_name]))).toEqual({ [kofiGuest]: "Kofi", [ama.guestId]: "Ama Owusu" });
+  } finally {
+    // Later specs count the album's photos.
+    if (guestIds.length > 0) await sql`DELETE FROM media WHERE guest_id IN ${sql(guestIds)}`;
+    await sql.end();
+    for (const context of [kofiPhone, sender]) await context.close();
   }
 });
 

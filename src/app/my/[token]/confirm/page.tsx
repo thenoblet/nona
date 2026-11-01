@@ -18,8 +18,8 @@ export const metadata: Metadata = {
 /**
  * Asked when a browser opens a personal link that isn't already its own (GET /my/[token] sends it
  * here), so a link shared in a group chat doesn't make everyone who taps it that guest. A browser
- * that already shared under a guest of its own is told what "Yes" does: from then on it shares with
- * the link, and what it shared before stays in My uploads (Ruling CG). Both answers post to
+ * that already has a guest of its own is told what "Yes" would do: from then on it shares with the
+ * link, and what it shared before stays in My uploads (Ruling CG). Both answers post to
  * /my/[token], which only accepts them from this site.
  */
 export default function ConfirmLinkPage({ params }: PageProps<"/my/[token]/confirm">) {
@@ -32,23 +32,17 @@ export default function ConfirmLinkPage({ params }: PageProps<"/my/[token]/confi
   );
 }
 
-/** The browser's own guest, or null for none, or for a cookie that can't be read. */
-async function ownGuestOrNone(): Promise<string | null> {
-  try {
-    return await ownGuestId();
-  } catch {
-    return null;
-  }
-}
-
-/** Read at request time: whose link this is, and whether the browser already has a guest of its own. */
+/**
+ * Read at request time: whose link this is, and whether the browser already has a guest of its own.
+ * A cookie that can't be read at all (production without its secret) fails like the lookup.
+ */
 async function ConfirmLink({ params }: Pick<PageProps<"/my/[token]/confirm">, "params">) {
   await connection();
   const { token } = await params;
   let guest: Guest | null;
   let ownId: string | null;
   try {
-    [guest, ownId] = await Promise.all([findGuestByToken(token), ownGuestOrNone()]);
+    [guest, ownId] = await Promise.all([findGuestByToken(token), ownGuestId()]);
   } catch (error) {
     // The error's name and code only: a query error carries its parameters, here the token.
     console.error("[my] could not look up a personal link:", describeError(error));
@@ -63,7 +57,7 @@ async function ConfirmLink({ params }: Pick<PageProps<"/my/[token]/confirm">, "p
   if (!guest) redirect("/album");
 
   const action = `/my/${guest.linkToken}`;
-  const sharedUnderAnother = ownId !== null && ownId !== guest.id;
+  const hasAnotherOwnGuest = ownId !== null && ownId !== guest.id;
   return (
     <>
       <Header>
@@ -72,8 +66,8 @@ async function ConfirmLink({ params }: Pick<PageProps<"/my/[token]/confirm">, "p
             {guest.displayName ? `Is this you, ${guest.displayName}?` : "Is this your link?"}
           </h1>
           <p className="m-0 text-[15px] leading-[1.65] font-light text-mist">
-            {sharedUnderAnother
-              ? "From now on, what you share here goes with this link. What you shared before stays in My uploads on this phone."
+            {hasAnotherOwnGuest
+              ? "If it's you, what you share from now on goes with this link, and what you shared before stays in My uploads on this phone."
               : "This link keeps one guest's photos and videos together on any phone."}
           </p>
         </div>

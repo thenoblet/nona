@@ -93,7 +93,9 @@ describe("GET /my/[token]", () => {
     const [linked, remembered] = [await createGuest("Ama"), await createGuest("Yaw")];
     sendCookie([linked.id, remembered.id]);
     const response = await open(linked.linkToken);
+    expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("/album?view=mine");
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(browserCookies.sets).toHaveLength(0);
     expect(await readGuestIds()).toEqual([linked.id, remembered.id]);
   });

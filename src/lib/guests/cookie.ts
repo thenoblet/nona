@@ -1,7 +1,7 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { createGuest, findGuestById, setGuestName } from "@/lib/data/guests";
+import { createGuest, findGuestById, nameGuestIfUnnamed, setGuestName } from "@/lib/data/guests";
 import { isUuid } from "@/lib/data/ids";
 import type { Guest } from "@/lib/data/types";
 import { guestCookieSecret } from "@/lib/env";
@@ -12,7 +12,7 @@ export { personalLink, personalLinkOf } from "./personal-link";
 export const MAX_GUEST_IDS = 10;
 
 // Two years, as the spec asks. Chrome caps any cookie at 400 days, which still reaches past the
-// wedding; making a guest or opening a personal link sets it again.
+// wedding; making a guest, or choosing on a personal link's page, sets it again.
 const TWO_YEARS_SECONDS = 2 * 365 * 24 * 60 * 60;
 
 function signatureOf(joinedIds: string, secret: string): string {
@@ -124,9 +124,11 @@ export async function rememberGuest(guestId: string): Promise<string[]> {
 }
 
 /**
- * The browser's own guest, made (and the cookie set) when it has none. A name replaces the stored
- * one; a blank or missing name leaves it, so a second phone that doesn't know it can't clear it.
- * Route handlers and server actions only, since it may set the cookie.
+ * The browser's own guest, made (and the cookie set) when it has none, with the name given. A name
+ * only ever names a guest who has none; it never replaces one, so the name a phone typed can't
+ * rename a guest it took over through a personal link (Ruling CG). Replacing a name is
+ * renameOwnGuest's, when the guest taps Change. Route handlers and server actions only, since it
+ * may set the cookie.
  *
  * Two calls at once from a browser without a cookie make two guests, and the last cookie wins, so
  * the uploader awaits one call (POST /api/guest) before its first upload starts.
@@ -134,8 +136,9 @@ export async function rememberGuest(guestId: string): Promise<string[]> {
 export async function ensureOwnGuest(displayName?: string | null): Promise<Guest> {
   const [ownId, ...remembered] = await readGuestIds();
   if (ownId) {
+    const own = await findGuestById(ownId);
     const name = displayName?.trim();
-    const own = name ? await setGuestName(ownId, name) : await findGuestById(ownId);
+    if (own && !own.displayName && name) return (await nameGuestIfUnnamed(own.id, name)) ?? own;
     if (own) return own;
     // The cookie names a guest the database no longer has (a restore from an older backup): make a
     // new own guest in its place, keeping the ones remembered through links.
@@ -143,4 +146,16 @@ export async function ensureOwnGuest(displayName?: string | null): Promise<Guest
   const guest = await createGuest(displayName ?? null);
   await writeGuestIds([guest.id, ...remembered]);
   return guest;
+}
+
+/**
+ * Renames the browser's own guest, as the guest asks by tapping Change beside "Sharing as": the
+ * only way a guest's name is replaced (Ruling CG). A blank name leaves it. Null when the browser
+ * has no guest yet: the name then goes with its first upload. Never makes a guest or sets the cookie.
+ */
+export async function renameOwnGuest(displayName: string): Promise<Guest | null> {
+  const ownId = await ownGuestId();
+  if (!ownId) return null;
+  const name = displayName.trim();
+  return name ? setGuestName(ownId, name) : findGuestById(ownId);
 }

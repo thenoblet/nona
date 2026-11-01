@@ -88,6 +88,37 @@ export async function fetchItems(mediaIds: string[], signal?: AbortSignal): Prom
   return (body as { items: AlbumItem[] }).items;
 }
 
+/** The browser's own guest as POST /api/guest answers it. */
+export type GuestAnswer = { guestId: string; link: string; displayName: string | null };
+
+/**
+ * Asks which guest this browser is now (POST /api/guest with no name, which renames none), for a
+ * page that comes back into view after a personal link may have taken the phone over (Ruling CG).
+ * Only for a browser known to have a guest: one without would get one made. Null when it fails.
+ */
+export async function currentGuest(): Promise<GuestAnswer | null> {
+  try {
+    const answer = await api().request("/api/guest", { method: "POST", body: {}, timeoutMs: TIMEOUT_MILLISECONDS });
+    return answer.status === 200 ? (answer.body as GuestAnswer) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Renames this browser's guest (PATCH /api/guest), as the guest asked by tapping Change. The
+ * guest's id, or null when the browser has no guest yet (the name goes with its first upload) or
+ * the call failed.
+ */
+export async function renameGuest(displayName: string): Promise<string | null> {
+  try {
+    const answer = await api().request("/api/guest", { method: "PATCH", body: { displayName }, timeoutMs: TIMEOUT_MILLISECONDS });
+    return answer.status === 200 ? (answer.body as { guestId: string }).guestId : null;
+  } catch {
+    return null;
+  }
+}
+
 let guestCall: Promise<boolean> | null = null;
 
 /**

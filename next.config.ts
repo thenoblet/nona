@@ -43,6 +43,15 @@ const nextConfig: NextConfig = {
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
         ],
       },
+      // A personal link and its question never show inside another site's frame: "Yes, that's me"
+      // takes the phone over (Ruling CG), so no page may dress it up and get it tapped.
+      {
+        source: "/my/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          { key: "X-Frame-Options", value: "DENY" },
+        ],
+      },
     ];
   },
   turbopack: {
