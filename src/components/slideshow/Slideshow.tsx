@@ -349,10 +349,11 @@ function TvCaption({ slide, paused }: { slide: Slide; paused: boolean }) {
       aria-live={paused ? "polite" : "off"}
       className="absolute inset-x-0 bottom-0 z-20 hidden items-center justify-between gap-24 bg-cocoa/80 px-24 py-20 tv:flex"
     >
-      {/* Shared without a name: nothing in its place, the line kept empty so the bar keeps its height. */}
+      {/* Shared without a name: nothing in its place, the line kept empty so the bar keeps its height
+          (one line: 1.5em at this line height, which iOS 15 understands, unlike `lh`). */}
       <p
         key={slide.id}
-        className="m-0 min-h-[1lh] min-w-0 animate-caption-in truncate font-serif text-[max(15px,calc(var(--spacing)*26))] italic"
+        className="m-0 min-h-[1.5em] min-w-0 animate-caption-in truncate font-serif text-[max(15px,calc(var(--spacing)*26))] leading-normal italic"
       >
         {slide.by ? `Shared by ${slide.by}` : null}
       </p>

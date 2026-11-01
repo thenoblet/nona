@@ -11,19 +11,21 @@ import { listSlideshowItems, type SlideshowItem } from "@/lib/media/slideshow";
 import type { Slide } from "@/components/slideshow/playlist";
 
 /**
- * The album's moments for the slideshow, kept 15 s for every screen showing it (the venue TV and
- * guests' phones each ask every 30 s): Next's in-memory cache drops an entry once its `revalidate`
- * has passed (it hands out no stale copies in production), so `expire` only has to be longer, as
- * Next requires, and under 5 minutes, so the list is never prerendered. Under the album-slides tag,
- * which every hide drops (the remove route's revalidateTag, the admin's updateTag), as does a change
- * to the TV delay; a moment newly ready waits out the lifetime. The delay is read inside, so a list
- * is always cut by the delay in force when it was read: kept a while, it only holds older moments.
+ * The album's moments for the slideshow at this TV delay, kept 15 s for every screen showing it
+ * (the venue TV and guests' phones each ask every 30 s): Next's in-memory cache drops an entry once
+ * its `revalidate` has passed (it hands out no stale copies in production), so `expire` only has to
+ * be longer, as Next requires, and under 5 minutes, so the list is never prerendered.
+ * - The delay is its argument, so part of its key: a new delay is a list of its own, read afresh on
+ *   the next request, whatever the cache's tags do. A kept list only ever holds moments older than
+ *   its own delay.
+ * - Under the album-slides tag, which every hide drops (the remove route's revalidateTag, the
+ *   admin's updateTag). A moment newly ready waits out the lifetime.
  */
-async function cachedSlideshowItems(): Promise<SlideshowItem[]> {
+async function cachedSlideshowItems(delaySeconds: number): Promise<SlideshowItem[]> {
   "use cache";
   cacheTag(ALBUM_SLIDES_TAG);
   cacheLife({ stale: 15, revalidate: 15, expire: 30 });
-  return listSlideshowItems(await getSlideshowDelaySeconds());
+  return listSlideshowItems(delaySeconds);
 }
 
 /** How long ago, by the request's clock: "just now", "12 min ago", "3 h ago", then the day ("28 Nov"). */
@@ -53,7 +55,11 @@ function toSlide(item: SlideshowItem, celebrations: Celebration[], now: number):
 export async function loadSlides(): Promise<Slide[]> {
   // First: the album is read at request time, never while the page is prerendered.
   await connection();
-  const [items, { celebrations }] = await Promise.all([cachedSlideshowItems(), getSiteContent()]);
+  // The delay in force, one read of the settings' primary key, outside the cache: it picks the list.
+  const [items, { celebrations }] = await Promise.all([
+    getSlideshowDelaySeconds().then((delaySeconds) => cachedSlideshowItems(delaySeconds)),
+    getSiteContent(),
+  ]);
   const now = Date.now();
   return items.map((item) => toSlide(item, celebrations, now));
 }

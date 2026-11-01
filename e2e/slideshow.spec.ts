@@ -168,6 +168,22 @@ test("the TV and a phone show the album's own moments at their viewing size, wit
   }
 });
 
+test("a TV delay written straight into the database reaches the next answer: the kept list is keyed by its delay", async ({ request }) => {
+  const recent = await seedMoment(sql, { index: 0, secondsAgo: 60, uploaderName: "Esi Quaye" });
+  const older = await seedMoment(sql, { index: 1, secondsAgo: TEN_MINUTES, uploaderName: "Yaa Asantewaa" });
+  // Under the default three minutes the moment listed a minute ago waits.
+  await slidesSettleOn(request, [older.id]);
+
+  // No save through the admin, so nothing drops the kept list: a delay no other test uses (37 s)
+  // is a list of its own, read afresh on the very next request.
+  await sql`insert into settings (key, value) values ('slideshow_delay_seconds', '37'::jsonb)
+    on conflict (key) do update set value = excluded.value, updated_at = now()`;
+  expect(await slideIds(request)).toEqual([recent.id, older.id]);
+
+  await sql`delete from settings where key = 'slideshow_delay_seconds'`;
+  expect(await slideIds(request)).toEqual([older.id]);
+});
+
 test.describe("on the night", () => {
   test.describe.configure({ timeout: 180_000 });
 
@@ -210,9 +226,8 @@ test.describe("on the night", () => {
       await card.getByLabel("Seconds").fill("0");
       await card.getByRole("button", { name: "Save" }).click();
       await expect(card.getByText("Saved. New moments reach the TV at once.")).toBeVisible();
-      // The save drops the kept list (updateTag), so the next answer holds the photo; held to the
-      // list's lifetime here, as this machine's clocks drift apart (see the Task 20 report).
-      await expect.poll(() => slideIds(request), { timeout: 20_000, intervals: [500] }).toContain(id);
+      // A new delay is a list of its own (and the save drops the kept ones too): the next answer holds the photo.
+      expect(await slideIds(request)).toContain(id);
 
       const tv = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
       try {

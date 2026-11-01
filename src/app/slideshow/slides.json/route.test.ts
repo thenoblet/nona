@@ -158,14 +158,18 @@ describe("GET /slideshow/slides.json", () => {
     });
   });
 
-  it("never sends a wish's recording, nor a moment removed by its guest, hidden by the couple, or one that failed", async () => {
+  it("never sends a wish's recording, nor a moment removed by its guest, hidden by the couple, failed, or being processed again", async () => {
     const guest = await createGuest("Kofi Mensah");
     const shown = await addAlbumItem({ listedSecondsAgo: 600 });
     const wishId = randomUUID();
     await addAlbumItem({ id: wishId, purpose: "wish", kind: "video", derived: posterKeys(wishId), listedSecondsAgo: 600 });
     await addAlbumItem({ guestId: guest.id, listedSecondsAgo: 600, hiddenAt: new Date(), hiddenBy: "uploader", removedByUploader: true });
     await addAlbumItem({ listedSecondsAgo: 600, hiddenAt: new Date(), hiddenBy: "couple@example.com" });
-    await addAlbumItem({ status: "failed", failureReason: "corrupt" });
+    // Listed, still naming a viewing size, but not ready: only their status keeps them off.
+    const failed = randomUUID();
+    await addAlbumItem({ id: failed, status: "failed", failureReason: "corrupt", derived: photoKeys(failed), listedSecondsAgo: 600 });
+    const reprocessing = randomUUID();
+    await addAlbumItem({ id: reprocessing, status: "uploaded", derived: photoKeys(reprocessing), listedSecondsAgo: 600 });
     expect(await idsOf()).toEqual([shown]);
   });
 

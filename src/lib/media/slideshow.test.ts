@@ -51,8 +51,12 @@ describe("listSlideshowItems", () => {
     });
     await addAlbumItem({ listedSecondsAgo: 600, hiddenAt: new Date(), hiddenBy: "couple@example.com" });
     await addAlbumItem({ listedSecondsAgo: 600, deletedAt: new Date() });
-    await addAlbumItem({ status: "failed", failureReason: "corrupt" });
-    await addAlbumItem({ status: "uploaded" });
+    // Listed once, then not ready: processed again after an Unhide (`uploaded`), or failed on a
+    // retry. Listed long ago and still naming a viewing size, so only their status keeps them off.
+    const reprocessing = randomUUID();
+    await addAlbumItem({ id: reprocessing, status: "uploaded", derived: photoKeys(reprocessing), listedSecondsAgo: 600 });
+    const failed = randomUUID();
+    await addAlbumItem({ id: failed, status: "failed", failureReason: "corrupt", derived: photoKeys(failed), listedSecondsAgo: 600 });
 
     expect((await listSlideshowItems(0)).map((item) => item.id)).toEqual([shown]);
   });

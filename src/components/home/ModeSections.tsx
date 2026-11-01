@@ -5,8 +5,9 @@ import type { Wish } from "@/lib/data/types";
 import { listWishes } from "@/lib/data/wishes";
 import { readGuestIds } from "@/lib/guests/cookie";
 import { describeError } from "@/lib/log-error";
-import { albumStats, countSharers, listAlbum } from "@/lib/media/album";
-import { albumSummaryWords, countFor, countWords, type AlbumItem } from "@/lib/media/album-item";
+import { albumStats, listAlbum } from "@/lib/media/album";
+import { countFor, countWords, type AlbumItem } from "@/lib/media/album-item";
+import { readAlbumOverview } from "@/lib/media/album-overview";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { PlayGlyph } from "@/components/ui/Icon";
@@ -183,22 +184,12 @@ export function TodaySection({
 
 /**
  * After the wedding: the whole album, filterable, as the album page shows it, under a line counting
- * what everyone sees in it (its photos and videos) and how many guests shared them. Downloading
- * everything, or all of one's own, comes with Plan 3's zips.
+ * what everyone sees in it (its photos and videos) and how many guests shared them. A count that
+ * can't be read only shortens the line; the album shows whenever it can be read
+ * (readAlbumOverview). Downloading everything, or all of one's own, comes with Plan 3's zips.
  */
 export async function AfterAlbum({ celebrations }: { celebrations: Celebration[] }) {
-  const guestIds = await readGuestIds();
-  let album: Awaited<ReturnType<typeof listAlbum>> | null = null;
-  let counts: Awaited<ReturnType<typeof albumStats>> | null = null;
-  let sharers = 0;
-  try {
-    [album, counts, sharers] = await Promise.all([listAlbum({ viewerGuestIds: guestIds }), albumStats(guestIds), countSharers()]);
-  } catch (error) {
-    console.error("[home] could not read the album:", describeError(error));
-  }
-  const summary = albumSummaryWords(
-    counts && { photos: countFor(counts, { kind: "photo" }), videos: countFor(counts, { kind: "video" }), sharers },
-  );
+  const { album, stats: counts, summary } = await readAlbumOverview(await readGuestIds());
   return (
     <section id="album" className="bg-tray py-20 sm:py-26">
       {/* Its side padding on the column, so the chip row can run into it as it scrolls (as on the album page). */}
