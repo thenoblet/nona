@@ -3,9 +3,10 @@ import { sql } from "drizzle-orm";
 import postgres from "postgres";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
+import { guests, rsvps } from "@/lib/db/schema";
 import { dbConfig } from "@/lib/env";
 import { resetDb } from "../../../test/db";
-import { createGuest } from "./guests";
+import { findGuestById } from "./guests";
 import type { RsvpInput } from "./types";
 import {
   getRsvp,
@@ -140,31 +141,46 @@ describe("saveRsvp keeps every reply", () => {
   });
 });
 
-describe("saveRsvp's guest", () => {
-  it("keeps the guest the reply was sent as, whose personal link its confirmation carries", async () => {
-    const guest = await createGuest("Ama Owusu");
-    const { record } = await saveRsvp({ ...base, email: "ama@example.com", guestId: guest.id });
-    expect(record.guestId).toBe(guest.id);
-    expect((await getRsvp(record.id))?.guestId).toBe(guest.id);
+describe("saveRsvp's guest (Ruling CB)", () => {
+  async function guestRows() {
+    return getDb().select().from(guests);
+  }
+
+  it("gives a new reply a guest of its own, named after it, whose link only the reply knows", async () => {
+    const { record } = await saveRsvp({ ...base, fullName: "  Ama Owusu ", email: "ama@example.com" });
+    expect(record.guestId).toEqual(expect.any(String));
+    expect((await getRsvp(record.id))?.guestId).toBe(record.guestId);
+    expect((await findGuestById(record.guestId!))?.displayName).toBe("Ama Owusu");
+    expect(await guestRows()).toHaveLength(1);
   });
 
-  it("keeps a reply sent without a guest, as every reply was before personal links", async () => {
-    const { record } = await saveRsvp(base);
-    expect(record.guestId).toBeUndefined();
-    expect((await getRsvp(record.id))?.guestId).toBeUndefined();
+  it("gives every reply its own guest, the same person's second reply too, and a reply without an email", async () => {
+    const first = await saveRsvp({ ...base, email: "ama@example.com" });
+    const second = await saveRsvp({ ...base, email: "ama@example.com", partySize: "2 people" });
+    const withoutEmail = await saveRsvp({ ...base, fullName: "Kofi Mensah" });
+    const guestIds = [first, second, withoutEmail].map(({ record }) => record.guestId);
+    expect(new Set(guestIds).size).toBe(3);
+    expect(await guestRows()).toHaveLength(3);
   });
 
-  it("answers the same reply sent again with the first one, and its guest", async () => {
-    const [first, second] = [await createGuest("Ama Owusu"), await createGuest("Ama Owusu")];
-    const sent = await saveRsvp({ ...base, guestId: first.id });
-    const again = await saveRsvp({ ...base, guestId: second.id });
+  it("answers the same reply sent again with the first one and its guest, making no second guest", async () => {
+    const sent = await saveRsvp(base);
+    const again = await saveRsvp(base);
     expect(again.record.id).toBe(sent.record.id);
-    expect(again.record.guestId).toBe(first.id);
+    expect(again.record.guestId).toBe(sent.record.guestId);
+    expect(await guestRows()).toHaveLength(1);
   });
 
-  it("refuses a guest that doesn't exist", async () => {
-    await expect(saveRsvp({ ...base, guestId: randomUUID() })).rejects.toThrow();
-    expect(await listRsvps()).toHaveLength(0);
+  it("makes one guest for two identical replies sent at once", async () => {
+    await Promise.all([saveRsvp(base), saveRsvp(base)]);
+    expect(await listRsvps()).toHaveLength(1);
+    expect(await guestRows()).toHaveLength(1);
+  });
+
+  it("reads a reply sent before personal links as having no guest", async () => {
+    const { record } = await saveRsvp(base);
+    await getDb().update(rsvps).set({ guestId: null });
+    expect((await getRsvp(record.id))?.guestId).toBeUndefined();
   });
 });
 

@@ -38,9 +38,9 @@ export const rsvps = pgTable(
     supersededBy: uuid("superseded_by"),
     emailStatus: text("email_status").$type<"none" | "queued" | "sent" | "failed">().notNull().default("none"),
     /**
-     * The guest the reply was sent as, whose personal link its confirmation carries (Ruling BY);
-     * null for a reply sent before personal links, or whose guest couldn't be made. Nothing looks
-     * replies up by it, and guests are never deleted, so it has no index.
+     * The reply's own guest, made with it, whose personal link only its confirmation carries
+     * (Ruling CB); null for a reply sent before personal links. Nothing looks replies up by it, and
+     * guests are never deleted, so it has no index.
      */
     guestId: uuid("guest_id").references((): AnyPgColumn => guests.id),
   },

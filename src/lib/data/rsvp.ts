@@ -5,6 +5,7 @@ import { EVENT_IDS, type EventId } from "@/lib/content/schema";
 import { getDb } from "@/lib/db/client";
 import { rsvpFlagDismissals, rsvps } from "@/lib/db/schema";
 import { emailKey, nameKey, phoneKey } from "@/lib/rsvp/normalize";
+import { createGuest } from "./guests";
 import type { RsvpFlag, RsvpInput, RsvpRecord } from "./types";
 
 type Row = typeof rsvps.$inferSelect;
@@ -41,8 +42,11 @@ const PEOPLE: Record<string, number> = {
  * name, phone, email, party size, answers, other names and song, compared as keys) within 10
  * minutes of it is a double tap and returns that reply, so it gets no second confirmation email.
  * Only the newest counts: yes, then no, then yes again is three replies. The advisory lock makes
- * two simultaneous submissions for one name run one after the other. The guest a reply was sent as
- * is kept with it, but isn't compared: a double tap keeps the first reply and its guest.
+ * two simultaneous submissions for one name run one after the other.
+ *
+ * Each new reply gets a guest of its own, named after it and made in the same transaction, whose
+ * personal link only its confirmation email carries (Ruling CB): never the submitting browser's
+ * guest, since the email address is unverified. A double tap keeps the first reply and its guest.
  */
 export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }> {
   const guestName = nameKey(input.fullName);
@@ -77,6 +81,7 @@ export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }
       .limit(1);
     if (newest?.repeated) return { record: toRecord(newest.reply) };
 
+    const guest = await createGuest(input.fullName, transaction);
     const [created] = await transaction
       .insert(rsvps)
       .values({
@@ -90,7 +95,7 @@ export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }
         answers: input.answers,
         otherNames,
         song,
-        guestId: input.guestId ?? null,
+        guestId: guest.id,
         // The time now, with the lock held, not when the transaction began: a reply that waited
         // for the lock is never dated before the one it waited for.
         receivedAt: sql`clock_timestamp()`,

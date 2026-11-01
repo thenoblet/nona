@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createGuest } from "@/lib/data/guests";
+import { eq } from "drizzle-orm";
+import { findGuestById } from "@/lib/data/guests";
 import { getRsvp, keepReply, saveRsvp, setEmailStatus } from "@/lib/data/rsvp";
 import { contentDefaults } from "@/lib/content/defaults";
 import type { RsvpInput } from "@/lib/data/types";
+import { getDb } from "@/lib/db/client";
+import { rsvps } from "@/lib/db/schema";
 import { renderRsvpConfirmation } from "@/lib/email/rsvp-confirmation";
 import { resetDb } from "../../../test/db";
 
@@ -29,6 +32,13 @@ async function queued(extra: Partial<RsvpInput> = {}) {
   const { record } = await saveRsvp({ ...input, ...extra });
   await setEmailStatus(record.id, "queued");
   return record;
+}
+
+/** The reply's own guest, made with it. */
+async function guestOf(reply: { guestId?: string }) {
+  const guest = await findGuestById(reply.guestId!);
+  if (!guest) throw new Error("The reply has no guest");
+  return guest;
 }
 
 describe("handleRsvpConfirmation", () => {
@@ -83,8 +93,8 @@ describe("handleRsvpConfirmation", () => {
   });
 
   it("gives the reply's guest's personal link, from the site's address and the guest's token, in the html and the text", async () => {
-    const guest = await createGuest("Ama Test");
-    const reply = await queued({ guestId: guest.id });
+    const reply = await queued();
+    const guest = await guestOf(reply);
     await handleRsvpConfirmation(reply.id, { retryCount: 0, retryLimit: 5 });
     const message = send.fn.mock.calls[0][0];
     const link = `https://wedding.example.com/my/${guest.linkToken}`;
@@ -94,8 +104,8 @@ describe("handleRsvpConfirmation", () => {
   });
 
   it("sends the same email on every attempt: the link comes from the guest's saved token", async () => {
-    const guest = await createGuest("Ama Test");
-    const reply = await queued({ guestId: guest.id });
+    const reply = await queued();
+    const guest = await guestOf(reply);
     send.fn.mockRejectedValueOnce(new Error("provider down"));
     await expect(handleRsvpConfirmation(reply.id, { retryCount: 0, retryLimit: 5 })).rejects.toThrow("provider down");
     await handleRsvpConfirmation(reply.id, { retryCount: 1, retryLimit: 5 });
@@ -104,9 +114,10 @@ describe("handleRsvpConfirmation", () => {
     expect(retry.html).toContain(`/my/${guest.linkToken}`);
   });
 
-  it("sends a reply with no guest, sent before personal links (or still queued then), the email it always had", async () => {
+  it("sends a reply with no guest, sent before personal links (or still queued then), its email with no link", async () => {
     const reply = await queued();
-    expect(reply.guestId).toBeUndefined();
+    await getDb().update(rsvps).set({ guestId: null }).where(eq(rsvps.id, reply.id));
+    expect((await getRsvp(reply.id))?.guestId).toBeUndefined();
     await handleRsvpConfirmation(reply.id, { retryCount: 0, retryLimit: 5 });
     const message = send.fn.mock.calls[0][0];
     const today = await renderRsvpConfirmation((await getRsvp(reply.id))!, contentDefaults, "https://wedding.example.com");
@@ -117,8 +128,8 @@ describe("handleRsvpConfirmation", () => {
   });
 
   it("gives a guest who declined everything no link", async () => {
-    const guest = await createGuest("Ama Test");
-    const reply = await queued({ guestId: guest.id, answers: { [contentDefaults.celebrations[0].id]: "no" } });
+    const reply = await queued({ answers: { [contentDefaults.celebrations[0].id]: "no" } });
+    expect(reply.guestId).toEqual(expect.any(String));
     await handleRsvpConfirmation(reply.id, { retryCount: 0, retryLimit: 5 });
     const message = send.fn.mock.calls[0][0];
     expect(message.html).not.toContain("/my/");

@@ -355,97 +355,73 @@ describe("submitRsvp", () => {
     expect((await getSiteContent()).faq).toEqual(contentDefaults.faq);
   });
 
-  describe("the reply's guest (Ruling BY)", () => {
-    it("gives a browser without a guest one named after the reply, sets the guest cookie, and keeps the guest on the reply", async () => {
+  describe("the reply's own guest (Ruling CB)", () => {
+    it("gives a reply a fresh guest named after it, and sets no cookie on a browser without one", async () => {
       const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
       expect(state.status).toBe("sent");
       const [guestId] = await replyGuests();
-      expect(guestId).toEqual(expect.any(String));
       expect((await findGuestById(guestId!))?.displayName).toBe("Ama Test");
-      expect(browserCookies.sets.map((cookie) => cookie.name)).toEqual([guestCookieName()]);
-      expect(await readGuestIds()).toEqual([guestId]);
-    });
-
-    it("gives a reply without an email the browser's guest too", async () => {
-      await submitRsvp(initialRsvpState, form({ email: "" }));
-      const [guestId] = await replyGuests();
-      expect(await readGuestIds()).toEqual([guestId]);
-    });
-
-    it("reuses the browser's own unnamed guest, naming it after the reply, and leaves the cookie", async () => {
-      const own = await createGuest(null);
-      sendCookie([own.id]);
-      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
-      expect(await replyGuests()).toEqual([own.id]);
-      expect((await findGuestById(own.id))?.displayName).toBe("Ama Test");
-      expect(await guestCount()).toBe(1);
       expect(browserCookies.sets).toEqual([]);
+      expect(browserCookies.values.size).toBe(0);
     });
 
-    it("reuses the browser's own guest of the same name, trimmed and in any case, without renaming it", async () => {
-      const own = await createGuest("AMA TEST");
+    it("never gives the reply the browser's own guest, even of the same name, and leaves its cookie", async () => {
+      const own = await createGuest("Ama Test");
       sendCookie([own.id]);
-      await submitRsvp(initialRsvpState, form({ fullName: "  ama test ", email: "ama@example.com" }));
-      expect(await replyGuests()).toEqual([own.id]);
-      expect((await findGuestById(own.id))?.displayName).toBe("AMA TEST");
-      expect(await guestCount()).toBe(1);
-      expect(browserCookies.sets).toEqual([]);
-    });
-
-    it("gives a reply under another name on the same phone a separate guest, and leaves the browser's own and its cookie", async () => {
-      const own = await createGuest("Kofi Test");
-      sendCookie([own.id]);
+      const cookieBefore = browserCookies.values.get(guestCookieName());
       await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
       const [guestId] = await replyGuests();
       expect(guestId).not.toBe(own.id);
       expect((await findGuestById(guestId!))?.displayName).toBe("Ama Test");
-      expect((await findGuestById(own.id))?.displayName).toBe("Kofi Test");
       expect(browserCookies.sets).toEqual([]);
+      expect(browserCookies.values.get(guestCookieName())).toBe(cookieBefore);
       expect(await readGuestIds()).toEqual([own.id]);
     });
 
-    it("makes no guest and sets no cookie while replies are closed", async () => {
+    it("gives two replies from one browser two guests", async () => {
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      await submitRsvp(initialRsvpState, form({ fullName: "Kofi Test", email: "kofi@example.com" }));
+      const guests = await replyGuests();
+      expect(guests).toHaveLength(2);
+      expect(new Set(guests).size).toBe(2);
+      expect(await guestCount()).toBe(2);
+      expect(browserCookies.sets).toEqual([]);
+    });
+
+    it("gives a reply without an email a guest too", async () => {
+      await submitRsvp(initialRsvpState, form({ email: "" }));
+      expect(await replyGuests()).toEqual([expect.any(String)]);
+    });
+
+    it("makes no guest while replies are closed", async () => {
       await closeReplies();
       await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
       expect(await guestCount()).toBe(0);
-      expect(browserCookies.sets).toEqual([]);
     });
 
-    it("makes no guest and sets no cookie for a reply the form sends back to fix", async () => {
+    it("makes no guest for a reply the form sends back to fix", async () => {
       await submitRsvp(initialRsvpState, form({ fullName: "A", email: "ama@example.com" }));
       await submitRsvp(initialRsvpState, form({ email: "not-an-email" }));
       expect(await guestCount()).toBe(0);
-      expect(browserCookies.sets).toEqual([]);
     });
 
-    it("still saves the reply, without a guest, when the guest can't be made, and logs no guest details", async () => {
-      // Production without the cookie's secret: the guest cookie can be neither read nor signed.
+    it("makes one guest when the same reply is sent twice", async () => {
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
+      expect(await replyGuests()).toHaveLength(1);
+      expect(await guestCount()).toBe(1);
+    });
+
+    it("never reads the guest cookie: in production without its secret, a reply is still saved with its guest", async () => {
       vi.stubEnv("NODE_ENV", "production");
       vi.stubEnv("GUEST_COOKIE_SECRET", "");
-      const log = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
         const state = await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
         expect(state.status).toBe("sent");
-        expect(await replyGuests()).toEqual([null]);
-        expect(browserCookies.sets).toEqual([]);
-        expect(log).toHaveBeenCalled();
-        const logged = log.mock.calls.flat().map(String).join(" ");
-        expect(logged).not.toContain("Ama Test");
-        expect(logged).not.toContain("example.com");
+        expect(await replyGuests()).toEqual([expect.any(String)]);
       } finally {
         vi.unstubAllEnvs();
       }
-      await settle();
-      expect(boss.send).toHaveBeenCalledOnce();
-    });
-
-    it("keeps the first reply's guest when the same reply is sent twice from one browser", async () => {
-      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
-      await submitRsvp(initialRsvpState, form({ email: "ama@example.com" }));
-      const guests = await replyGuests();
-      expect(guests).toHaveLength(1);
-      expect(await readGuestIds()).toEqual(guests);
-      expect(await guestCount()).toBe(1);
     });
   });
 });

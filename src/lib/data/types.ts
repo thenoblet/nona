@@ -19,11 +19,6 @@ export type RsvpInput = {
   answers: Partial<Record<EventId, Answer>>;
   otherNames?: string;
   song?: string;
-  /**
-   * The guest the reply was sent as, whose personal link its confirmation carries (Ruling BY).
-   * Missing for a reply sent before personal links, or when its guest couldn't be made.
-   */
-  guestId?: string;
 };
 
 export type EmailStatus = "none" | "queued" | "sent" | "failed";
@@ -42,6 +37,11 @@ export type RsvpFlag = {
 
 export type RsvpRecord = RsvpInput & {
   id: string;
+  /**
+   * The reply's own guest, whose personal link its confirmation carries (Ruling CB); missing for a
+   * reply sent before personal links.
+   */
+  guestId?: string;
   receivedAt: string;
   /** Set when the couple kept another reply over this one; null for a current reply. */
   supersededAt: string | null;

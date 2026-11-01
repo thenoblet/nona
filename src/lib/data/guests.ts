@@ -1,6 +1,6 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { guests } from "@/lib/db/schema";
 import { isUuid } from "./ids";
@@ -20,9 +20,15 @@ function toGuest(row: typeof guests.$inferSelect): Guest {
   };
 }
 
-/** A new guest with their own personal-link token: 32 random bytes, URL-safe as it is. */
-export async function createGuest(displayName: string | null): Promise<Guest> {
-  const [row] = await getDb()
+/** Where a guest can be written: the database, or a transaction the guest is made inside. */
+type GuestWriter = Pick<ReturnType<typeof getDb>, "insert">;
+
+/**
+ * A new guest with their own personal-link token: 32 random bytes, URL-safe as it is. Written
+ * inside `writer`'s transaction when one is given, as a reply's own guest is (saveRsvp).
+ */
+export async function createGuest(displayName: string | null, writer: GuestWriter = getDb()): Promise<Guest> {
+  const [row] = await writer
     .insert(guests)
     .values({ displayName: cleanName(displayName), linkToken: randomBytes(32).toString("base64url") })
     .returning();
@@ -52,19 +58,4 @@ export async function setGuestName(id: string, name: string | null): Promise<Gue
     .where(eq(guests.id, id))
     .returning();
   return row ? toGuest(row) : null;
-}
-
-/**
- * Gives a guest who has no name this one (trimmed, cut to 80 characters) in a single write, so a
- * name another request gave them meanwhile is never replaced. The guest as they now are, named by
- * this call or by the other; null when there is no such guest.
- */
-export async function nameGuestIfUnnamed(id: string, name: string): Promise<Guest | null> {
-  if (!isUuid(id)) return null;
-  const [row] = await getDb()
-    .update(guests)
-    .set({ displayName: cleanName(name) })
-    .where(and(eq(guests.id, id), isNull(guests.displayName)))
-    .returning();
-  return row ? toGuest(row) : findGuestById(id);
 }

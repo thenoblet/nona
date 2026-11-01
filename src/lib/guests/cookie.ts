@@ -1,12 +1,10 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { createGuest, findGuestById, nameGuestIfUnnamed, setGuestName } from "@/lib/data/guests";
+import { createGuest, findGuestById, setGuestName } from "@/lib/data/guests";
 import { isUuid } from "@/lib/data/ids";
-import { cleanName } from "@/lib/data/text";
 import type { Guest } from "@/lib/data/types";
 import { guestCookieSecret } from "@/lib/env";
-import { nameKey } from "@/lib/rsvp/normalize";
 
 export { personalLink, personalLinkOf } from "./personal-link";
 
@@ -119,41 +117,6 @@ export async function ensureOwnGuest(displayName?: string | null): Promise<Guest
     // new own guest in its place, keeping the ones remembered through links.
   }
   const guest = await createGuest(displayName ?? null);
-  await writeGuestIds([guest.id, ...remembered]);
-  return guest;
-}
-
-/**
- * Whether a guest's kept name and a reply's name are one person's: compared as replies' names are
- * (trimmed, in any case and spacing), after the cut to 80 characters a kept name gets.
- */
-function sameName(keptName: string, replyName: string): boolean {
-  return nameKey(keptName) === nameKey(cleanName(replyName) ?? "");
-}
-
-/**
- * The guest an RSVP is sent as, whose personal link its confirmation carries (Ruling BY):
- * - A browser without a guest gets a new one named after the reply, and the cookie.
- * - The browser's own guest, when it has no name (it takes the reply's) or the same name.
- * - Under another name (a family sharing one phone), a separate guest named after the reply,
- *   leaving the browser's own and its cookie: nobody is mailed another guest's link, which can
- *   remove that guest's uploads.
- * It never renames a guest, and touches the cookie only when it makes the browser's own guest.
- * Server actions and route handlers only, since it may set the cookie.
- */
-export async function guestForReply(replyName: string): Promise<Guest> {
-  const [ownId, ...remembered] = await readGuestIds();
-  if (ownId) {
-    let own = await findGuestById(ownId);
-    if (own && !own.displayName) own = await nameGuestIfUnnamed(own.id, replyName);
-    if (own) {
-      if (!own.displayName || sameName(own.displayName, replyName)) return own;
-      return createGuest(replyName);
-    }
-    // The cookie names a guest the database no longer has (a restore from an older backup): make a
-    // new own guest in its place, keeping the ones remembered through links.
-  }
-  const guest = await createGuest(replyName);
   await writeGuestIds([guest.id, ...remembered]);
   return guest;
 }

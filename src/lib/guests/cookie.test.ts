@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createGuest, findGuestById, setGuestName } from "@/lib/data/guests";
+import { createGuest, findGuestById } from "@/lib/data/guests";
 import { getDb } from "@/lib/db/client";
 import { guests } from "@/lib/db/schema";
 import { guestCookieSecret } from "@/lib/env";
@@ -9,34 +9,9 @@ import { browserCookies } from "../../../test/next-cookies";
 
 vi.mock("next/headers", () => import("../../../test/next-cookies"));
 
-// A test can run something just after the next read of a guest, as another request would between
-// a read and a write.
-const guestReads = vi.hoisted(() => ({ afterNextRead: null as null | (() => Promise<void>) }));
-vi.mock("@/lib/data/guests", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/data/guests")>();
-  return {
-    ...real,
-    findGuestById: async (id: string) => {
-      const guest = await real.findGuestById(id);
-      const afterRead = guestReads.afterNextRead;
-      guestReads.afterNextRead = null;
-      await afterRead?.();
-      return guest;
-    },
-  };
-});
-
-/** Names the guest just after the next guest read, as an upload naming it at that moment would. */
-function nameGuestAfterNextRead(id: string, name: string): void {
-  guestReads.afterNextRead = async () => {
-    await setGuestName(id, name);
-  };
-}
-
 import {
   ensureOwnGuest,
   guestCookieName,
-  guestForReply,
   ownGuestId,
   personalLink,
   readGuestIds,
@@ -64,7 +39,6 @@ async function guestCount(): Promise<number> {
 beforeEach(async () => {
   await resetDb();
   browserCookies.clear();
-  guestReads.afterNextRead = null;
 });
 
 afterEach(() => {
@@ -288,95 +262,6 @@ describe("ensureOwnGuest", () => {
     await rememberGuest(linked.id);
     expect((await ensureOwnGuest()).id).toBe(linked.id);
     expect(await guestCount()).toBe(1);
-  });
-});
-
-describe("guestForReply (Ruling BY)", () => {
-  it("gives a browser without a guest a new one named after the reply, and sets the cookie", async () => {
-    const guest = await guestForReply("  Ama Owusu ");
-    expect(guest.displayName).toBe("Ama Owusu");
-    expect(await findGuestById(guest.id)).toEqual(guest);
-    expect(browserCookies.sets).toHaveLength(1);
-    expect(await readGuestIds()).toEqual([guest.id]);
-  });
-
-  it("treats a tampered cookie as none", async () => {
-    const existing = await createGuest("Ama Owusu");
-    browserCookies.values.set(guestCookieName(), `${existing.id}.forged`);
-    const guest = await guestForReply("Ama Owusu");
-    expect(guest.id).not.toBe(existing.id);
-    expect(await readGuestIds()).toEqual([guest.id]);
-  });
-
-  it("starts a new own guest when the cookie names one the database no longer has, keeping the remembered ones", async () => {
-    const remembered = await createGuest("Yaw");
-    sendCookie([randomUUID(), remembered.id]);
-    const guest = await guestForReply("Akosua Mensah");
-    expect(guest.displayName).toBe("Akosua Mensah");
-    expect(await readGuestIds()).toEqual([guest.id, remembered.id]);
-  });
-
-  it("reuses the browser's own guest when it has no name, names it after the reply, and leaves the cookie", async () => {
-    const own = await createGuest(null);
-    sendCookie([own.id]);
-    const guest = await guestForReply("Ama Owusu");
-    expect(guest).toEqual({ ...own, displayName: "Ama Owusu" });
-    expect(await findGuestById(own.id)).toEqual(guest);
-    expect(await guestCount()).toBe(1);
-    expect(browserCookies.sets).toHaveLength(0);
-  });
-
-  it("reuses the browser's own guest with the same name, trimmed and in any case, without renaming it", async () => {
-    const own = await createGuest("Ama Owusu");
-    sendCookie([own.id]);
-    for (const name of ["Ama Owusu", "  ama OWUSU ", "AMA  owusu"]) {
-      expect(await guestForReply(name)).toEqual(own);
-    }
-    expect(await findGuestById(own.id)).toEqual(own);
-    expect(await guestCount()).toBe(1);
-    expect(browserCookies.sets).toHaveLength(0);
-  });
-
-  it("gives a reply under another name (a family sharing one phone) a separate guest, leaving the browser's own and the cookie", async () => {
-    const own = await createGuest("Kofi Mensah");
-    const remembered = await createGuest("Yaw");
-    sendCookie([own.id, remembered.id]);
-    const guest = await guestForReply("Ama Mensah");
-    expect(guest.id).not.toBe(own.id);
-    expect(guest.displayName).toBe("Ama Mensah");
-    expect(await findGuestById(own.id)).toEqual(own);
-    expect(await guestCount()).toBe(3);
-    expect(browserCookies.sets).toHaveLength(0);
-    expect(await readGuestIds()).toEqual([own.id, remembered.id]);
-  });
-
-  it("only ever compares the browser's own guest: a remembered guest of the same name is not the reply's", async () => {
-    const own = await createGuest("Kofi Mensah");
-    const remembered = await createGuest("Ama Mensah");
-    sendCookie([own.id, remembered.id]);
-    const guest = await guestForReply("Ama Mensah");
-    expect([own.id, remembered.id]).not.toContain(guest.id);
-    expect(await readGuestIds()).toEqual([own.id, remembered.id]);
-  });
-
-  it("names a long name as the guest keeps it, so the same long name is the same guest the next time", async () => {
-    const longName = `Nana ${"Akua ".repeat(25)}Owusu`;
-    const guest = await guestForReply(longName);
-    expect(guest.displayName).toBe(longName.slice(0, 80).trimEnd());
-    expect((await guestForReply(longName)).id).toBe(guest.id);
-    expect(await guestCount()).toBe(1);
-  });
-
-  it("never takes a name another request gave the browser's own guest while it was naming it", async () => {
-    const own = await createGuest(null);
-    sendCookie([own.id]);
-    // Named between this reply's read of the guest and its write, as an upload's name could be.
-    nameGuestAfterNextRead(own.id, "Kofi Mensah");
-    const guest = await guestForReply("Ama Mensah");
-    expect(guest.id).not.toBe(own.id);
-    expect(guest.displayName).toBe("Ama Mensah");
-    expect((await findGuestById(own.id))?.displayName).toBe("Kofi Mensah");
-    expect(browserCookies.sets).toHaveLength(0);
   });
 });
 

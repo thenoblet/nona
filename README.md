@@ -12,7 +12,7 @@ Mobile-first: every page is designed for a phone, then widened for larger screen
 |---|---|
 | `/` | Landing page (editorial cover). "Open the invitation" starts the music and opens `/home`. |
 | `/home` | The homepage. The date picks one of three versions: **before** (the invitation), **wedding weekend** (5 and 6 Dec: photo sharing and today's schedule) and **after** (thank you, full album, wishes). |
-| `/rsvp` | Reply form. A confirmation email follows, with calendar files (`/calendar`) and, for a guest who is coming, their personal album link (`/my/<token>`). Sending a reply makes the phone's guest, or reuses it. |
+| `/rsvp` | Reply form. A confirmation email follows, with calendar files (`/calendar`) and, for a guest who is coming, their personal album link (`/my/<token>`): each reply gets a guest of its own, known only through that email, never the phone that sent it. |
 | `/album` | The shared album the table QR codes open. |
 | `/wishes` | Guestbook: written, voice or video wishes. |
 | `/today` | Wedding-day screen: what's happening now, the schedule, quick actions. |
@@ -171,7 +171,7 @@ in this repository.
 |---|---|
 | `SITE_URL` | The public address, `https://nobletxnancy.com`, without a trailing slash. Used in QR codes, emails, calendar files and link previews; also passed to the build, because static pages bake it in. |
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | The database on the private network. Without them the site shows its built-in text, but replies, the admin and emails are off. |
-| `GUEST_COOKIE_SECRET` | Signs the cookie that recognises a guest's browser: at least 32 random bytes (`openssl rand -base64 32`). Without it, every page and route that reads the guest cookie fails (an RSVP is still saved, without its personal link). Changing it forgets every browser's guests; their personal links bring them back. |
+| `GUEST_COOKIE_SECRET` | Signs the cookie that recognises a guest's browser: at least 32 random bytes (`openssl rand -base64 32`). Without it, every page and route that reads the guest cookie fails. Changing it forgets every browser's guests; their personal links bring them back. |
 | `RESEND_API_KEY` | Sends the confirmation emails. Without it, or once Resend's daily limit is reached, a confirmation shows "Sending" in the admin for about 24 to 28 hours of retries, then ends "Failed"; it never claims to have sent. |
 | `EMAIL_FROM` | The sender: a name and an address on a domain verified in Resend. Optional; it defaults to the RSVP address in `src/lib/email/send.ts`. |
 | `EMAIL_REPLY_TO` | Where a guest's reply to the email goes. Several addresses, separated by commas, all receive it. |
