@@ -1,0 +1,2 @@
+CREATE INDEX "media_album_mine_idx" ON "media" USING btree ("guest_id","listed_at" DESC NULLS FIRST,"id" DESC NULLS FIRST) WHERE "media"."purpose" = 'album' and "media"."hidden_at" is null and "media"."deleted_at" is null;--> statement-breakpoint
+CREATE INDEX "media_album_stats_idx" ON "media" USING btree ("celebration","kind") WHERE "media"."purpose" = 'album' and "media"."status" = 'ready' and "media"."hidden_at" is null and "media"."deleted_at" is null and not "media"."removed_by_uploader";

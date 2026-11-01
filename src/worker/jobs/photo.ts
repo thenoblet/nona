@@ -2,6 +2,7 @@ import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { readSection } from "@/lib/content/store";
 import { assignCelebration } from "@/lib/media/celebration";
+import { errorMessage } from "@/lib/log-error";
 import { plausibleCaptureTime, readPhotoCaptureTime } from "@/lib/media/capture-time";
 import { findItemToProcess, markPhotoReady } from "@/lib/media/rows";
 import { derivedKey } from "@/lib/storage/keys";
@@ -12,7 +13,7 @@ import { saveOriginal, withScratch } from "../scratch";
 import { describeEnding, killedFromOutside, runCapped, toolDidNotRun } from "./capped-tools";
 import { PHOTO_TYPE_HEAD_BYTES, photoTypeOf, type PhotoFormat } from "./photo-type";
 import { contentHashOf, rewriteManifest, withdrawIfHidden, type JobQueue } from "./publishing";
-import { decoder, decoding, deriveStills, type Stills, type StillSource } from "./stills";
+import { decoder, deriveStills, sharpFailure, type Stills, type StillSource } from "./stills";
 
 /*
  * media.photo: an uploaded photo becomes what the album shows. In its job's scratch folder:
@@ -64,7 +65,7 @@ const MAX_OTHER_PIXELS = 100_000_000;
  * within 366 MiB of address space (a 48 MP one within 271 MiB), far inside WORKER_HEIF_MEMORY_BYTES's
  * 2 GiB, and writes a baseline JPEG that sharp then decodes at a 174 MiB peak (a detailed 200 MP one).
  */
-const MAX_HEIF_PIXELS = MAX_JPEG_PIXELS;
+export const MAX_HEIF_PIXELS = MAX_JPEG_PIXELS;
 const HEIC_JPEG_QUALITY = 95;
 /** heif-dec's time limit unless the options say otherwise: it takes about a second for a 12 MP photo. */
 const HEIC_DECODE_MILLISECONDS = 60_000;
@@ -76,7 +77,7 @@ const MAX_HEIF_IMAGES = 8;
  * Scratch room beyond the original: a HEIC's decoded JPEG, which at 210 MP and quality 95 (3 bytes
  * a pixel at worst) stays under this.
  */
-const DECODED_JPEG_BYTES = 1024 * 1024 * 1024;
+export const DECODED_JPEG_BYTES = 1024 * 1024 * 1024;
 
 /** What the job takes from the worker's settings. */
 export type PhotoOptions = {
@@ -90,8 +91,11 @@ export type PhotoOptions = {
   jobQueue: JobQueue;
 };
 
-/** Where and how a job runs libheif's tools. */
-type HeifContext = PhotoOptions & { folder: string; signal: AbortSignal };
+/** Where and how a job runs libheif's tools (media.jpeg's too). */
+export type HeifContext = Pick<PhotoOptions, "heifMemoryBytes" | "heifThreads" | "heifDecodeMilliseconds"> & {
+  folder: string;
+  signal: AbortSignal;
+};
 
 /** One of a HEIF's top-level images, as heif-info lists it. */
 export type HeifImage = { width: number; height: number; primary: boolean };
@@ -106,7 +110,7 @@ type Derived = Stills & {
 };
 
 /** The first bytes of a file, for its magic numbers. */
-async function readHead(path: string): Promise<Uint8Array> {
+export async function readHead(path: string): Promise<Uint8Array> {
   const file = await open(path, "r");
   try {
     const { buffer, bytesRead } = await file.read(Buffer.alloc(PHOTO_TYPE_HEAD_BYTES), 0, PHOTO_TYPE_HEAD_BYTES, 0);
@@ -211,9 +215,10 @@ async function heifImages(original: string, context: HeifContext): Promise<HeifI
 /**
  * Decodes a HEIC with heif-dec into a JPEG beside it, upright. heif-dec (libheif 1.23) has no way
  * to decode the primary image alone: it writes one JPEG per top-level image, numbered in
- * heif-info's order when there are several, and the one wanted is the primary's.
+ * heif-info's order when there are several, and the one wanted is the primary's. media.jpeg uses it
+ * too, for a HEIC's full-size JPEG: the same checks, caps and failures.
  */
-async function decodeHeic(original: string, context: HeifContext): Promise<string> {
+export async function decodeHeic(original: string, context: HeifContext): Promise<string> {
   const images = await heifImages(original, context);
   const output = join(context.folder, "decoded.jpg");
   // Its threads from WORKER_HEIF_THREADS, never libheif's own 4 tiles at once (Ruling R).
@@ -226,19 +231,36 @@ async function decodeHeic(original: string, context: HeifContext): Promise<strin
   throw new PermanentJobError("corrupt", "heif-dec decoded no primary image from the HEIC");
 }
 
+// sharp's own (bundled) libheif refuses a HEIF whose index names more than 256 items, as a very large
+// phone photo's does: a 200 MP one in 512 px tiles holds 768. The worker's heif-dec takes them.
+const PAST_SHARPS_ITEM_LIMIT = /security limit exceeded: iloc box contains \d+ items/i;
+
+/**
+ * A HEIF's compression ("hevc", "av1"…), from its header alone, which also refuses a primary image
+ * past the pixel limit before anything decodes. Ruling BN: null for a file whose index is past sharp's
+ * own libheif's item limit; heif-info and heif-dec judge it then (its images, its pixels, whether it
+ * decodes), so a damaged file still fails as `corrupt`. Any other refusal is sharpFailure's.
+ */
+export async function heifCompression(path: string): Promise<string | null> {
+  try {
+    return (await decoder(path, MAX_HEIF_PIXELS).metadata()).compression ?? null;
+  } catch (error) {
+    if (PAST_SHARPS_ITEM_LIMIT.test(errorMessage(error))) return null;
+    throw sharpFailure("HEIF", error);
+  }
+}
+
 /** The file to make the derived files from: the original, or for a HEIC its decoded JPEG. */
 async function decodable(original: string, format: PhotoFormat, context: HeifContext): Promise<Decodable> {
   if (format !== "heif") {
     const maxPixels = format === "jpeg" ? MAX_JPEG_PIXELS : MAX_OTHER_PIXELS;
     return { path: original, maxPixels, autoOrient: true, kind: format };
   }
-  // The header only: its codec, and the primary image's size (refused past the limit before
-  // anything decodes).
-  const header = await decoding("HEIF", () => decoder(original, MAX_HEIF_PIXELS).metadata());
+  const compression = await heifCompression(original);
   // libheif turns the pixels by the file's own rotation (irot) as it decodes, for heif-dec and sharp alike.
   // An AVIF gets no heif-info check (decided in Task 9's review): sharp decodes its primary image
   // alone, and limitInputPixels bounds that one, so nothing else in the file is ever decoded.
-  if (header.compression === "av1") {
+  if (compression === "av1") {
     return { path: original, maxPixels: MAX_OTHER_PIXELS, autoOrient: false, kind: "avif" };
   }
   // heif-dec writes a baseline JPEG, which sharp decodes at a fraction of its size like any other.

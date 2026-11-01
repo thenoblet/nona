@@ -29,6 +29,8 @@ export type ApiRequest = {
   signal?: AbortSignal;
   /** Lets the request outlive the page (the events sent as it closes). */
   keepalive?: boolean;
+  /** What the answer should be (the download route answers JSON when asked for it). */
+  accept?: string;
 };
 
 export type ApiClient = { request(path: string, request: ApiRequest): Promise<ApiAnswer> };
@@ -103,7 +105,10 @@ export function createApiClient(options: { fetch?: typeof fetch; sleep?: Sleep }
     try {
       const response = await send(path, {
         method: request.method,
-        headers: request.body === undefined ? undefined : { "Content-Type": "application/json" },
+        headers: {
+          ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...(request.accept ? { Accept: request.accept } : {}),
+        },
         body: request.body === undefined ? undefined : JSON.stringify(request.body),
         credentials: "same-origin",
         cache: "no-store",

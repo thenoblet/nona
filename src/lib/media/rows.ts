@@ -725,6 +725,69 @@ export async function markPlayableCopy(
 }
 
 /*
+ * An iPhone photo's full-size JPEG (Task 15): made by the media worker's media.jpeg on the photo's
+ * first "As JPEG" download, and kept as `derived.jpeg`. Like the photo's other files it is the
+ * current generation's: a hide withdraws it (it sits under the item's folder), and after an unhide
+ * the next download makes it again.
+ */
+
+/** A ready, visible album photo uploaded as a HEIC or HEIF, with no full-size JPEG yet. */
+function awaitsFullSizeJpeg(mediaId: string, derivedGeneration?: number) {
+  return and(
+    visibleItem(mediaId),
+    sql`${media.status} = 'ready'`,
+    eq(media.kind, "photo"),
+    eq(media.purpose, "album"),
+    inArray(media.contentType, ["image/heic", "image/heif"]),
+    sql`${media.derived} ->> 'jpeg' is null`,
+    derivedGeneration === undefined ? undefined : eq(media.derivedGeneration, derivedGeneration),
+  );
+}
+
+/** What media.jpeg reads of its photo when it starts. */
+export type PhotoForJpeg = {
+  originalKey: string;
+  /** The capture time the photo job settled on: the JPEG's only metadata. */
+  capturedAt: Date | null;
+  /** Which making of its derived files this is, part of the JPEG's key. */
+  derivedGeneration: number;
+};
+
+/**
+ * The photo, if media.jpeg has a JPEG to make of it (Ruling AG): a ready, visible album HEIC with
+ * none yet. Null for one made already (a second delivery), hidden, deleted, removed, not ready, not
+ * a HEIC, a video, a wish, or no such id. One read on the primary key.
+ */
+export async function findPhotoForJpeg(mediaId: string): Promise<PhotoForJpeg | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .select({ originalKey: media.originalKey, capturedAt: media.capturedAt, derivedGeneration: media.derivedGeneration })
+    .from(media)
+    .where(awaitsFullSizeJpeg(mediaId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Names the photo's full-size JPEG (`derived.jpeg`), in one statement and only while it still wants
+ * one in the generation the JPEG was made for: a hide while the job worked, an unhide since it read
+ * the photo, or another delivery that named its JPEG first, leaves it as it is. Returns the facts
+ * its manifest holds, or null when it changed nothing.
+ */
+export async function markFullSizeJpeg(
+  mediaId: string,
+  jpeg: { key: string; derivedGeneration: number },
+): Promise<MediaManifest | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .update(media)
+    .set({ derived: sql`${media.derived} || jsonb_build_object('jpeg', ${jpeg.key}::text)` })
+    .where(awaitsFullSizeJpeg(mediaId, jpeg.derivedGeneration))
+    .returning(manifestColumns);
+  return row ?? null;
+}
+
+/*
  * Withdrawing an item's public files (Task 12): once an item is hidden or deleted, the media worker's
  * visibility job records every key it will withdraw (withdrawing_keys: the files its row names, any
  * other under its folder, and a permanently deleted item's original), deletes them, purges the

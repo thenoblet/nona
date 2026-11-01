@@ -219,6 +219,19 @@ export const media = pgTable(
     index("media_album_cursor_idx")
       .on(table.purpose, table.status, table.listedAt.desc().nullsFirst(), table.id.desc().nullsFirst())
       .where(sql`${table.hiddenAt} is null and ${table.deletedAt} is null`),
+    // "My uploads" (Task 15): one guest's own album items, newest listed first, the id breaking
+    // ties, so a guest's pages read in order with no sort. Their uploaded and failed items, never
+    // listed, come first of all (nulls first, as DESC reads them), where their own page finds them.
+    index("media_album_mine_idx")
+      .on(table.guestId, table.listedAt.desc().nullsFirst(), table.id.desc().nullsFirst())
+      .where(sql`${table.purpose} = 'album' and ${table.hiddenAt} is null and ${table.deletedAt} is null`),
+    // The album's counts by celebration and kind (the count line, and whether "More moments" has
+    // anything), read from this index alone: only the moments everyone sees, two short columns each.
+    index("media_album_stats_idx")
+      .on(table.celebration, table.kind)
+      .where(
+        sql`${table.purpose} = 'album' and ${table.status} = 'ready' and ${table.hiddenAt} is null and ${table.deletedAt} is null and not ${table.removedByUploader}`,
+      ),
     index("media_guest_id_idx").on(table.guestId),
     // Re-picking a file finds its unfinished upload.
     index("media_resume_idx")

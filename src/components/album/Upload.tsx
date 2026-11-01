@@ -5,8 +5,10 @@ import {
   lazy,
   Suspense,
   use,
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -19,6 +21,7 @@ import { DockItem } from "@/components/music/Dock";
 import { Halo } from "@/components/ui/Halo";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { ALBUM_PICKER_ACCEPT } from "@/lib/media/limits";
+import { AlbumUploadsContext, type AlbumUploads } from "./album-uploads";
 import { readGuestName } from "./guestName";
 import type { UploadCircle } from "./UploadCircle";
 import { BatchCard, CameraCard, emberButton } from "./UploadCards";
@@ -33,6 +36,7 @@ import {
   subscribeToReturnNotice,
 } from "./uploader/local-records";
 import { setPersonalLink, useLinkOfferAllowed, usePersonalLink } from "./uploader/personal-link";
+import { ServerThumbContext } from "./uploader/server-thumb";
 import {
   createUploadStore,
   returnNoticeWords,
@@ -150,6 +154,16 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // What the album's grid hears (album-uploads.ts): Send again while sharing is open, and each file added.
+  const added = snapshot.items.filter((item) => item.status === "added").length;
+  const chooseFiles = useCallback(() => {
+    replacing.current = null;
+    visibleGalleryInput()?.click();
+  }, []);
+  const albumUploads = useMemo<AlbumUploads>(() => ({ sendAgain: sharingOpen ? chooseFiles : null, added }), [sharingOpen, added, chooseFiles]);
+  // Ruling BB: the server's thumbnail of a file the phone couldn't draw, once it has one.
+  const setServerThumb = useCallback((itemId: string, url: string) => store.update(itemId, { serverThumbUrl: url }), [store]);
+
   const controls: UploadControls = {
     snapshot,
     start(files, source) {
@@ -195,10 +209,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       replacing.current = itemId;
       visibleGalleryInput()?.click();
     },
-    chooseFiles() {
-      replacing.current = null;
-      visibleGalleryInput()?.click();
-    },
+    chooseFiles,
     setMinimised(minimised) {
       store.setMinimised(minimised);
     },
@@ -206,7 +217,13 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     setSharingOpen,
   };
 
-  return <UploadContext value={controls}>{children}</UploadContext>;
+  return (
+    <UploadContext value={controls}>
+      <ServerThumbContext value={setServerThumb}>
+        <AlbumUploadsContext value={albumUploads}>{children}</AlbumUploadsContext>
+      </ServerThumbContext>
+    </UploadContext>
+  );
 }
 
 const choices: Record<UploadSource, { icon: IconName; primary: string; secondary: string; accept: string }> = {

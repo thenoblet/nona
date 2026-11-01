@@ -2,9 +2,11 @@ import Image, { type ImageProps } from "next/image";
 import type { MediaItem } from "@/lib/data/types";
 
 /**
- * Fills its (relative, sized) parent with a guest's photo or a video's poster.
+ * Fills its (relative, sized) parent with a photo or a video's poster, for the slideshow, which
+ * shows the sample moments until Task 20 (the album's own tiles and viewer are MediaTile and
+ * viewer/Viewer, with plain images: guest media never goes through Next's image optimiser).
  * - bundled image (StaticImageData): optimised, with a blur placeholder
- * - URL string: served as-is until the CloudFront host is added to `images.remotePatterns`
+ * - URL string: served as it is (unoptimized)
  * - null: no preview yet, the parent's `bg-tile` shows through
  */
 export function MediaImage({

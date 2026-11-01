@@ -15,6 +15,10 @@ export const RATE_LIMITS = {
   // minute, so no one guest can push the whole album onto the on-demand queue (Task 11 review).
   conversion: { burst: 10, refillEveryMs: 60_000 },
   download: { burst: 100, refillEveryMs: 500 },
+  // The album's pages and its new-moments check, and one moment's state (the viewer and the
+  // uploader ask after a video or photo being made ready).
+  album: { burst: 100, refillEveryMs: 500 },
+  item: { burst: 100, refillEveryMs: 500 },
   wish: { burst: 100, refillEveryMs: 500 },
   "text-wish": { burst: 5, refillEveryMs: 60_000 },
   link: { burst: 20, refillEveryMs: 1_000 },

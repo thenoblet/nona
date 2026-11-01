@@ -127,6 +127,21 @@ const paths = {
       <path d="M4 17l5-5 4 4 3-3 4 4" />
     </>
   ),
+  /** Save to Photos: a picture with an arrow into it. */
+  save: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <path d="M12 8v7M9 12l3 3 3-3" />
+    </>
+  ),
+  /** Open elsewhere (the phone's own browser). */
+  external: (
+    <>
+      <path d="M14 4h6v6M20 4l-9 9" />
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+    </>
+  ),
+  arrowUp: <path d="M12 19V5M6 11l6-6 6 6" />,
 } as const;
 
 export type IconName = keyof typeof paths;

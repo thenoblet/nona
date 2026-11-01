@@ -358,6 +358,197 @@
   /* A failure's label slides in beside the circle, after its shake. */
   .upload-failure-label { animation: upload-label-in 320ms cubic-bezier(0.16, 1, 0.3, 1) 260ms both; }
 
+  /*
+   * The album's grid (Task 15, gates A and B). Classes rather than utilities, so the first page's 30
+   * tiles stay small in its HTML. A tile shows its average colour, then its ThumbHash (set by the
+   * page once it runs), then its thumbnail.
+   */
+  .album-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  @media (min-width: 768px) { .album-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  @media (min-width: 1024px) { .album-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+  .album-tile {
+    position: relative;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border-radius: 2px;
+    background-color: var(--color-tile);
+    background-size: cover;
+    background-position: center;
+  }
+  .album-tile > button {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  .album-tile > button:focus-visible { outline-offset: -3px; }
+  .album-tile img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  @media (hover: hover) {
+    .album-tile > button:hover img { transform: scale(1.05); }
+  }
+  /* A new moment wears an ember outline for a moment after it drops in. */
+  .album-tile::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 2px var(--color-ember);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .album-tile.is-fresh { animation: album-drop 520ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .album-tile.is-fresh::after { animation: album-glow 2600ms ease-out 500ms both; }
+  .album-tile-note {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 6px;
+    text-align: center;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+  .album-tile-again {
+    min-height: 28px;
+    padding: 0 2px;
+    border: 0;
+    border-bottom: 1px solid currentColor;
+    background: none;
+    color: var(--color-cocoa);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .album-tile-spin {
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    border: 2px solid rgb(106 82 76 / 0.25);
+    border-top-color: var(--color-mocha);
+    animation: upload-spin 900ms linear infinite;
+  }
+  .album-duration {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px 3px 6px;
+    border-radius: 9999px;
+    background: rgb(255 255 255 / 0.95);
+    color: var(--color-cocoa);
+    font-size: 11px;
+    pointer-events: none;
+  }
+  .album-mine-dot {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    border: 2px solid #fff;
+    background: var(--color-ember);
+    pointer-events: none;
+  }
+  /* The chip row's right edge fades, so on a narrow phone it's clear the row scrolls (gate B screen 3). */
+  .album-chips {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  }
+  .album-chips > button:last-child { margin-right: 20px; }
+
+  /* All · Photos · Videos, on the count's row: the chosen tab opens to show its word (gate B screen 8). */
+  .type-tabs {
+    flex: none;
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 9999px;
+    background: var(--color-tray);
+    box-shadow: var(--shadow-inset);
+  }
+  .type-tabs button {
+    min-width: 40px;
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 11px;
+    border: 0;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--color-mocha);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background-color 200ms ease, box-shadow 200ms ease, color 200ms ease;
+  }
+  .type-tabs button[aria-pressed="true"] { background: #fff; color: var(--color-cocoa); font-weight: 500; box-shadow: var(--shadow-seg); }
+  .type-tabs button[aria-pressed="true"] svg { color: var(--color-ember); }
+  .type-label {
+    display: inline-block;
+    max-width: 0;
+    overflow: hidden;
+    opacity: 0;
+    white-space: nowrap;
+    transition: max-width 360ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease, margin 360ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .type-tabs button[aria-pressed="true"] .type-label { max-width: 4.5em; margin-left: 6px; opacity: 1; }
+
+  /* "N new moments", held at the top of the grid (gate B screen 2). */
+  .new-pill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    margin-top: 6px;
+    padding: 4px 16px 4px 5px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--color-cocoa);
+    color: #fff;
+    box-shadow: var(--shadow-pill-cocoa), 0 10px 24px rgb(61 41 39 / 0.18);
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    cursor: pointer;
+    animation: album-pill-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes album-drop {
+    from { opacity: 0; transform: translateY(-14px) scale(0.9); }
+  }
+  @keyframes album-glow {
+    0%, 70% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes album-pill-in {
+    from { opacity: 0; transform: translateY(-18px) scale(0.94); }
+  }
+
   @keyframes morph-in {
     from { opacity: 0; transform: translateY(0.5em); }
   }
