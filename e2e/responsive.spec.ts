@@ -91,6 +91,9 @@ function reply(answers: RsvpRecord["answers"]): RsvpRecord {
   };
 }
 
+/** The all-declined email, which shows no celebration's place (only its name and answer). */
+const COMING_TO_NONE = "the confirmation for a guest who can come to none";
+
 const emails = {
   "the confirmation for a guest who is coming, with their personal link": () =>
     renderRsvpConfirmation(
@@ -99,7 +102,7 @@ const emails = {
       EMAIL_SITE,
       `${EMAIL_SITE}/my/made-up-token-for-the-width-check-000000000`,
     ),
-  "the confirmation for a guest who can come to none": () =>
+  [COMING_TO_NONE]: () =>
     renderRsvpConfirmation(reply({ [ceremony.id]: "no", [reception.id]: "no", [thanks.id]: "no" }), contentDefaults, EMAIL_SITE),
 };
 
@@ -117,11 +120,12 @@ for (const [name, render] of Object.entries(emails)) {
         const { scrollWidth, innerWidth, codeLines } = await page.evaluate(() => ({
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
-          // The reception's GhanaPost GPS code, which may move to a line of its own but never splits.
+          // The reception's GhanaPost GPS code, which may move to a line of its own but never splits;
+          // a guest coming to none sees no place at all.
           codeLines: [...document.querySelectorAll("span")].find((span) => span.textContent === "AX-0084-3317")?.getClientRects().length,
         }));
         expect(scrollWidth, `${name} is ${scrollWidth}px wide in a ${innerWidth}px window`).toBeLessThanOrEqual(innerWidth);
-        expect(codeLines).toBe(1);
+        expect(codeLines).toBe(name === COMING_TO_NONE ? undefined : 1);
       });
     }
   });

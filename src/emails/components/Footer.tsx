@@ -15,7 +15,7 @@ const small = {
 /** The last lines: the wedding's hashtag, then the site's address, e.g. "nobletxnancy.com". */
 export function Footer({ siteUrl }: { siteUrl: string }) {
   return (
-    <Section style={{ paddingTop: "30px" }}>
+    <Section style={{ paddingTop: "18px" }}>
       <Text style={{ ...small, color: colours.emberInk }}>#NONA26</Text>
       <Text style={{ ...small, marginTop: "6px", fontSize: "12px", fontWeight: 400, letterSpacing: "0.14em", textTransform: "none" }}>
         <Link href={siteUrl} data-text-without-href style={{ color: colours.mocha, textDecoration: "none" }}>

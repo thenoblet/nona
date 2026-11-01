@@ -51,7 +51,7 @@ test("after the wedding, the home page counts the album's visible photos and vid
   await sql`update media set purpose = 'wish' where id = ${wish}`;
 
   await page.goto("/home?mode=after");
-  const album = page.locator("section#album");
+  const album = page.locator("section#album").filter({ visible: true });
   // Visible only: until the streamed section swaps in, a hidden copy of it can sit beside it.
   await expect(album.getByText("3 photos and 1 video from 2 of you, all in one place.").filter({ visible: true })).toBeVisible();
   // The album beneath it counts the same moments.
@@ -61,7 +61,7 @@ test("after the wedding, the home page counts the album's visible photos and vid
 
 test("after the wedding, an empty album says what it will hold rather than count nothing", async ({ page }) => {
   await page.goto("/home?mode=after");
-  const album = page.locator("section#album");
+  const album = page.locator("section#album").filter({ visible: true });
   await expect(album.getByText("Every photo and video you share, all in one place.").filter({ visible: true })).toBeVisible();
   expect(await album.innerText()).not.toMatch(/\[[^\]]*\]/);
 });

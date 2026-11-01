@@ -240,7 +240,7 @@ test.describe("the switches", () => {
       const uploads = page.getByRole("switch", { name: "Uploads" });
       await expect(uploads).toHaveAttribute("aria-checked", "true");
       await uploads.click();
-      const card = page.locator('[data-switch="uploads"]');
+      const card = page.locator('[data-switch="uploads"]').filter({ visible: true });
       await expect(card.getByText("Close uploads?")).toBeVisible();
       await expect(
         card.getByText("Guests see “Sharing has closed” and can't send anything new. Anything already sending gets 24 hours to finish."),
@@ -277,7 +277,7 @@ test.describe("the switches", () => {
       await sql`insert into settings (key, value) values ('uploads_open', 'false'::jsonb)
         on conflict (key) do update set value = excluded.value`;
       await uploads.click();
-      const card = page.locator('[data-switch="uploads"]');
+      const card = page.locator('[data-switch="uploads"]').filter({ visible: true });
       await expect(card.getByText("Open uploads again?")).toBeVisible();
       await expect(uploads).toHaveAttribute("aria-checked", "false");
       await card.getByRole("button", { name: "Cancel" }).click();
@@ -306,7 +306,7 @@ test.describe("the switches", () => {
         await route.continue();
       });
       await page.getByRole("switch", { name: "Uploads" }).click();
-      const card = page.locator('[data-switch="uploads"]');
+      const card = page.locator('[data-switch="uploads"]').filter({ visible: true });
       await expect(card.getByText("Close uploads?")).toBeVisible();
       await expect.poll(() => reread).toBe(true);
       const yes = card.getByRole("button", { name: "Close uploads" });
@@ -327,7 +327,7 @@ test.describe("the switches", () => {
       const page = await context.newPage();
       await page.goto("/admin/photos");
       const backlog = page.getByRole("switch", { name: "Convert backlog videos" });
-      const card = page.locator('[data-switch="backlog"]');
+      const card = page.locator('[data-switch="backlog"]').filter({ visible: true });
       await expect(card.getByText("Turn off over the wedding weekend so phones get their videos first.")).toBeVisible();
       await backlog.click();
       await expect(card.getByText("Turn off backlog conversion?")).toBeVisible();
@@ -358,7 +358,7 @@ test.describe("the switches", () => {
     try {
       const page = await context.newPage();
       await page.goto("/admin/photos");
-      const card = page.locator('[data-switch="tv-delay"]');
+      const card = page.locator('[data-switch="tv-delay"]').filter({ visible: true });
       await expect(card.getByText("Default", { exact: true })).toBeVisible();
       await card.getByLabel("Seconds").fill("901");
       await card.getByRole("button", { name: "Save" }).click();

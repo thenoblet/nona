@@ -25,8 +25,8 @@ export type RsvpConfirmationProps = {
 const paragraph = {
   margin: 0,
   fontFamily: fonts.text,
-  fontSize: "17px",
-  lineHeight: "28px",
+  fontSize: "15px",
+  lineHeight: "23px",
   textAlign: "center",
   color: colours.mocha,
 } as const;
@@ -66,7 +66,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
       <body style={{ margin: 0, padding: 0, backgroundColor: colours.blush }}>
         <Preview>{intro}</Preview>
         {/* No side margin: the header runs edge to edge and its photo fades into this same blush. */}
-        <Section style={{ backgroundColor: colours.blush, padding: "0 0 44px" }}>
+        <Section style={{ backgroundColor: colours.blush, padding: "0 0 28px" }}>
           {/* Classic Outlook for Windows ignores max-width: there, a 600 px table holds the email's width. */}
           <OutlookFixedWidth width={600}>
             <Container style={{ maxWidth: "600px" }}>
@@ -81,22 +81,22 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
                     fontFamily: fonts.serif,
                     fontStyle: "italic",
                     fontWeight: 500,
-                    fontSize: "26px",
-                    lineHeight: "32px",
+                    fontSize: "23px",
+                    lineHeight: "28px",
                     color: colours.cocoa,
                   }}
                 >
                   {`Dear ${guestName ?? "guest"},`}
                 </Heading>
-                <Text style={{ ...paragraph, margin: "10px auto 0", maxWidth: "440px" }}>{intro}</Text>
+                <Text style={{ ...paragraph, margin: "6px auto 0", maxWidth: "420px" }}>{intro}</Text>
               </Section>
 
-              <Section tdClassName="nn-pad" style={{ padding: "32px 34px 0" }}>
+              <Section tdClassName="nn-pad" style={{ padding: "20px 34px 0" }}>
                 {celebrations.map((celebration) => (
                   <CelebrationCard key={celebration.id} celebration={celebration} />
                 ))}
                 {comingToAny ? (
-                  <Text style={{ ...paragraph, margin: "6px 0 0", fontSize: "14px", lineHeight: "22px", fontStyle: "italic" }}>
+                  <Text style={{ ...paragraph, margin: "2px 0 0", fontSize: "12px", lineHeight: "18px", fontStyle: "italic" }}>
                     For Apple, Outlook and other calendars, open the calendar file attached to this email.
                   </Text>
                 ) : null}
@@ -104,16 +104,16 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
 
               {comingToAny && personalLink ? <PersonalLinkCard link={personalLink} /> : null}
 
-              <Section tdClassName="nn-pad" style={{ padding: "36px 40px 0", textAlign: "center" }}>
-                <Text style={{ ...paragraph, margin: "0 0 20px", fontSize: "16px", lineHeight: "26px" }}>
+              <Section tdClassName="nn-pad" style={{ padding: "24px 40px 0", textAlign: "center" }}>
+                <Text style={{ ...paragraph, margin: "0 0 12px", fontSize: "13px", lineHeight: "20px" }}>
                   Need to change something? Send a new reply with the same name and phone or email.
                 </Text>
                 <Button
                   href={`${siteUrl}/rsvp`}
                   style={{
                     ...smallCaps,
-                    fontSize: "11px",
-                    padding: "16px 32px",
+                    fontSize: "10px",
+                    padding: "12px 24px",
                     borderRadius: "999px",
                     backgroundColor: colours.cocoa,
                     color: colours.white,
@@ -124,19 +124,19 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
                 <Text
                   className="nn-sign"
                   style={{
-                    margin: "42px 0 0",
+                    margin: "26px 0 0",
                     textAlign: "center",
                     fontFamily: fonts.script,
                     fontStyle: "italic",
-                    fontSize: "36px",
-                    lineHeight: "46px",
+                    fontSize: "30px",
+                    lineHeight: "38px",
                     color: colours.emberInk,
                   }}
                 >
                   {/* Too long for a narrow screen, it breaks after "With love,"; on a phone it is a little smaller (nn-sign). */}
                   With love, <span style={{ whiteSpace: "nowrap" }}>Noblet &amp; Nancy</span>
                 </Text>
-                <Text style={{ ...smallCaps, margin: "10px 0 0", textAlign: "center", color: colours.mocha }}>
+                <Text style={{ ...smallCaps, margin: "4px 0 0", textAlign: "center", color: colours.mocha }}>
                   Always &amp; Forever
                 </Text>
                 <Footer siteUrl={siteUrl} />
@@ -156,7 +156,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
  */
 function PersonalLinkCard({ link }: { link: string }) {
   return (
-    <Section tdClassName="nn-pad" style={{ padding: "22px 34px 0" }}>
+    <Section tdClassName="nn-pad" style={{ padding: "12px 34px 0" }}>
       <Section
         style={{
           backgroundColor: colours.white,
@@ -166,7 +166,7 @@ function PersonalLinkCard({ link }: { link: string }) {
         }}
       >
         <Row>
-          <Column className="nn-ticket" style={{ padding: "24px 28px 26px", textAlign: "center" }}>
+          <Column className="nn-ticket" style={{ padding: "14px 18px 16px", textAlign: "center" }}>
             <Heading
               as="h2"
               style={{
@@ -175,22 +175,22 @@ function PersonalLinkCard({ link }: { link: string }) {
                 fontFamily: fonts.serif,
                 fontStyle: "italic",
                 fontWeight: 500,
-                fontSize: "25px",
-                lineHeight: "30px",
+                fontSize: "20px",
+                lineHeight: "24px",
                 color: colours.cocoa,
               }}
             >
               Your personal link
             </Heading>
-            <Text style={{ ...paragraph, margin: "8px auto 18px", maxWidth: "460px", fontSize: "16px", lineHeight: "26px" }}>
-              Open this link on your phone before you share your first photo, and your photos stay together on any phone.
+            <Text style={{ ...paragraph, margin: "4px auto 12px", maxWidth: "340px", fontSize: "13px", lineHeight: "19px" }}>
+              Open it on your phone before you share your first photo, so your photos stay together.
             </Text>
             <Button
               href={link}
               style={{
                 ...smallCaps,
-                fontSize: "11px",
-                padding: "15px 30px",
+                fontSize: "10px",
+                padding: "11px 22px",
                 borderRadius: "999px",
                 backgroundColor: colours.ember,
                 color: colours.cocoa,
