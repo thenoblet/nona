@@ -17,6 +17,7 @@ const nav: Record<Mode, { links: NavItem[]; cta: NavItem }> = {
       { href: "#travel", label: "Travel" },
       { href: "#gifts", label: "Gifts" },
       { href: "#album", label: "Album" },
+      { href: "/wishes", label: "Wishes" },
     ],
     cta: { href: "/rsvp", label: "RSVP" },
   },
@@ -24,6 +25,7 @@ const nav: Record<Mode, { links: NavItem[]; cta: NavItem }> = {
     links: [
       { href: "#today", label: "Today" },
       { href: "#album", label: "Album" },
+      { href: "/wishes", label: "Wishes" },
       { href: "#celebrations", label: "Celebrations" },
       { href: "#map", label: "Map" },
       { href: "#gifts", label: "Gifts" },

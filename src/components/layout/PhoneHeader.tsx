@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { couple } from "@/content/wedding";
-import { Icon } from "@/components/ui/Icon";
+import { Icon, type IconName } from "@/components/ui/Icon";
 
 /**
  * The top bar on single-task pages (RSVP, album, wishes): a labelled way out, monogram,
@@ -14,6 +14,7 @@ import { Icon } from "@/components/ui/Icon";
 export function PhoneHeader({
   backHref = "/home",
   backText = "Home",
+  sibling,
   right,
   tone = "dark",
   children,
@@ -22,6 +23,8 @@ export function PhoneHeader({
   backHref?: string;
   /** The pill's visible text and accessible name: where it goes, in a word. */
   backText?: string;
+  /** The page beside this one (Album beside Wishes), as a pill on the right like the way out. */
+  sibling?: { href: string; text: string; icon: IconName };
   right?: ReactNode;
   tone?: "dark" | "light";
   children?: ReactNode;
@@ -46,7 +49,19 @@ export function PhoneHeader({
           <Link href="/home" className="font-script text-3xl text-ember no-underline" aria-label="Wedding website home">
             {couple.monogram}
           </Link>
-          <div className="flex justify-end">{right}</div>
+          <div className="flex justify-end">
+            {sibling ? (
+              <Link
+                href={sibling.href}
+                className={`press -mr-1 flex min-h-11 items-center gap-2 rounded-full border py-2 pr-2.5 pl-4 text-[11px] uppercase tracking-[0.18em] no-underline transition-[background-color,border-color] duration-200 ${pill}`}
+              >
+                {sibling.text}
+                <Icon name={sibling.icon} size={15} strokeWidth={1.8} className="text-ember" />
+              </Link>
+            ) : (
+              right
+            )}
+          </div>
         </div>
         {children}
       </div>
