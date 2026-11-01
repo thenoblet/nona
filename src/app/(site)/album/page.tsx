@@ -41,16 +41,7 @@ export default function AlbumPage({ searchParams }: PageProps<"/album">) {
   return (
     <main className="min-h-dvh bg-blush pb-28">
       <UploadProvider>
-        <PhoneHeader
-          right={
-            <Link
-              href="/wishes"
-              className="ember-link py-3 text-[11px] uppercase tracking-[0.18em] text-white no-underline"
-            >
-              Wishes
-            </Link>
-          }
-        >
+        <PhoneHeader sibling={{ href: "/wishes", text: "Wishes", icon: "heart" }}>
           <Suspense fallback={<AlbumHeadBody sharing={{ state: "pending" }} />}>
             <AlbumHead searchParams={searchParams} />
           </Suspense>

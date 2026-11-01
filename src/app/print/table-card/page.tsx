@@ -33,7 +33,7 @@ const printCss = `
 }
 `;
 
-const steps = ["Open your phone camera", "Point it at the code", "Share photos & videos"];
+const steps = ["Open your phone camera", "Point it at the code", "Share photos or leave us a wish"];
 
 /** A5 QR card for the reception tables. `?table=7` prints the table number. */
 export default function TableCardPage({ searchParams }: PageProps<"/print/table-card">) {
@@ -104,7 +104,7 @@ async function TableCard({ searchParams }: Pick<PageProps<"/print/table-card">, 
 
           <div className="flex flex-col items-center gap-4">
             <p className="m-0 text-[calc(var(--spacing)*13)] tracking-[0.2em] text-mocha uppercase">
-              No app · no sign-up · reception album
+              No app · no sign-up · photos &amp; wishes
             </p>
             <p className="m-0 text-[calc(var(--spacing)*15)]">
               Or visit <span className="font-medium break-words">{displayUrl(url)}</span>
