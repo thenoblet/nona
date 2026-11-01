@@ -1,13 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createPendingCancels,
   createReturnNoticeReader,
   createStartedFiles,
   dismissReturnNotice,
   returnNoticeUploads,
+  nextSendingExpiry,
   setSendingHere,
   stillSending,
   stopSayingSending,
+  subscribeToReturnNotice,
   subscribeToStartedFiles,
   type StorageLike,
 } from "./local-records";
@@ -108,6 +110,10 @@ describe("the uploads this phone started, for the notice on return", () => {
 });
 
 describe("what the notice on return speaks of", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   function twoUnfinished() {
     const storage = memoryStorage();
     const started = createStartedFiles(storage);
@@ -139,31 +145,73 @@ describe("what the notice on return speaks of", () => {
 
   it("leaves out an upload another tab is still sending, until that tab has been quiet for 15 s", () => {
     const storage = twoUnfinished();
-    // Another tab's record of what it sends, as its uploader wrote it.
-    storage.values.set("nona:sending-now", JSON.stringify({ "media-2": 1_000 }));
-    expect(returnNoticeUploads(storage, 10_000).map((upload) => upload.mediaId)).toEqual(["media-1"]);
-    expect(returnNoticeUploads(storage, 16_001).map((upload) => upload.mediaId)).toEqual(["media-1", "media-2"]);
+    // Another tab's record of what it sends, as its uploader wrote it (and an older, bare-time beat).
+    storage.values.set("nona:sending-now", JSON.stringify({ "media-2": { at: 1_000, tab: "tab-other" }, "media-1": 900 }));
+    expect(returnNoticeUploads(storage, 10_000, "tab-here")).toEqual([]);
+    expect(returnNoticeUploads(storage, 16_001, "tab-here").map((upload) => upload.mediaId)).toEqual(["media-1", "media-2"]);
+    expect(nextSendingExpiry(storage, 10_000, "tab-here")).toBe(15_900);
   });
 
-  it("writes what this page sends for other tabs, saying so again while it still is", () => {
+  it("ignores its own tab's beats: a page reloaded in the tab offers to carry its upload on at once", () => {
+    const storage = twoUnfinished();
+    storage.values.set("nona:sending-now", JSON.stringify({ "media-2": { at: 1_000, tab: "tab-here" } }));
+    expect(returnNoticeUploads(storage, 2_000, "tab-here").map((upload) => upload.mediaId)).toEqual(["media-1", "media-2"]);
+    expect(nextSendingExpiry(storage, 2_000, "tab-here")).toBeNull();
+  });
+
+  it("writes what this page sends for other tabs, keeping theirs, and saying so again while it still is", () => {
     const storage = memoryStorage();
+    storage.values.set("nona:sending-now", JSON.stringify({ "media-other": { at: 900, tab: "tab-other" }, "media-gone": { at: -20_000, tab: "tab-old" } }));
     const uploader = {};
-    setSendingHere(uploader, ["media-9"], storage, 1_000);
-    expect(JSON.parse(storage.values.get("nona:sending-now") ?? "{}")).toEqual({ "media-9": 1_000 });
-    stillSending(storage, 6_000);
-    expect(JSON.parse(storage.values.get("nona:sending-now") ?? "{}")).toEqual({ "media-9": 6_000 });
-    setSendingHere(uploader, [], storage, 7_000);
-    expect(storage.values.has("nona:sending-now")).toBe(false);
+    setSendingHere(uploader, ["media-9"], storage, 1_000, "tab-here");
+    expect(JSON.parse(storage.values.get("nona:sending-now") ?? "{}")).toEqual({
+      "media-other": { at: 900, tab: "tab-other" },
+      "media-9": { at: 1_000, tab: "tab-here" },
+    });
+    stillSending(storage, 6_000, "tab-here");
+    expect(JSON.parse(storage.values.get("nona:sending-now") ?? "{}")["media-9"]).toEqual({ at: 6_000, tab: "tab-here" });
+    setSendingHere(uploader, [], storage, 7_000, "tab-here");
+    expect(JSON.parse(storage.values.get("nona:sending-now") ?? "{}")).toEqual({ "media-other": { at: 900, tab: "tab-other" } });
   });
 
   it("stops saying it sends as the page goes, so the page reloaded offers to carry the upload on at once", () => {
     const storage = twoUnfinished();
     const uploader = {};
-    setSendingHere(uploader, ["media-1"], storage, 1_000);
-    stopSayingSending(storage);
-    // What the reloaded page reads: nothing sending in another tab.
-    expect(storage.values.has("nona:sending-now")).toBe(false);
-    setSendingHere(uploader, [], storage);
+    setSendingHere(uploader, ["media-1"], storage, 1_000, "tab-here");
+    storage.values.set(
+      "nona:sending-now",
+      JSON.stringify({ ...JSON.parse(storage.values.get("nona:sending-now") ?? "{}"), "media-2": { at: 1_000, tab: "tab-other" } }),
+    );
+    stopSayingSending(storage, "tab-here");
+    // What the next page reads: only the other tab's beat.
+    expect(JSON.parse(storage.values.get("nona:sending-now") ?? "{}")).toEqual({ "media-2": { at: 1_000, tab: "tab-other" } });
+    setSendingHere(uploader, [], storage, 2_000, "tab-here");
+  });
+
+  it("is read again once another tab's beat goes stale, and the page is told then, not a whole visit later", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const storage = twoUnfinished();
+    storage.values.set("nona:sending-now", JSON.stringify({ "media-1": { at: 0, tab: "tab-other" } }));
+    let now = 0;
+    const read = createReturnNoticeReader(storage, (uploads) => uploads.map((upload) => upload.mediaId), () => now, "tab-here");
+    expect(read()).toEqual(["media-2"]);
+    let told = 0;
+    const unsubscribe = subscribeToReturnNotice(storage, () => {
+      told += 1;
+    });
+
+    now = 14_000;
+    vi.setSystemTime(now);
+    vi.advanceTimersByTime(14_000);
+    expect(told).toBe(0);
+    expect(read()).toEqual(["media-2"]);
+    now = 15_100;
+    vi.setSystemTime(now);
+    vi.advanceTimersByTime(1_100);
+    expect(told).toBe(1);
+    expect(read()).toEqual(["media-1", "media-2"]);
+    unsubscribe();
   });
 
   it("is read again only when its records change, not on every render while files send", () => {

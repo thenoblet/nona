@@ -12,7 +12,7 @@ import { isBusy, type UploadSnapshot } from "./uploader/state";
  * morph). Once everything has arrived (Ruling BJ) the ring completes, an ember disc pops, its tick
  * draws, one ember pulse goes out, and about 2 s later the circle fades away.
  *
- * A failure looks like an error notice (Ruling BK): the ring turns red, a solid red badge with a
+ * A failure looks like an error notice (Ruling BK): the ring closes in red, a solid red badge with a
  * white "!" sits on it, it shakes once as the failure arrives, and a small red-tinted label beside
  * it says "1 didn't send · Tap to see" until the guest taps. With reduced motion the ring jumps, and
  * there is no shake, pop, draw, pulse or fade (the site's reduced-motion rules stop them).
@@ -151,8 +151,9 @@ export function UploadCircle({
             strokeWidth="3"
             strokeLinecap="round"
             strokeDasharray={CIRCUMFERENCE}
-            strokeDashoffset={CIRCUMFERENCE * (1 - circle.percent / 100)}
-            className={`upload-ring ${circle.percent > 0 ? "" : "opacity-0"}`}
+            // A failure closes the ring in red, whatever was sent (even nothing, for a lone file).
+            strokeDashoffset={failed ? 0 : CIRCUMFERENCE * (1 - circle.percent / 100)}
+            className={`upload-ring ${circle.percent > 0 || failed ? "" : "opacity-0"}`}
           />
         </svg>
         {/* Only what is still sending; a failure is the red ring's, the badge's and the label's to say. */}

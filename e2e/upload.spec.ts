@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type BrowserContext, type Page, type Route } from "@playwright/test";
@@ -527,12 +527,18 @@ test.describe("uploading from the phone", () => {
       const page = await context.newPage();
       await openAlbum(page);
       const removed = await photoOnDisk("changed-my-mind.jpg", 300, 200);
-      const hidden = await photoOnDisk("hidden-by-the-couple.jpg", 300, 200);
+      // A different size, so the two are told apart by it.
+      const hidden = await photoOnDisk("hidden-by-the-couple.jpg", 340, 220);
       await picker(page, "Choose photos & videos").setInputFiles([removed, hidden]);
       const batch = page.getByRole("region", { name: "Your photos and videos" });
       await expect(batch.getByText("2 of 2 sent")).toBeVisible({ timeout: 60_000 });
       const guestId = await ownGuestId(context);
-      const [first, second] = await mediaOf(guestId);
+      // Which row is which file: the uploader starts the smaller file first, not the first picked.
+      const [removedSize, hiddenSize] = await Promise.all([removed, hidden].map(async (path) => (await stat(path)).size));
+      expect(removedSize).not.toBe(hiddenSize);
+      const sent = await mediaOf(guestId);
+      const first = sent.find((row) => Number(row.size_bytes) === removedSize)!;
+      const second = sent.find((row) => Number(row.size_bytes) === hiddenSize)!;
       // The guest removes the first; the couple hide the second.
       expect((await page.request.post(`/api/media/${first.id}/remove`)).status()).toBe(200);
       await sql`update media set hidden_at = now(), hidden_by = 'couple' where id = ${second.id}`;

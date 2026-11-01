@@ -30,7 +30,7 @@ import {
   createPendingCancels,
   createReturnNoticeReader,
   dismissReturnNotice,
-  subscribeToStartedFiles,
+  subscribeToReturnNotice,
 } from "./uploader/local-records";
 import { setPersonalLink, useLinkOfferAllowed, usePersonalLink } from "./uploader/personal-link";
 import {
@@ -377,6 +377,11 @@ function returnNoticeSnapshot(): ReturnNoticeState {
   return readReturnNotice();
 }
 
+/** Hears the notice on return's records change, and another tab's beat go stale. */
+function subscribeToUnfinished(listener: () => void): () => void {
+  return subscribeToReturnNotice(browserStorage(), listener);
+}
+
 /**
  * Back on the album with uploads this phone started and didn't finish (Ruling BE): what didn't
  * finish, and a Choose button; the same file chosen again carries on, skipping the parts sent. It
@@ -411,20 +416,41 @@ function ReturnNotice({ notice, onChoose }: { notice: NonNullable<ReturnNoticeSt
 
 /** The card and the floating circle share this name while one morphs into the other (Ruling BI). */
 const MORPH_NAME = "upload-morph";
-const MORPH_MILLISECONDS = 400;
-const MORPH_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+/** Noblet's gentle ease-in-out, slow enough to see: the glide, the rounding and what follows share it. */
+const MORPH_MILLISECONDS = 550;
+const MORPH_EASING = "cubic-bezier(0.65, 0, 0.35, 1)";
+/**
+ * What follows the card on the page, and glides with it rather than jumping: the personal-link
+ * offer under the card, and the album below.
+ */
+const MORPH_FOLLOWERS: readonly [selector: string, name: string][] = [
+  ["[data-link-offer]", "upload-morph-offer"],
+  ["[data-upload-below]", "upload-morph-below"],
+];
 
 type ViewTransitionLike = { ready: Promise<void>; finished: Promise<void> };
+
+/** Names (or, with "", unnames) what follows the card, as it now stands, and the dock. */
+function nameFollowers(named: boolean): void {
+  for (const [selector, name] of MORPH_FOLLOWERS) {
+    const follower = document.querySelector<HTMLElement>(selector);
+    if (follower) follower.style.viewTransitionName = named ? name : "";
+  }
+  // The music's dock is named too, so it stays painted above the album gliding beneath it.
+  const dock = document.getElementById("dock-slot")?.parentElement;
+  if (dock) dock.style.viewTransitionName = named ? "upload-morph-dock" : "";
+}
 
 /**
  * Ruling BI (Noblet: "the card turn into a circle smoothly and smoothly move to the bottom"): makes
  * `change` (minimising, or opening the card again) a shared-element morph between the element at
  * `fromSelector` and the one at `toSelector`, through the browser's view transitions. The change
- * runs in flushSync, so the new snapshot is the new state; the white shape glides and rounds
- * between `radii` while the contents cross-fade (globals.css). Where the browser has no view
+ * runs in flushSync, so the new snapshot is the new state. The white shape glides and rounds on one
+ * curve (MORPH_EASING over MORPH_MILLISECONDS, handed to globals.css too), the contents cross-fade
+ * by direction, and what follows the card glides with it. Where the browser has no view
  * transitions, or the guest asked for less motion, the change simply happens.
  */
-function morph(change: () => void, fromSelector: string, toSelector: string, radii: [string, string]): void {
+function morph(direction: "minimise" | "reopen", change: () => void, fromSelector: string, toSelector: string): void {
   const start = (document as unknown as { startViewTransition?: (update: () => void) => ViewTransitionLike }).startViewTransition;
   const from = document.querySelector<HTMLElement>(fromSelector);
   const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
@@ -433,22 +459,28 @@ function morph(change: () => void, fromSelector: string, toSelector: string, rad
     return;
   }
   const root = document.documentElement;
+  const radii = direction === "minimise" ? ["3px", "28px"] : ["28px", "3px"];
   let to: HTMLElement | null = null;
   let rounding: Animation | null = null;
   const tidyUp = () => {
     from.style.viewTransitionName = "";
     if (to) to.style.viewTransitionName = "";
+    nameFollowers(false);
     delete root.dataset.uploadMorph;
     // Held at its end until now; left, it would cling to the next morph's shape of the same name.
     rounding?.cancel();
   };
   from.style.viewTransitionName = MORPH_NAME;
-  // The page beneath changes at once; only the card and the circle move.
-  root.dataset.uploadMorph = "";
+  nameFollowers(true);
+  // The page beneath changes at once; only the card, the circle and what follows the card move.
+  root.dataset.uploadMorph = direction;
+  root.style.setProperty("--upload-morph-duration", `${MORPH_MILLISECONDS}ms`);
+  root.style.setProperty("--upload-morph-easing", MORPH_EASING);
   try {
     const transition = start.call(document, () => {
       from.style.viewTransitionName = "";
       flushSync(change);
+      nameFollowers(true);
       to = document.querySelector<HTMLElement>(toSelector);
       if (!to) return;
       to.style.viewTransitionName = MORPH_NAME;
@@ -457,6 +489,7 @@ function morph(change: () => void, fromSelector: string, toSelector: string, rad
     });
     transition.ready
       .then(() => {
+        // The same curve and length as the glide (globals.css takes them from the custom properties above).
         rounding = root.animate(
           { borderRadius: radii },
           { duration: MORPH_MILLISECONDS, easing: MORPH_EASING, fill: "forwards", pseudoElement: `::view-transition-group(${MORPH_NAME})` },
@@ -502,7 +535,7 @@ export function UploadProgress() {
   const { view, showLinkOffer, notice, timeLeft } = snapshot;
   const minimised = snapshot.minimised && Circle !== null;
   const offer = showLinkOffer && link !== null && offerAllowed;
-  const unfinished = useSyncExternalStore(subscribeToStartedFiles, returnNoticeSnapshot, () => null);
+  const unfinished = useSyncExternalStore(subscribeToUnfinished, returnNoticeSnapshot, () => null);
   // Only while sharing is open (closed, the grace's own button offers to finish), and with no card up.
   const returnNotice = sharingOpen && view.kind === "none" ? unfinished : null;
 
@@ -586,8 +619,16 @@ export function UploadProgress() {
   const cardExtras = {
     onMinimise: Circle
       ? () => {
-          focusRequest.current = { kind: "circle" };
-          morph(() => setMinimised(true), "[data-upload-card]", "[data-upload-circle]", ["3px", "28px"]);
+          // Asked for inside the change itself, so a progress render before it can't take it.
+          morph(
+            "minimise",
+            () => {
+              focusRequest.current = { kind: "circle" };
+              setMinimised(true);
+            },
+            "[data-upload-card]",
+            "[data-upload-circle]",
+          );
         }
       : null,
     notice,
@@ -613,8 +654,15 @@ export function UploadProgress() {
         <Circle
           snapshot={snapshot}
           onOpen={() => {
-            focusRequest.current = { kind: "card" };
-            morph(() => setMinimised(false), "[data-upload-circle]", "[data-upload-card]", ["28px", "3px"]);
+            morph(
+              "reopen",
+              () => {
+                focusRequest.current = { kind: "card" };
+                setMinimised(false);
+              },
+              "[data-upload-circle]",
+              "[data-upload-card]",
+            );
           }}
           onGone={(hadFocus) => {
             if (hadFocus) focusSomewhereSensible();

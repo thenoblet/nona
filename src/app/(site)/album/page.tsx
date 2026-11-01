@@ -55,7 +55,8 @@ export default function AlbumPage({ searchParams }: PageProps<"/album">) {
         </div>
       </UploadProvider>
 
-      <div className="mx-auto w-full max-w-3xl px-4 sm:px-8">
+      {/* Marked so it slides with the upload card as the card morphs into its circle and back. */}
+      <div data-upload-below className="mx-auto w-full max-w-3xl px-4 sm:px-8">
         <Suspense fallback={<GridSkeleton />}>
           <AlbumMedia />
         </Suspense>

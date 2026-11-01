@@ -144,26 +144,66 @@ function sendingHereNow(): Set<string> {
   return new Set([...sendingHere.values()].flatMap((mediaIds) => [...mediaIds]));
 }
 
-function writeSending(storage: StorageLike | null, now: number): void {
-  const entries = Object.fromEntries([...sendingHereNow()].map((mediaId) => [mediaId, now]));
+/** A beat: when a tab last said it sends this upload, and which tab. (An older beat is a bare time.) */
+type SendingBeat = { at: number; tab: string } | number;
+
+const beatAt = (beat: SendingBeat | undefined) => (typeof beat === "number" ? beat : typeof beat?.at === "number" ? beat.at : null);
+const beatTab = (beat: SendingBeat | undefined) => (typeof beat === "object" && beat !== null && typeof beat.tab === "string" ? beat.tab : null);
+
+const TAB_KEY = "nona:tab";
+let thisTab: string | null = null;
+
+/**
+ * This tab's own name, kept in sessionStorage so the page reloaded in it keeps it: its beats are its
+ * own (a reload's are of an uploader now gone), and only other tabs' beats hide the notice.
+ */
+export function currentTab(): string {
+  if (thisTab) return thisTab;
+  const fresh = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    const session = typeof window === "undefined" ? null : window.sessionStorage;
+    thisTab = session?.getItem(TAB_KEY) ?? null;
+    if (!thisTab) {
+      thisTab = fresh;
+      session?.setItem(TAB_KEY, thisTab);
+    }
+  } catch {
+    thisTab = fresh;
+  }
+  return thisTab;
+}
+
+/**
+ * Writes this tab's beats into the stored record, keeping other tabs' (two tabs sending at once
+ * mustn't erase each other's) and dropping any gone stale, and this tab's for uploads it no longer sends.
+ */
+function writeSending(storage: StorageLike | null, now: number, tab: string): void {
+  const here = sendingHereNow();
+  const entries = readRecord<SendingBeat>(storage, SENDING_KEY);
+  for (const [mediaId, beat] of Object.entries(entries)) {
+    const at = beatAt(beat);
+    const stale = at === null || now - at >= SENDING_FRESH_FOR_MILLISECONDS;
+    if (stale || (beatTab(beat) === tab && !here.has(mediaId))) delete entries[mediaId];
+  }
+  for (const mediaId of here) entries[mediaId] = { at: now, tab };
   writeRecord(storage, SENDING_KEY, entries);
 }
 
 /** An uploader's uploads on their way now (replacing what it said before); tells the page when that changes. */
-export function setSendingHere(owner: object, mediaIds: Iterable<string>, storage: StorageLike | null, now = Date.now()): void {
+export function setSendingHere(owner: object, mediaIds: Iterable<string>, storage: StorageLike | null, now = Date.now(), tab = currentTab()): void {
   const next = new Set(mediaIds);
   const before = sendingHere.get(owner) ?? new Set<string>();
   if (next.size === before.size && [...next].every((mediaId) => before.has(mediaId))) return;
   if (next.size === 0) sendingHere.delete(owner);
   else sendingHere.set(owner, next);
   sendingHereVersion += 1;
-  writeSending(storage, now);
+  writeSending(storage, now, tab);
   tellStartedListeners();
 }
 
 /** Says again, for other tabs, that this page's uploads are still on their way. */
-export function stillSending(storage: StorageLike | null, now = Date.now()): void {
-  if (sendingHere.size > 0) writeSending(storage, now);
+export function stillSending(storage: StorageLike | null, now = Date.now(), tab = currentTab()): void {
+  if (sendingHere.size > 0) writeSending(storage, now, tab);
 }
 
 /**
@@ -172,12 +212,31 @@ export function stillSending(storage: StorageLike | null, now = Date.now()): voi
  * taking it for one still sending elsewhere. Kept in memory, should the page come back from the
  * back-forward cache: the next heartbeat says so again.
  */
-export function stopSayingSending(storage: StorageLike | null): void {
+export function stopSayingSending(storage: StorageLike | null, tab = currentTab()): void {
   const here = sendingHereNow();
-  if (here.size === 0) return;
-  const entries = readRecord<number>(storage, SENDING_KEY);
-  for (const mediaId of here) delete entries[mediaId];
-  writeRecord(storage, SENDING_KEY, entries);
+  const entries = readRecord<SendingBeat>(storage, SENDING_KEY);
+  const before = Object.keys(entries).length;
+  for (const [mediaId, beat] of Object.entries(entries)) {
+    if (here.has(mediaId) || beatTab(beat) === tab) delete entries[mediaId];
+  }
+  if (Object.keys(entries).length !== before) writeRecord(storage, SENDING_KEY, entries);
+}
+
+/** Another tab's fresh beats, by upload, with when each goes stale. */
+function otherTabsSending(storage: StorageLike | null, now: number, tab: string): Map<string, number> {
+  const fresh = new Map<string, number>();
+  for (const [mediaId, beat] of Object.entries(readRecord<SendingBeat>(storage, SENDING_KEY))) {
+    const at = beatAt(beat);
+    if (at === null || beatTab(beat) === tab || now - at >= SENDING_FRESH_FOR_MILLISECONDS) continue;
+    fresh.set(mediaId, at + SENDING_FRESH_FOR_MILLISECONDS);
+  }
+  return fresh;
+}
+
+/** When the soonest of another tab's beats goes stale (it may have been closed, or killed by the phone); null for none. */
+export function nextSendingExpiry(storage: StorageLike | null, now = Date.now(), tab = currentTab()): number | null {
+  const expiries = [...otherTabsSending(storage, now, tab).values()];
+  return expiries.length > 0 ? Math.min(...expiries) : null;
 }
 
 /** Sets the notice on return aside ("Not now") for these uploads; another upload left unfinished brings it back. */
@@ -193,30 +252,57 @@ export function dismissReturnNotice(mediaIds: Iterable<string>, storage: Storage
  * The uploads the notice on return speaks of: started here within the week and unfinished, not set
  * aside, and not on their way in this page or another tab.
  */
-export function returnNoticeUploads(storage: StorageLike | null, now = Date.now()): UnfinishedUpload[] {
+export function returnNoticeUploads(storage: StorageLike | null, now = Date.now(), tab = currentTab()): UnfinishedUpload[] {
   const dismissed = readRecord<number>(storage, NOTICE_DISMISSED_KEY);
-  const sendingElsewhere = readRecord<number>(storage, SENDING_KEY);
+  const sendingElsewhere = otherTabsSending(storage, now, tab);
   const here = sendingHereNow();
   return createStartedFiles(storage)
     .unfinished(now)
-    .filter(({ mediaId }) => {
-      if (here.has(mediaId) || typeof dismissed[mediaId] === "number") return false;
-      const beat = sendingElsewhere[mediaId];
-      return !(typeof beat === "number" && now - beat < SENDING_FRESH_FOR_MILLISECONDS);
-    });
+    .filter(({ mediaId }) => !here.has(mediaId) && typeof dismissed[mediaId] !== "number" && !sendingElsewhere.has(mediaId));
+}
+
+/**
+ * Hears every change the notice on return rests on (as subscribeToStartedFiles), and also the moment
+ * another tab's beat goes stale, so a tab the phone killed mid-upload hides the notice for fifteen
+ * seconds, not the whole visit; returns what stops it.
+ */
+export function subscribeToReturnNotice(storage: StorageLike | null, listener: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const watchForExpiry = () => {
+    clearTimeout(timer);
+    const expiry = nextSendingExpiry(storage);
+    if (expiry === null) return;
+    timer = setTimeout(
+      () => {
+        listener();
+        watchForExpiry();
+      },
+      Math.max(0, expiry - Date.now()) + 50,
+    );
+  };
+  const unsubscribe = subscribeToStartedFiles(() => {
+    listener();
+    watchForExpiry();
+  });
+  watchForExpiry();
+  return () => {
+    clearTimeout(timer);
+    unsubscribe();
+  };
 }
 
 /**
  * Reads the notice on return through `describe`, again only when what it rests on has changed (the
- * stored records, as written, and what this page is sending), not on every render while files
- * send; a heartbeat going stale is noticed within its own fifteen seconds.
+ * stored records, as written, and what this page is sending) or another tab's beat has gone stale,
+ * not on every render while files send.
  */
 export function createReturnNoticeReader<TValue>(
   storage: StorageLike | null,
   describe: (uploads: UnfinishedUpload[]) => TValue,
   clock: () => number = Date.now,
+  tab = currentTab(),
 ): () => TValue {
-  let cached: { key: string; value: TValue } | null = null;
+  let cached: { key: string; value: TValue; until: number } | null = null;
   const raw = (key: string) => {
     try {
       return storage?.getItem(key) ?? "";
@@ -226,8 +312,11 @@ export function createReturnNoticeReader<TValue>(
   };
   return () => {
     const now = clock();
-    const key = [raw(STARTED_KEY), raw(NOTICE_DISMISSED_KEY), raw(SENDING_KEY), sendingHereVersion, Math.floor(now / SENDING_FRESH_FOR_MILLISECONDS)].join("\n");
-    if (cached?.key !== key) cached = { key, value: describe(returnNoticeUploads(storage, now)) };
+    const key = [raw(STARTED_KEY), raw(NOTICE_DISMISSED_KEY), raw(SENDING_KEY), sendingHereVersion].join("\n");
+    if (cached?.key !== key || now >= cached.until) {
+      const until = nextSendingExpiry(storage, now, tab) ?? Number.POSITIVE_INFINITY;
+      cached = { key, value: describe(returnNoticeUploads(storage, now, tab)), until };
+    }
     return cached.value;
   };
 }

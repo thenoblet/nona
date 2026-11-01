@@ -406,12 +406,18 @@
 /*
  * The upload card morphs into the floating circle and back (Ruling BI): one white shape glides and
  * rounds from the card's place to the circle's, the card's contents fading out early and the
- * circle's fading in late, each scaled whole (never stretched). The page beneath changes at once.
+ * circle's fading in late, each scaled down whole (never stretched, never blown up). The page
+ * beneath changes at once.
  * Unlayered, as the view transition's own pseudo-elements are.
  */
+::view-transition-group(upload-morph),
+::view-transition-group(upload-morph-offer),
+::view-transition-group(upload-morph-below) {
+  /* One curve for the glide, the rounding and what follows: set by the morph (Upload.tsx). */
+  animation-duration: var(--upload-morph-duration, 550ms);
+  animation-timing-function: var(--upload-morph-easing, cubic-bezier(0.65, 0, 0.35, 1));
+}
 ::view-transition-group(upload-morph) {
-  animation-duration: 400ms;
-  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   overflow: clip;
   background: #fff;
   box-shadow: 0 1px 2px rgb(61 41 39 / 0.08), 0 10px 26px rgb(61 41 39 / 0.14);
@@ -421,11 +427,16 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  /* Scaled down whole to fit the shape, never up: nothing stretched, nothing blown up and blurred. */
+  object-fit: scale-down;
   mix-blend-mode: normal;
 }
-::view-transition-old(upload-morph) { animation: upload-morph-out 170ms ease-out both; }
-::view-transition-new(upload-morph) { animation: upload-morph-in 220ms ease-in 170ms both; }
+/* Minimising: the card's contents go early, the circle's come in late, once the shape is small. */
+html[data-upload-morph="minimise"]::view-transition-old(upload-morph) { animation: upload-morph-out 230ms ease-out both; }
+html[data-upload-morph="minimise"]::view-transition-new(upload-morph) { animation: upload-morph-in 280ms ease-in 250ms both; }
+/* Opening again: the little circle goes at once, the card comes in as the shape grows. */
+html[data-upload-morph="reopen"]::view-transition-old(upload-morph) { animation: upload-morph-out 100ms ease-out both; }
+html[data-upload-morph="reopen"]::view-transition-new(upload-morph) { animation: upload-morph-in 280ms ease-in 250ms both; }
 html[data-upload-morph]::view-transition-old(root),
 html[data-upload-morph]::view-transition-new(root) { animation: none; }
 @keyframes upload-morph-out {
