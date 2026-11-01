@@ -167,6 +167,26 @@ export function countWords(count: number, kind: AlbumKind | undefined): string {
   return `${count} ${count === 1 ? noun : `${noun}s`}`;
 }
 
+/** What everyone sees in the album: its photos and videos, and how many guests shared them. */
+export type AlbumSummary = { photos: number; videos: number; sharers: number };
+
+const wholeNumber = new Intl.NumberFormat("en-GB");
+
+/**
+ * The home page's line after the wedding: "1,240 photos and 86 videos from 180 of you, all in one
+ * place.", leaving out a kind there is none of, and who shared them when no guest is behind them.
+ * An empty album, or one that can't be read (null), says what it holds rather than count nothing.
+ */
+export function albumSummaryWords(summary: AlbumSummary | null): string {
+  const kinds = [
+    summary?.photos ? `${wholeNumber.format(summary.photos)} ${summary.photos === 1 ? "photo" : "photos"}` : null,
+    summary?.videos ? `${wholeNumber.format(summary.videos)} ${summary.videos === 1 ? "video" : "videos"}` : null,
+  ].filter((words) => words !== null);
+  if (!summary || kinds.length === 0) return "Every photo and video you share, all in one place.";
+  const from = summary.sharers > 0 ? ` from ${wholeNumber.format(summary.sharers)} of you` : "";
+  return `${kinds.join(" and ")}${from}, all in one place.`;
+}
+
 /** The pill: "1 new moment", "3 new moments". */
 export function newMomentsWords(count: number): string {
   return `${count} new ${count === 1 ? "moment" : "moments"}`;

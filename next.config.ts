@@ -16,8 +16,7 @@ const nextConfig: NextConfig = {
     // copy per URL whatever the browser accepts, so an AVIF copy could reach iPhones
     // on iOS 15 that can't show it. Every phone guests will have shows WebP.
     formats: ["image/webp"],
-    // Guest media will be served from R2 later, e.g.
-    // remotePatterns: [new URL("https://media.nobletxnancy.com/**")],
+    // No remotePatterns: guest media (the R2 media domain) never goes through the optimiser.
   },
   // The link preview cards are prerendered, but may be redrawn on the server after their
   // cache lifetime, so the server build must carry the fonts they are drawn with.

@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { couple, wedding } from "@/content/wedding";
-import { MediaImage } from "@/components/album/MediaImage";
 import { PillLink } from "@/components/ui/Button";
 import { Icon, PauseGlyph, PlayGlyph } from "@/components/ui/Icon";
 import { QrCode } from "@/components/ui/QrCode";
 import { fetchSlides, pollSlides } from "./feed";
 import { createSlideClock, playlistReducer, startPlaylist, viewPlaylist, type Slide } from "./playlist";
 import { useDocumentHidden, useFullscreen, useIdle, useWakeLock } from "./screen";
+import { SlideImage } from "./SlideImage";
 import { SlideshowStage } from "./SlideshowStage";
 
 /** How long each photo stays. */
@@ -310,9 +310,10 @@ function PhoneCaption({
     <div className="absolute inset-x-0 bottom-0 z-20 bg-linear-to-t from-cocoa via-cocoa/80 to-transparent px-5 pt-24 pb-[max(20px,env(safe-area-inset-bottom))] tv:hidden">
       {/* Announced only while paused: a slideshow that reads itself out every six seconds is noise. */}
       <div aria-live={paused ? "polite" : "off"}>
-        <div key={slide.id} className="animate-caption-in">
-          <p className="m-0 truncate font-serif text-[26px] leading-tight italic">Shared by {slide.by}</p>
-          <p className="m-0 mt-1.5 truncate text-[11px] tracking-[0.2em] text-ember uppercase">{slide.detail}</p>
+        <div key={slide.id} className="flex animate-caption-in flex-col gap-1.5">
+          {/* Shared without a name: nothing in its place. */}
+          {slide.by ? <p className="m-0 truncate font-serif text-[26px] leading-tight italic">Shared by {slide.by}</p> : null}
+          <p className="m-0 truncate text-[11px] tracking-[0.2em] text-ember uppercase">{slide.detail}</p>
         </div>
       </div>
 
@@ -348,8 +349,12 @@ function TvCaption({ slide, paused }: { slide: Slide; paused: boolean }) {
       aria-live={paused ? "polite" : "off"}
       className="absolute inset-x-0 bottom-0 z-20 hidden items-center justify-between gap-24 bg-cocoa/80 px-24 py-20 tv:flex"
     >
-      <p key={slide.id} className="m-0 min-w-0 animate-caption-in truncate font-serif text-[max(15px,calc(var(--spacing)*26))] italic">
-        Shared by {slide.by}
+      {/* Shared without a name: nothing in its place, the line kept empty so the bar keeps its height. */}
+      <p
+        key={slide.id}
+        className="m-0 min-h-[1lh] min-w-0 animate-caption-in truncate font-serif text-[max(15px,calc(var(--spacing)*26))] italic"
+      >
+        {slide.by ? `Shared by ${slide.by}` : null}
       </p>
       <p
         key={`${slide.id}-detail`}
@@ -434,7 +439,7 @@ function ThumbStrip({ slides, onFailed }: { slides: Slide[]; onFailed: (id: stri
         return (
           <li key={slide?.id ?? `empty-${slot}`} className={`relative aspect-square overflow-hidden ${slot % 2 ? "bg-mocha/75" : "bg-mocha"}`}>
             {slide ? (
-              <MediaImage item={slide} sizes="7vw" className="animate-slide-fade" onError={() => onFailed(slide.id)} />
+              <SlideImage slide={slide} className="animate-slide-fade" onError={() => onFailed(slide.id)} />
             ) : null}
           </li>
         );

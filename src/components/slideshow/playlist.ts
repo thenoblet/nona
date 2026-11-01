@@ -1,17 +1,30 @@
-import type { MediaItem } from "@/lib/data/types";
-
 /*
  * What the slideshow shows and in which order, as plain data with no browser in it, so the
  * venue TV's rules can be tested: skip a photo that fails, keep going when a refresh fails,
  * never hold on to more than the screen needs.
  */
 
-export type Slide = Pick<MediaItem, "id" | "alt" | "position" | "kind"> & {
-  src: NonNullable<MediaItem["src"]>;
-  by: string;
-  /** e.g. "Reception · just now" */
+/** One of the album's moments, as slides.json sends it (src/app/slideshow/slides.ts). */
+export type Slide = {
+  id: string;
+  /** A video shows as its poster. */
+  kind: "photo" | "video";
+  /** Its viewing size (a video's poster) on the media domain, never through Next's image optimiser. */
+  src: string;
+  /** Its size, upright, so the browser knows its shape before it loads; null when unknown. */
+  width: number | null;
+  height: number | null;
+  /** The name it was shared under; null for none, and then the caption names no one. */
+  by: string | null;
+  /** e.g. "Reception · 12 min ago" */
   detail: string;
 };
+
+/** What a screen reader hears for a slide: "Photo shared by Ama Owusu", or "Video" for one shared without a name. */
+export function slideAlt(slide: Pick<Slide, "kind" | "by">): string {
+  const kind = slide.kind === "video" ? "Video" : "Photo";
+  return slide.by ? `${kind} shared by ${slide.by}` : kind;
+}
 
 /** How the current slide came in: a cross-fade from the timer, or from the side the guest moved to. */
 export type Entrance = "fade" | "forward" | "back";

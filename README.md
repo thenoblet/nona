@@ -76,17 +76,10 @@ A reply whose confirmation never reached the queue (at most three a day go to on
 server restarted at the wrong moment) shows as "Not sent"; when the queue starts, it tries the
 last day's again.
 
-The album is still a stub with its final function signatures, so the pages won't change when the
-real backend arrives: `listMedia` and `mediaStats` in `src/lib/data/media.ts` return a fixed set
-of sample photos. Next: the media rows, with their files in Cloudflare R2. Voice and video wishes
-are next too.
-
 Search for `TODO` to find the other placeholders: uploads (presigned multipart to R2), downloads
 (per-celebration zips, built by a separate media worker), voice and video recording, the device
 cookie for "My uploads", and live updates for the album (`src/app/(site)/album/page.tsx`: it will
 poll every 30 s, as the slideshow already does).
-
-When guest media is served from R2, add its host to `images.remotePatterns` in `next.config.ts`.
 
 ## The venue TV
 
@@ -97,6 +90,8 @@ the mouse and click the full-screen button). It runs on its own all evening:
   controls fade away after a few seconds without movement;
 - it asks for new photos every 30 s; if the network drops it keeps showing what it has and tries
   again, and a photo that fails to load is skipped;
+- a new photo or video reaches it only after the TV delay (3 minutes unless the couple change it
+  under Admin → Photos), so they can hide anything first; a hidden one leaves it at its next ask;
 - keys: **←** and **→** move, **space** pauses, **F** toggles full screen.
 
 Set the laptop itself never to sleep as well: the wake lock only holds while the tab is visible.

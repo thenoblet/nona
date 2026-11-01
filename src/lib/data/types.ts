@@ -1,4 +1,3 @@
-import type { StaticImageData } from "next/image";
 import type { EventId } from "@/content/wedding";
 import type {
   CONVERSION_STATES,
@@ -48,29 +47,6 @@ export type RsvpRecord = RsvpInput & {
   emailStatus: EmailStatus;
   /** The current replies to check against this one, newest first. Only listRsvps() fills it. */
   flags: RsvpFlag[];
-};
-
-export type MediaKind = "photo" | "video";
-
-export type MediaItem = {
-  id: string;
-  kind: MediaKind;
-  /** A CloudFront URL later; a bundled image while the album is stubbed. */
-  src: string | StaticImageData | null;
-  alt: string;
-  position?: string;
-  event: EventId;
-  /** Video length, e.g. "0:42". */
-  duration?: string;
-  uploaderName: string;
-  uploaderDevice: string;
-  uploadedAt: string;
-};
-
-export type MediaFilter = {
-  event?: EventId | "all";
-  /** Only this phone's uploads ("My uploads"). */
-  device?: string;
 };
 
 export type WishKind = (typeof WISH_KINDS)[number];

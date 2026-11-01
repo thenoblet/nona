@@ -159,8 +159,11 @@ export function toAlbumItem(row: ItemRow, viewerGuestIds: readonly string[]): Al
   };
 }
 
-/** Album items anyone may see: in the album, not hidden, deleted or removed by their uploader. */
-function visibleAlbumItems(): SQL {
+/**
+ * Album items anyone may see: in the album, not hidden, deleted or removed by their uploader. Each
+ * condition a literal, as the album's partial indexes name them. The slideshow reads it too.
+ */
+export function visibleAlbumItems(): SQL {
   return sql`${media.purpose} = 'album' and ${media.hiddenAt} is null and ${media.deletedAt} is null and not ${media.removedByUploader}`;
 }
 
@@ -404,6 +407,23 @@ export function guestStatsQuery(guestId: string) {
     .from(media)
     .where(and(eq(media.guestId, guestId), visibleAlbumItems(), sql`${media.status} in ('ready', 'uploaded', 'failed')`))
     .groupBy(media.celebration, media.kind);
+}
+
+/**
+ * How many guests shared the moments everyone sees, each counted once, read from
+ * media_album_sharers_idx alone (their guest ids, in order). Exported for its plan's test.
+ */
+export function sharersQuery() {
+  return getDb()
+    .select({ count: sql<number>`count(distinct ${media.guestId})`.mapWith(Number) })
+    .from(media)
+    .where(and(visibleAlbumItems(), sql`${media.status} = 'ready'`));
+}
+
+/** How many guests shared the moments everyone sees: the home page's "from 180 of you". */
+export async function countSharers(): Promise<number> {
+  const [row] = await sharersQuery();
+  return row?.count ?? 0;
 }
 
 function asCounts(rows: { celebration: string; kind: string; count: number }[]): AlbumCount[] {

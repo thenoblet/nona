@@ -9,11 +9,20 @@ export const RETRY_MS = 10_000;
 /** HTTP calls give up after 10 s (CLAUDE.md). */
 export const FETCH_TIMEOUT_MS = 10_000;
 
+const isSize = (value: unknown) => value === null || (typeof value === "number" && value > 0);
+
 function isSlide(value: unknown): value is Slide {
   if (typeof value !== "object" || value === null) return false;
-  const { id, src, alt, by, detail } = value as Record<string, unknown>;
-  const image = typeof src === "string" || (typeof src === "object" && src !== null && typeof (src as { src?: unknown }).src === "string");
-  return typeof id === "string" && image && typeof alt === "string" && typeof by === "string" && typeof detail === "string";
+  const { id, kind, src, width, height, by, detail } = value as Record<string, unknown>;
+  return (
+    typeof id === "string" &&
+    (kind === "photo" || kind === "video") &&
+    typeof src === "string" &&
+    isSize(width) &&
+    isSize(height) &&
+    (by === null || typeof by === "string") &&
+    typeof detail === "string"
+  );
 }
 
 /**

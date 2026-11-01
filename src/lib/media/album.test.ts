@@ -8,6 +8,7 @@ import { resetDb } from "../../../test/db";
 import {
   albumStats,
   countNewSince,
+  countSharers,
   decodeCursor,
   encodeCursor,
   everyoneQuery,
@@ -21,6 +22,7 @@ import {
   listNewer,
   newSinceQuery,
   pendingQuery,
+  sharersQuery,
 } from "./album";
 import { celebrationsWithItems, countFor } from "./album-item";
 
@@ -264,6 +266,31 @@ describe("albumStats", () => {
   });
 });
 
+describe("countSharers", () => {
+  it("counts the guests behind the moments everyone sees, each once, never for a wish, nor a hidden, removed, deleted, failed or unprocessed item", async () => {
+    const [ama, kojo, efua, yaw] = await Promise.all(["Ama", "Kojo", "Efua", "Yaw"].map((name) => createGuest(name)));
+    await addAlbumItem({ guestId: ama.id });
+    await addAlbumItem({ guestId: ama.id, kind: "video" });
+    await addAlbumItem({ guestId: kojo.id, celebration: "more" });
+    // Efua's and Yaw's moments, none of which everyone sees.
+    await addAlbumItem({ guestId: efua.id, purpose: "wish", kind: "audio" });
+    await addAlbumItem({ guestId: efua.id, hiddenAt: new Date(), hiddenBy: "couple@example.com" });
+    await addAlbumItem({ guestId: efua.id, hiddenAt: new Date(), hiddenBy: "uploader", removedByUploader: true });
+    await addAlbumItem({ guestId: yaw.id, deletedAt: new Date() });
+    await addAlbumItem({ guestId: yaw.id, status: "failed", failureReason: "corrupt" });
+    await addAlbumItem({ guestId: yaw.id, status: "uploaded" });
+    // No guest at all (an item from before guests): a moment, but no one to count.
+    await addAlbumItem({ guestId: null });
+
+    expect(await countSharers()).toBe(2);
+    expect(countFor(await albumStats(), {})).toBe(4);
+  });
+
+  it("is 0 for an empty album", async () => {
+    expect(await countSharers()).toBe(0);
+  });
+});
+
 describe("findAlbumItem and findDownloadable", () => {
   it("finds a listed, visible moment for anyone, and one not ready only for its own browser", async () => {
     const own = await createGuest("Kofi Mensah");
@@ -380,5 +407,11 @@ describe("the album's plans", () => {
     const own = await genericPlan(guestStatsQuery(guest));
     expect(own).toContain("media_album_mine_idx");
     expect(own).not.toContain("Seq Scan");
+  });
+
+  it("counts who shared from its own small index alone, with no sequential scan or sort", async () => {
+    const plan = await genericPlan(sharersQuery());
+    expect(plan).toContain("Index Only Scan using media_album_sharers_idx");
+    noSortNoSeqScan(plan);
   });
 });

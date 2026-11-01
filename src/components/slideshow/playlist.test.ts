@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { createSlideClock, playlistReducer, startPlaylist, viewPlaylist, wrapIndex, type Playlist, type Slide } from "./playlist";
+import { createSlideClock, playlistReducer, slideAlt, startPlaylist, viewPlaylist, wrapIndex, type Playlist, type Slide } from "./playlist";
 
 const slide = (id: string): Slide => ({
   id,
-  src: `/media/${id}.jpg`,
-  alt: `Photo ${id}`,
   kind: "photo",
-  by: "[Guest]",
-  detail: "Reception · just now",
+  src: `https://media.example/derived/${id}/view.webp`,
+  width: 1600,
+  height: 1200,
+  by: "Ama Owusu",
+  detail: "Reception · 4 min ago",
 });
 
 const slides = (...ids: string[]) => ids.map(slide);
@@ -315,5 +316,13 @@ describe("createSlideClock", () => {
     time = 9000;
     clock.stop();
     expect(clock.start("a")).toBe(0);
+  });
+});
+
+describe("slideAlt", () => {
+  it("says what the picture is and who shared it, and names no one for a moment shared without a name", () => {
+    expect(slideAlt(slide("a"))).toBe("Photo shared by Ama Owusu");
+    expect(slideAlt({ ...slide("b"), kind: "video" })).toBe("Video shared by Ama Owusu");
+    expect(slideAlt({ ...slide("c"), by: null })).toBe("Photo");
   });
 });

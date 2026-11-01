@@ -1,50 +1,59 @@
 import "server-only";
+import { cacheLife, cacheTag } from "next/cache";
 import { connection } from "next/server";
+import { accraDayAndMonth } from "@/lib/accra";
 import { getSiteContent } from "@/lib/content/get";
-import { listMedia } from "@/lib/data/media";
-import type { MediaItem } from "@/lib/data/types";
+import type { Celebration } from "@/lib/content/schema";
+import { CELEBRATION_LABELS } from "@/lib/media/album-item";
+import { ALBUM_SLIDES_TAG } from "@/lib/media/moderation";
+import { getSlideshowDelaySeconds } from "@/lib/media/slideshow-delay";
+import { listSlideshowItems, type SlideshowItem } from "@/lib/media/slideshow";
 import type { Slide } from "@/components/slideshow/playlist";
 
-type ShownMedia = MediaItem & { src: NonNullable<MediaItem["src"]> };
-
-/** Newest first, skipping anything without a preview yet. */
-async function recentMedia(): Promise<ShownMedia[]> {
-  // TODO: Plan 2 swaps in the real album media here (newest first, never a photo the couple
-  // hid), and the slideshow keeps polling for it every 30 s (src/components/slideshow/feed.ts),
-  // with new arrivals shown next. Sample media until then.
-  await connection();
-  const items = await listMedia();
-  return items
-    .filter((item): item is ShownMedia => item.src !== null)
-    .sort((first, second) => second.uploadedAt.localeCompare(first.uploadedAt));
+/**
+ * The album's moments for the slideshow, kept 15 s for every screen showing it (the venue TV and
+ * guests' phones each ask every 30 s): Next's in-memory cache drops an entry once its `revalidate`
+ * has passed (it hands out no stale copies in production), so `expire` only has to be longer, as
+ * Next requires, and under 5 minutes, so the list is never prerendered. Under the album-slides tag,
+ * which every hide drops (the remove route's revalidateTag, the admin's updateTag), as does a change
+ * to the TV delay; a moment newly ready waits out the lifetime. The delay is read inside, so a list
+ * is always cut by the delay in force when it was read: kept a while, it only holds older moments.
+ */
+async function cachedSlideshowItems(): Promise<SlideshowItem[]> {
+  "use cache";
+  cacheTag(ALBUM_SLIDES_TAG);
+  cacheLife({ stale: 15, revalidate: 15, expire: 30 });
+  return listSlideshowItems(await getSlideshowDelaySeconds());
 }
 
-function ago(minutes: number) {
+/** How long ago, by the request's clock: "just now", "12 min ago", "3 h ago", then the day ("28 Nov"). */
+function agoWords(listedAt: string, now: number): string {
+  const minutes = Math.floor((now - Date.parse(listedAt)) / 60_000);
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes} min ago`;
-  return `${Math.floor(minutes / 60)} h ago`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h ago`;
+  return accraDayAndMonth(new Date(listedAt));
+}
+
+function toSlide(item: SlideshowItem, celebrations: Celebration[], now: number): Slide {
+  // The celebration as the site names it; another day's moment, as the album names it.
+  const celebration = celebrations.find((known) => known.id === item.celebration)?.name ?? CELEBRATION_LABELS[item.celebration];
+  return {
+    id: item.id,
+    kind: item.kind,
+    src: item.view,
+    width: item.width,
+    height: item.height,
+    by: item.by,
+    detail: `${celebration} · ${agoWords(item.listedAt, now)}`,
+  };
 }
 
 /** The slideshow's list, for the page and for its refreshes. Request time only. */
 export async function loadSlides(): Promise<Slide[]> {
-  // Media first: it waits for the request, so the content is not read while prerendering.
-  const items = await recentMedia();
-  const { celebrations } = await getSiteContent();
-  const newest = items[0] ? Date.parse(items[0].uploadedAt) : 0;
-
-  return items.map((item) => {
-    const event = celebrations.find((celebration) => celebration.id === item.event)?.name ?? "";
-    // TODO: measure against the real clock once uploads are live (sample times are in December).
-    const minutes = Math.round((newest - Date.parse(item.uploadedAt)) / 60000);
-    return {
-      id: item.id,
-      src: item.src,
-      alt: item.alt,
-      position: item.position,
-      kind: item.kind,
-      // "You" only makes sense on the uploader's own phone.
-      by: item.uploaderName === "You" ? "[Guest]" : item.uploaderName,
-      detail: `${event} · ${ago(minutes)}`,
-    };
-  });
+  // First: the album is read at request time, never while the page is prerendered.
+  await connection();
+  const [items, { celebrations }] = await Promise.all([cachedSlideshowItems(), getSiteContent()]);
+  const now = Date.now();
+  return items.map((item) => toSlide(item, celebrations, now));
 }
