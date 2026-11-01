@@ -332,7 +332,13 @@ export type ItemToProcess = {
   derivedGeneration: number;
 };
 
-/** The item, if a processing job has work to do for it (awaitsProcessing); otherwise null. One read on the primary key. */
+/**
+ * The item, if the photo or poster job has work to do for it (awaitsProcessing), and it isn't a
+ * wish's recording; otherwise null. One read on the primary key. Only media.wish makes a recording,
+ * and only once a wish names it (Ruling CE): a photo or poster job sent for one by mistake makes
+ * nothing public. `purpose <> 'wish'` rather than `= 'album'`, so the site's own photos (Task 19),
+ * which the photo job makes, stay its.
+ */
 export async function findItemToProcess(mediaId: string): Promise<ItemToProcess | null> {
   if (!isUuid(mediaId)) return null;
   const [row] = await getDb()
@@ -344,7 +350,7 @@ export async function findItemToProcess(mediaId: string): Promise<ItemToProcess 
       derivedGeneration: media.derivedGeneration,
     })
     .from(media)
-    .where(awaitsProcessing(mediaId))
+    .where(and(awaitsProcessing(mediaId), sql`${media.purpose} <> 'wish'`))
     .limit(1);
   return row ?? null;
 }

@@ -129,6 +129,17 @@ export function secondsLeft(kind: RecordedKind, state: RecorderState): number {
   return Math.max(0, Math.ceil(limit - state.elapsedMs / 1000));
 }
 
+/**
+ * A take's length in seconds: what the machine measured when it stopped (the guest, or the limit),
+ * or, for a take the browser stopped by itself before the machine heard a stop, the time since it
+ * started, never past the limit. Null when neither is known.
+ */
+export function takeSeconds(kind: RecordedKind, stoppedAfterMs: number | null, startedAt: number | null, now: number): number | null {
+  if (stoppedAfterMs !== null) return stoppedAfterMs / 1000;
+  if (startedAt === null) return null;
+  return Math.min(Math.max(0, now - startedAt), limitMs(kind)) / 1000;
+}
+
 /** Whether the recorder holds the composer (its tabs and Send wait): asking, counting down, recording or stopping. */
 export function isBusy(state: RecorderState): boolean {
   return state.phase === "asking" || state.phase === "countdown" || state.phase === "recording" || state.phase === "stopping";

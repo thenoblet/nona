@@ -105,16 +105,26 @@ type FileMeta = { itemId: string; relativePath: string };
 type FileBody = Record<string, never>;
 type EngineFile = UppyFile<FileMeta, FileBody>;
 
-/** Where the uploader hears that the phone is back online or the page is going. */
+/**
+ * Where the uploader hears that the phone is back online or the page is going. Each returns what
+ * stops it hearing, which destroy() calls: a listener left on `window` would keep a destroyed
+ * uploader, and the file it held, from ever being let go.
+ */
 export type EngineEnvironment = {
-  onOnline(listener: () => void): void;
-  onPageHide(listener: () => void): void;
+  onOnline(listener: () => void): () => void;
+  onPageHide(listener: () => void): () => void;
   isOffline(): boolean;
 };
 
+/** Listens on `window` for `type`; returns what stops it. */
+function listenOnWindow(type: "online" | "pagehide", listener: () => void): () => void {
+  window.addEventListener(type, listener);
+  return () => window.removeEventListener(type, listener);
+}
+
 const browserEnvironment: EngineEnvironment = {
-  onOnline: (listener) => window.addEventListener("online", listener),
-  onPageHide: (listener) => window.addEventListener("pagehide", listener),
+  onOnline: (listener) => listenOnWindow("online", listener),
+  onPageHide: (listener) => listenOnWindow("pagehide", listener),
   isOffline: () => typeof navigator !== "undefined" && navigator.onLine === false,
 };
 
@@ -203,7 +213,8 @@ export type Engine = {
   replayPendingCancels(): Promise<void>;
   /**
    * Lets the uploader go once its card has gone (a wish's sending card, Task 16): its timers, its
-   * store subscription, the page guard and Uppy. Nothing it holds is sent after this.
+   * store subscription, its listeners on the page, the page guard and Uppy, so it and the file it
+   * held can be collected. Events still waiting are sent first; nothing else is sent after this.
    */
   destroy(): void;
 };
@@ -250,8 +261,9 @@ class UploadEngine implements Engine {
   #guarding = false;
   /** When this page last told other tabs it is still sending. */
   #lastSaidSendingAt = 0;
-  /** Lets go of the store's updates (destroy). */
+  /** Lets go of the store's updates and the page's events (destroy). */
   #unsubscribe: () => void = () => {};
+  readonly #stopHearing: (() => void)[] = [];
   #destroyed = false;
 
   constructor(store: UploadStore, options: EngineOptions, dependencies: EngineDependencies) {
@@ -304,13 +316,15 @@ class UploadEngine implements Engine {
     });
     this.#uppy.on("upload-success", (file) => this.#settled(file, null));
     this.#uppy.on("upload-error", (file, error) => this.#settled(file, error ?? new Error("The upload failed")));
-    this.#environment.onOnline(() => {
-      for (const waiter of this.#onlineWaiters.splice(0)) waiter();
-      this.pump();
-    });
+    this.#stopHearing.push(
+      this.#environment.onOnline(() => {
+        for (const waiter of this.#onlineWaiters.splice(0)) waiter();
+        this.pump();
+      }),
+    );
     this.#unsubscribe = this.#store.subscribe(() => this.#watchSending());
     this.#watchSending();
-    this.#environment.onPageHide(() => stopSayingSending(this.#storage));
+    this.#stopHearing.push(this.#environment.onPageHide(() => stopSayingSending(this.#storage)));
   }
 
   // ---------- While files send (Ruling BE) ----------
@@ -467,6 +481,9 @@ class UploadEngine implements Engine {
     clearInterval(this.#timeLeftTimer);
     this.#timeLeftTimer = undefined;
     this.#unsubscribe();
+    // Off the page's events, so nothing on `window` holds this uploader, its store or its file.
+    for (const stop of this.#stopHearing.splice(0)) stop();
+    this.#events.dispose();
     if (this.#guarding) {
       this.#guarding = false;
       this.#pageGuard.update(false);

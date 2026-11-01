@@ -522,7 +522,9 @@ export async function processWish(job: MediaJob, options: WishOptions): Promise<
   const mediaId = typeof job.data.mediaId === "string" ? job.data.mediaId : "";
   const item = await findWishToProcess(mediaId);
   if (!item) {
-    console.log(`[worker] media.wish job=${job.id}: nothing to do, the recording is no longer uploaded, or hidden or deleted`);
+    console.log(
+      `[worker] media.wish job=${job.id}: nothing to do, the recording is no longer uploaded, hidden or deleted, or no wish names it`,
+    );
     return;
   }
   if (item.kind !== "audio" && item.kind !== "video") {

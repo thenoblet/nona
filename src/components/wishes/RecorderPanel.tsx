@@ -7,7 +7,7 @@ import { copyText } from "@/components/album/viewer/device";
 import { declaredType } from "@/components/album/uploader/state";
 import { checkUpload, WISH_SECONDS } from "@/lib/media/limits";
 import { clockTime } from "@/lib/media/album-item";
-import { blockedWhyOf, secondsLeft, type RecorderEvent, type RecorderState, type Take } from "./recorder-machine";
+import { blockedWhyOf, secondsLeft, takeSeconds, type RecorderEvent, type RecorderState, type Take } from "./recorder-machine";
 import {
   AUDIO_BITS_PER_SECOND,
   declaredRecordingType,
@@ -52,7 +52,9 @@ export default function RecorderPanel({ kind, state, dispatch, media }: Recorder
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   /** The recording's length when it was stopped, for its take. */
-  const stoppedAfter = useRef(0);
+  const stoppedAfter = useRef<number | null>(null);
+  /** When the recorder started (performance.now()), for a take the browser stops by itself. */
+  const startedAt = useRef<number | null>(null);
   const [live, setLive] = useState<MediaStream | null>(null);
   const preview = useRef<HTMLVideoElement>(null);
 
@@ -103,7 +105,8 @@ export default function RecorderPanel({ kind, state, dispatch, media }: Recorder
       stopTracks(stream.current);
       stream.current = null;
       setLive(null);
-      dispatch({ type: "recorded", take: { file, seconds: stoppedAfter.current / 1000, source: "recorder" } });
+      const seconds = takeSeconds(kind, stoppedAfter.current, startedAt.current, performance.now());
+      dispatch({ type: "recorded", take: { file, seconds, source: "recorder" } });
     };
     made.onerror = () => {
       stopTracks(stream.current);
@@ -118,7 +121,9 @@ export default function RecorderPanel({ kind, state, dispatch, media }: Recorder
       dispatch({ type: "refused", why: "unsupported" });
       return;
     }
-    dispatch({ type: "started", at: performance.now() });
+    stoppedAfter.current = null;
+    startedAt.current = performance.now();
+    dispatch({ type: "started", at: startedAt.current });
   }
 
   // Asking: the phone's prompt answers; a voice note records at once, a video counts down first.

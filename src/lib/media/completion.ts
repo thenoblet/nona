@@ -86,8 +86,8 @@ export function errorName(error: unknown): string | undefined {
 
 /**
  * The queue that processes an uploaded item: a wish's recording, a video's poster or a photo. A
- * wish's recording is sent there only once a wish names it (Ruling CE): by addWish, the sweeper, or
- * an unhide.
+ * wish's recording is sent there only once a wish names it (Ruling CE): by addWish, the sweeper, an
+ * unhide, or the couple's retry of one that failed.
  */
 export function processingQueue(upload: Pick<UploadRow, "purpose" | "kind">): MediaQueueName {
   if (upload.purpose === "wish") return MEDIA_QUEUES.wish;

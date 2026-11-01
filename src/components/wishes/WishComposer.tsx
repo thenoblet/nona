@@ -22,6 +22,8 @@ const modes: { value: WishKind; label: string }[] = [
 
 const initialState: WishFormState = { status: "idle" };
 
+/** What the composer says when the sending card's own code didn't load: the take is kept, to send again. */
+export const SENDING_DIDNT_LOAD = "That didn't send. Check the connection, then try again.";
 
 /**
  * The guestbook form (gate B 4a–4d): write a wish (sent with a Server Action), or record a voice
@@ -40,6 +42,8 @@ export function WishComposer() {
     IDLE,
   );
   const [signatureError, setSignatureError] = useState<string | null>(null);
+  // The sending card's own code didn't load: the take is kept, and this says so (gate A's voice).
+  const [sendProblem, setSendProblem] = useState<string | null>(null);
   const [signedAs, setSignedAs] = useState("");
   const [Sender, setSender] = useState<ComponentType<WishSenderProps> | null>(null);
   const busy = isBusy(recorder);
@@ -72,6 +76,7 @@ export function WishComposer() {
     if (busy || next === mode) return;
     setMode(next);
     setSignatureError(null);
+    setSendProblem(null);
     dispatch({ type: "reset" });
   }
 
@@ -84,10 +89,14 @@ export function WishComposer() {
     if (problem) return;
     saveGuestName(name);
     setSignedAs(name);
+    setSendProblem(null);
     dispatch({ type: "send" });
     loadWishSender().then(
       (loaded) => setSender(() => loaded.default),
-      () => dispatch({ type: "sendFailed" }),
+      () => {
+        dispatch({ type: "sendFailed" });
+        setSendProblem(SENDING_DIDNT_LOAD);
+      },
     );
   }
 
@@ -158,6 +167,11 @@ export function WishComposer() {
         {!recorded && errors?.form ? (
           <p role="alert" className="m-0 text-center text-sm text-ember-ink">
             {errors.form}
+          </p>
+        ) : null}
+        {recorded && sendProblem && recorder.phase === "review" ? (
+          <p role="alert" className="m-0 text-center text-sm text-ember-ink">
+            {sendProblem}
           </p>
         ) : null}
 

@@ -4,11 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { sendRecordedWish } from "@/app/(site)/wishes/actions";
 import { Icon } from "@/components/ui/Icon";
 import { MorphText } from "@/components/album/UploadCards";
-import type { Engine } from "@/components/album/uploader/engine";
 import { loadEngineForPick } from "@/components/album/uploader/load";
 import { cameraCaption, createUploadStore, UPLOAD_WORDS, type UploadFailure, type UploadStore } from "@/components/album/uploader/state";
 import { linkWish } from "./link-wish";
 import type { Take } from "./recorder-machine";
+import { createSenderUpload, type SenderUpload } from "./sender-upload";
 import type { RecordedKind } from "./recording";
 import { holdTakeUrl, takeUrlOf } from "./take-url";
 
@@ -55,7 +55,7 @@ function storeWith(kind: RecordedKind, file: File): { store: UploadStore; itemId
 export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain }: WishSenderProps) {
   const [{ store, itemId }] = useState(() => storeWith(kind, take.file));
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  const engine = useRef<Engine | null>(null);
+  const upload = useRef<SenderUpload | null>(null);
   const linkStarted = useRef(false);
   const sentTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [linking, setLinking] = useState<Linking>({ phase: "waiting" });
@@ -65,14 +65,8 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
   // The take's picture is held while the card shows it.
   useEffect(() => (kind === "video" ? holdTakeUrl(take.file) : undefined), [kind, take.file]);
 
-  // Gone (sent, recording again, or the page moving on): the uploader and the thank-you's timer go too.
-  useEffect(
-    () => () => {
-      clearTimeout(sentTimer.current);
-      engine.current?.destroy();
-    },
-    [],
-  );
+  // Gone (sent, recording again, or the page moving on): the thank-you's timer goes too.
+  useEffect(() => () => clearTimeout(sentTimer.current), []);
 
   /** Makes the wish of the arrived recording, once at a time. */
   const link = useCallback(
@@ -90,31 +84,40 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
     },
     [kind, signedAs, onSent],
   );
-
-  /** Loads the upload client (once) and hands it the recording; a load that fails can be tried again. */
-  const startUploading = useCallback(() => {
-    if (!itemId || engine.current || store.get(itemId)?.status !== "queued") return;
-    loadEngineForPick().then(
-      ({ startEngine }) => {
-        if (engine.current) return;
-        engine.current = startEngine(store, { purpose: "wish", guestName: () => signedAs, onPersonalLink: () => {} }, { storage: null });
-        engine.current.pump();
-      },
-      () => setEngineFailed(true),
-    );
-  }, [itemId, store, signedAs]);
-
-  // Once: the upload client takes the recording; and the moment the server has it, the wish is made.
+  const latestLink = useRef(link);
   useEffect(() => {
-    startUploading();
+    latestLink.current = link;
+  }, [link]);
+
+  /** Starts the upload client on the card's recording; a client that didn't load says so, with Try again. */
+  const begin = useCallback((hold: SenderUpload) => {
+    void hold.begin().then((outcome) => {
+      if (outcome === "failed") setEngineFailed(true);
+    });
+  }, []);
+
+  // While the card is here: the upload client takes the recording (and is let go with the card,
+  // never started after it: sender-upload.ts), and the moment the server has it, the wish is made.
+  useEffect(() => {
+    const hold = createSenderUpload(async () => {
+      const { startEngine } = await loadEngineForPick();
+      return () => startEngine(store, { purpose: "wish", guestName: () => signedAs, onPersonalLink: () => {} }, { storage: null });
+    });
+    upload.current = hold;
+    if (itemId && store.get(itemId)?.status === "queued") begin(hold);
     const arrived = () => {
       const item = itemId ? store.get(itemId) : undefined;
       if (item?.status !== "added" || !item.mediaId || linkStarted.current) return;
       linkStarted.current = true;
-      void link(item.mediaId);
+      void latestLink.current(item.mediaId);
     };
-    return store.subscribe(arrived);
-  }, [store, itemId, link, startUploading]);
+    const unsubscribe = store.subscribe(arrived);
+    return () => {
+      unsubscribe();
+      hold.release();
+      if (upload.current === hold) upload.current = null;
+    };
+  }, [store, itemId, signedAs, begin]);
 
   const item = snapshot.items.find((candidate) => candidate.id === itemId) ?? null;
   const mediaId = item?.status === "added" ? item.mediaId : null;
@@ -142,14 +145,14 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
     if (engineFailed) {
       // The upload client didn't load: load it again, the take as it was.
       setEngineFailed(false);
-      startUploading();
+      if (upload.current) begin(upload.current);
       return;
     }
     if (linking.phase === "failed" && mediaId) {
       void link(mediaId);
       return;
     }
-    if (itemId) engine.current?.retry(itemId);
+    if (itemId) upload.current?.engine()?.retry(itemId);
   }
 
   return (

@@ -167,10 +167,14 @@ test("a video wish counts down, records from the front camera, and plays from it
     await expect(thumb).toHaveAttribute("width", /^\d+$/);
     await expect(thumb).toHaveAttribute("height", /^\d+$/);
     await expect(card.locator("video")).toHaveCount(0);
-    // Tapped, the video is made and plays.
+    // Tapped, the video is made and plays, and focus moves to it without moving the page (fix round 2, N3).
+    await play.scrollIntoViewIfNeeded();
+    const scrolledBefore = await page.evaluate(() => window.scrollY);
     await play.click();
     const video = wall(page).getByLabel(`Video message from ${signer}`, { exact: true });
     await expect(video).toHaveAttribute("src", /\/video\.mp4$/);
+    await expect(video).toBeFocused();
+    expect(await page.evaluate(() => window.scrollY)).toBe(scrolledBefore);
     await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime), { timeout: 20_000 }).toBeGreaterThan(0);
 
     const [row] = await sql`select m.kind, m.status, m.width, m.height, m.video_codec from wishes w join media m on m.id = w.media_id where w.signed_as = ${signer}`;
@@ -290,6 +294,35 @@ test("when the recorder's own code doesn't load, the camera goes off at once and
     await page.getByRole("button", { name: "Try again" }).click();
     await expect(page.getByText(/^Recording in [123]…$/)).toBeVisible();
     await expect(composer(page).getByText(/^0:\d\d left$/)).toBeVisible({ timeout: 15_000 });
+  } finally {
+    await context.close();
+  }
+});
+
+test("when the sending card's own code doesn't load, the take stays and the composer says so; sent again, it goes", async ({ browser, baseURL }) => {
+  const context = await phone(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto("/wishes");
+    // No signal for the sending card: its chunk fails until the test lets it through.
+    let senderBlocked = true;
+    await page.route("**/_next/static/chunks/*.js", async (route) => {
+      const response = await route.fetch();
+      const body = await response.text();
+      if (senderBlocked && body.includes("Sent to the wall")) await route.abort("internetdisconnected");
+      else await route.fulfill({ response, body });
+    });
+    await record(page, "voice");
+    await page.getByLabel("Sign your wish").fill(`${SIGNED_PREFIX} Retry ${randomUUID().slice(0, 6)}`);
+
+    await page.getByRole("button", { name: "Send my wish" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "That didn't send. Check the connection, then try again." })).toBeVisible();
+    // The take is still there, to listen to and send.
+    await expect(page.getByRole("button", { name: "Listen back" })).toBeVisible();
+
+    senderBlocked = false;
+    await page.getByRole("button", { name: "Send my wish" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Thank you" })).toBeVisible({ timeout: 60_000 });
   } finally {
     await context.close();
   }

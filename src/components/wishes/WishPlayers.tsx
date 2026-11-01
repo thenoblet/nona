@@ -116,7 +116,12 @@ export function VideoPlayer({ wish, recording, index }: { wish: Wish; recording:
   function play() {
     // The element is made now, inside the tap, so play() is the tap's own (phones allow sound then).
     flushSync(() => setStarted(true));
-    void video.current?.play().catch(() => {});
+    const element = video.current;
+    if (!element) return;
+    // The tapped button has gone: focus goes to the video in its place (named as the button was,
+    // less "Play"), so a screen reader stays on it and its controls, and the page doesn't move.
+    element.focus({ preventScroll: true });
+    void element.play().catch(() => {});
   }
 
   return (
@@ -134,6 +139,7 @@ export function VideoPlayer({ wish, recording, index }: { wish: Wish; recording:
             src={recording.url}
             playsInline
             controls
+            tabIndex={-1}
             aria-label={`Video message from ${wish.signedAs}`}
             className="absolute inset-0 size-full object-contain"
           />

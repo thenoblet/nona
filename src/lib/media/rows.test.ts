@@ -7,13 +7,14 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createGuest } from "@/lib/data/guests";
 import { isVisible as isVisibleForApp } from "@/lib/data/media";
 import { getDb } from "@/lib/db/client";
-import { media } from "@/lib/db/schema";
+import { media, wishes } from "@/lib/db/schema";
 import { dbConfig } from "@/lib/env";
 import { originalKey } from "@/lib/storage/keys";
 import { resetDb } from "../../../test/db";
 import {
   claimConversion,
   conversionIsOnDemand,
+  findItemToProcess,
   findPlayableVideo,
   isVisible,
   markConversionDone,
@@ -134,6 +135,27 @@ describe("the media worker's marks", () => {
     expect(await markConversionFailed(done, "corrupt")).toBe(false);
     expect(await readRow(queued)).toMatchObject({ status: "ready", conversion: "failed", conversionFailureReason: "corrupt" });
     expect(await readRow(done)).toMatchObject({ status: "ready", conversion: "done", conversionFailureReason: null });
+  });
+});
+
+describe("findItemToProcess: what the photo and poster jobs take", () => {
+  beforeEach(resetDb);
+
+  it("finds an uploaded album photo or video, and a site photo, but never a wish's recording, linked or not (Ruling CE)", async () => {
+    const photo = await addPhoto({ status: "uploaded", listedAt: null });
+    const video = await addPhoto({ kind: "video", contentType: "video/quicktime", status: "uploaded", listedAt: null });
+    const sitePhoto = await addPhoto({ purpose: "site", guestId: null, status: "uploaded", listedAt: null });
+    const recording = await addPhoto({ purpose: "wish", kind: "video", contentType: "video/mp4", status: "uploaded", listedAt: null });
+    await getDb().insert(wishes).values({ kind: "video", signedAs: "Ama", mediaId: recording });
+    const voice = await addPhoto({ purpose: "wish", kind: "audio", contentType: "audio/mp4", status: "uploaded", listedAt: null });
+
+    expect((await findItemToProcess(photo))?.id).toBe(photo);
+    expect((await findItemToProcess(video))?.id).toBe(video);
+    expect((await findItemToProcess(sitePhoto))?.id).toBe(sitePhoto);
+    // A media.photo or media.poster job sent for a recording by mistake publishes nothing: only
+    // media.wish makes a recording, and only once a wish names it.
+    expect(await findItemToProcess(recording)).toBeNull();
+    expect(await findItemToProcess(voice)).toBeNull();
   });
 });
 

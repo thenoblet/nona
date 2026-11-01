@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockedWhyOf, IDLE, isBusy, secondsLeft, transition, type RecorderEvent, type RecorderState, type Take } from "./recorder-machine";
+import { blockedWhyOf, IDLE, isBusy, secondsLeft, takeSeconds, transition, type RecorderEvent, type RecorderState, type Take } from "./recorder-machine";
 import {
   declaredRecordingType,
   mediaConstraints,
@@ -122,6 +122,15 @@ describe("the recorder's states", () => {
   it("keeps the take when a send fails, so it can be sent again without recording again", () => {
     const recorded = take();
     expect(transition("voice", { phase: "sending", take: recorded }, { type: "sendFailed" })).toEqual({ phase: "review", take: recorded });
+  });
+
+  it("gives a take its real length, the browser's own stop included: never 0, never past the limit", () => {
+    // Stopped by the guest or the limit: what the machine measured.
+    expect(takeSeconds("voice", 19_000, 1_000, 99_000)).toBe(19);
+    // Stopped by the browser before the machine heard a stop: the time since it started.
+    expect(takeSeconds("video", null, 1_000, 13_500)).toBe(12.5);
+    expect(takeSeconds("video", null, 0, 45_000)).toBe(30);
+    expect(takeSeconds("voice", null, null, 5_000)).toBeNull();
   });
 
   it("keeps a take the browser handed over while still recording (it stopped the recorder itself)", () => {
