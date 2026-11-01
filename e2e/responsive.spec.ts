@@ -79,7 +79,8 @@ const emails = {
 
 for (const [name, render] of Object.entries(emails)) {
   test.describe(name, () => {
-    for (const width of [...widths, 1280]) {
+    // Every width the global constraints list, 414 and 1280 included.
+    for (const width of [320, 360, 390, 414, 768, 1024, 1280, 1440]) {
       test(`does not scroll sideways at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
         const header = await readFile("public/email/header.jpg");

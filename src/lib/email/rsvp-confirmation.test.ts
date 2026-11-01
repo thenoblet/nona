@@ -391,7 +391,7 @@ describe("renderRsvpConfirmation", () => {
   });
 });
 
-describe("the personal link in the confirmation (Rulings BY and BZ)", () => {
+describe("the personal link, only in the email of a guest who is coming (Ruling BZ)", () => {
   const token = PERSONAL_LINK.split("/my/")[1];
 
   it("gives a guest coming to a celebration their personal link, in the html and the text, with what it is for", async () => {

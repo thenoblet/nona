@@ -6,16 +6,9 @@ import { buildIcs, celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ic
 import { celebrationPlace } from "@/lib/content/place";
 import type { SiteContent } from "@/lib/content/schema";
 import type { RsvpRecord } from "@/lib/data/types";
+import { plainName } from "@/lib/rsvp/normalize";
 
 const SUBJECT = "Your reply to Noblet & Nancy";
-
-/** Only a plain name is echoed back: the address is unverified, so a link must not ride along. */
-function greetingName(fullName: string): string | null {
-  // A period only ends an initial or suffix ("J. Doe", "Jr."), so "bit.ly" is not a name.
-  const plain =
-    fullName.length <= 60 && /^(?:[\p{L}\p{M}' -]|\.(?= |$))+$/u.test(fullName);
-  return plain ? fullName : null;
-}
 
 /** "05" reads as "5"; a day the couple wrote some other way is shown as written. */
 const dayOfMonth = (day: string) => (/^\d+$/.test(day) ? String(Number(day)) : day);
@@ -49,7 +42,7 @@ export async function renderRsvpConfirmation(
   );
   const celebrations: ConfirmationCelebration[] = answered.map((celebration) => {
     const comingTo = rsvp.answers[celebration.id] === "yes";
-    const { place, gpsLine } = celebrationPlace(celebration, content.venues);
+    const { place, gps } = celebrationPlace(celebration, content.venues);
     return {
       id: celebration.id,
       name: celebration.name,
@@ -57,7 +50,7 @@ export async function renderRsvpConfirmation(
       stub: stubFor(celebration.weekday, celebration.day, celebration.month),
       time: celebration.time,
       place,
-      gpsLine,
+      gps,
       placeDetail: celebration.placeDetail,
       attending: comingTo,
       googleCalendarUrl: comingTo
@@ -69,7 +62,8 @@ export async function renderRsvpConfirmation(
   const html = unwrapOutlookOnly(
     await render(
       createElement(RsvpConfirmation, {
-        guestName: greetingName(rsvp.fullName),
+        // Only a plain name is echoed back: the address is unverified, so a link must not ride along.
+        guestName: plainName(rsvp.fullName),
         celebrations,
         siteUrl,
         personalLink,

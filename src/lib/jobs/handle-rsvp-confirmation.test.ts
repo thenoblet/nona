@@ -127,6 +127,18 @@ describe("handleRsvpConfirmation", () => {
     expect((await getRsvp(reply.id))?.emailStatus).toBe("sent");
   });
 
+  it("shows a name only where the email shows it: a reply the email greets as a guest gets an unnamed guest", async () => {
+    const reply = await queued({ fullName: "Claim your gift at evil.example" });
+    const guest = await guestOf(reply);
+    expect(guest.displayName).toBeNull();
+    await handleRsvpConfirmation(reply.id, { retryCount: 0, retryLimit: 5 });
+    const message = send.fn.mock.calls[0][0];
+    expect(message.text).toContain("Dear guest,");
+    expect(message.text).toContain(`/my/${guest.linkToken}`);
+    expect(message.html).not.toContain("evil.example");
+    expect(message.text).not.toContain("evil.example");
+  });
+
   it("gives a guest who declined everything no link", async () => {
     const reply = await queued({ answers: { [contentDefaults.celebrations[0].id]: "no" } });
     expect(reply.guestId).toEqual(expect.any(String));

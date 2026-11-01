@@ -14,8 +14,8 @@ export type ConfirmationCelebration = {
   time: string;
   /** "BN 111 Katakyie St, Tepa". */
   place: string;
-  /** "GhanaPost GPS · AX-0084-3317", or null while the venue's GPS is still to confirm. */
-  gpsLine: string | null;
+  /** The GhanaPost GPS label and code ("GhanaPost GPS · ", "AX-0084-3317"), or null while the venue's GPS is still to confirm. */
+  gps: { label: string; code: string } | null;
   /** An extra note under the GPS line, such as "Main hall, upstairs". */
   placeDetail?: string;
   attending: boolean;
@@ -31,24 +31,6 @@ const smallCaps: CSSProperties = {
   letterSpacing: "0.26em",
   textTransform: "uppercase",
 };
-
-const GPS_SEPARATOR = " · ";
-
-/**
- * "GhanaPost GPS · AX-0084-3317", free to wrap on a narrow phone, but only before the code: the
- * code itself stays whole (it breaks at its hyphens otherwise), so a guest can read it off as typed.
- */
-function GpsLine({ line }: { line: string }) {
-  const separator = line.lastIndexOf(GPS_SEPARATOR);
-  if (separator === -1) return <>{line}</>;
-  const codeStart = separator + GPS_SEPARATOR.length;
-  return (
-    <>
-      {line.slice(0, codeStart)}
-      <span style={{ whiteSpace: "nowrap" }}>{line.slice(codeStart)}</span>
-    </>
-  );
-}
 
 /**
  * One celebration as a keepsake ticket: a stub with the day, a dashed perforation, then the name,
@@ -121,10 +103,13 @@ export function CelebrationCard({ celebration }: { celebration: ConfirmationCele
             {celebration.time}
             <br />
             {celebration.place}
-            {celebration.gpsLine ? (
+            {celebration.gps ? (
               <>
                 <br />
-                <GpsLine line={celebration.gpsLine} />
+                {/* Free to wrap on a narrow phone, but only before the code: the code stays whole (it
+                    would break at its hyphens otherwise), so a guest can read it off as written. */}
+                {celebration.gps.label}
+                <span style={{ whiteSpace: "nowrap" }}>{celebration.gps.code}</span>
               </>
             ) : null}
             {celebration.placeDetail ? (

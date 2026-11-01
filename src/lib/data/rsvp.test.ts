@@ -154,6 +154,19 @@ describe("saveRsvp's guest (Ruling CB)", () => {
     expect(await guestRows()).toHaveLength(1);
   });
 
+  it.each(["bit.ly/x", "Claim your gift at evil.example", "see http://evil.test", "a@evil.test", "A".repeat(61)])(
+    "leaves the guest of a reply named %s unnamed: only a plain name is shown back (Ruling CC)",
+    async (fullName) => {
+      const { record } = await saveRsvp({ ...base, fullName });
+      expect((await findGuestById(record.guestId!))?.displayName).toBeNull();
+    },
+  );
+
+  it.each(["Akosua Ɔfori-Atta", "Ámà Owusu-Ansah", "Kwame Mensah Jr."])("names the guest of a reply named %s", async (fullName) => {
+    const { record } = await saveRsvp({ ...base, fullName });
+    expect((await findGuestById(record.guestId!))?.displayName).toBe(fullName);
+  });
+
   it("gives every reply its own guest, the same person's second reply too, and a reply without an email", async () => {
     const first = await saveRsvp({ ...base, email: "ama@example.com" });
     const second = await saveRsvp({ ...base, email: "ama@example.com", partySize: "2 people" });
