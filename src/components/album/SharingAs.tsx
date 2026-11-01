@@ -1,22 +1,40 @@
 "use client";
 
-import { useId, useState, type FormEvent } from "react";
-import { saveGuestName, useGuestName } from "./guestName";
+import { useId, useLayoutEffect, useState, type FormEvent } from "react";
+import { renameGuest } from "./album-client";
+import { saveGuestName, syncGuestName, tieGuestName, useGuestName, type OwnGuest } from "./guestName";
 
 /**
  * "Sharing as Ama · Change", or, for a guest who hasn't given a name, "Sharing as a guest · Add
  * your name"; either opens a small inline form to set it. Before the page knows the name (on the
  * server) it reads as a guest: never a placeholder.
+ *
+ * `ownGuest` is the browser's own guest as the server rendered it: after a personal link takes the
+ * phone over, the phone shares as that guest's name (Ruling CG), before the line first paints. Only
+ * Change renames a guest on the server.
  */
-export function SharingAs() {
+export function SharingAs({ ownGuest }: { ownGuest: OwnGuest | null }) {
   const name = useGuestName();
   const [editing, setEditing] = useState(false);
   const inputId = useId();
 
+  const ownGuestId = ownGuest?.id;
+  const ownGuestName = ownGuest?.displayName ?? null;
+  useLayoutEffect(() => {
+    if (ownGuestId) syncGuestName({ id: ownGuestId, displayName: ownGuestName });
+  }, [ownGuestId, ownGuestName]);
+
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    saveGuestName(String(new FormData(event.currentTarget).get("name") ?? ""));
+    const typed = String(new FormData(event.currentTarget).get("name") ?? "");
+    saveGuestName(typed);
     setEditing(false);
+    // The guest asked for this name: their guest takes it too, on this phone and any other.
+    if (typed.trim()) {
+      void renameGuest(typed).then((guestId) => {
+        if (guestId) tieGuestName(guestId);
+      });
+    }
   }
 
   if (editing) {

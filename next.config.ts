@@ -16,8 +16,7 @@ const nextConfig: NextConfig = {
     // copy per URL whatever the browser accepts, so an AVIF copy could reach iPhones
     // on iOS 15 that can't show it. Every phone guests will have shows WebP.
     formats: ["image/webp"],
-    // Guest media will be served from R2 later, e.g.
-    // remotePatterns: [new URL("https://media.nobletxnancy.com/**")],
+    // No remotePatterns: guest media (the R2 media domain) never goes through the optimiser.
   },
   // The link preview cards are prerendered, but may be redrawn on the server after their
   // cache lifetime, so the server build must carry the fonts they are drawn with.
@@ -42,6 +41,15 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "Cache-Control", value: "private, no-store" },
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+      // A personal link and its question never show inside another site's frame: "Yes, that's me"
+      // takes the phone over (Ruling CG), so no page may dress it up and get it tapped.
+      {
+        source: "/my/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          { key: "X-Frame-Options", value: "DENY" },
         ],
       },
     ];

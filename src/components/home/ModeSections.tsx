@@ -1,13 +1,13 @@
 import { couple } from "@/content/wedding";
 import { accraDayAndMonth } from "@/lib/accra";
 import type { Celebration, ScheduleItem, SiteContent } from "@/lib/content/schema";
-import { mediaStats } from "@/lib/data/media";
 import type { Wish } from "@/lib/data/types";
 import { listWishes } from "@/lib/data/wishes";
 import { readGuestIds } from "@/lib/guests/cookie";
 import { describeError } from "@/lib/log-error";
 import { albumStats, listAlbum } from "@/lib/media/album";
 import { countFor, countWords, type AlbumItem } from "@/lib/media/album-item";
+import { readAlbumOverview } from "@/lib/media/album-overview";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { PlayGlyph } from "@/components/ui/Icon";
@@ -183,19 +183,13 @@ export function TodaySection({
 }
 
 /**
- * After the wedding: the whole album, filterable, as the album page shows it. Downloading everything,
- * or all of one's own, comes with Plan 3's zips.
+ * After the wedding: the whole album, filterable, as the album page shows it, under a line counting
+ * what everyone sees in it (its photos and videos) and how many guests shared them. A count that
+ * can't be read only shortens the line; the album shows whenever it can be read
+ * (readAlbumOverview). Downloading everything, or all of one's own, comes with Plan 3's zips.
  */
 export async function AfterAlbum({ celebrations }: { celebrations: Celebration[] }) {
-  const guestIds = await readGuestIds();
-  let album: Awaited<ReturnType<typeof listAlbum>> | null = null;
-  let counts: Awaited<ReturnType<typeof albumStats>> | null = null;
-  try {
-    [album, counts] = await Promise.all([listAlbum({ viewerGuestIds: guestIds }), albumStats(guestIds)]);
-  } catch (error) {
-    console.error("[home] could not read the album:", describeError(error));
-  }
-  const stats = await mediaStats();
+  const { album, stats: counts, summary } = await readAlbumOverview(await readGuestIds());
   return (
     <section id="album" className="bg-tray py-20 sm:py-26">
       {/* Its side padding on the column, so the chip row can run into it as it scrolls (as on the album page). */}
@@ -203,9 +197,7 @@ export async function AfterAlbum({ celebrations }: { celebrations: Celebration[]
         <div className="flex flex-col gap-3.5 px-1">
           <Eyebrow>Our shared album</Eyebrow>
           <h2 className="m-0 font-script text-[56px] leading-none font-normal sm:text-[84px]">Every moment</h2>
-          <p className="m-0 font-serif text-xl leading-relaxed text-mocha sm:text-[22px]">
-            {stats.moments} photos and videos from {stats.guests} of you, all in one place.
-          </p>
+          <p className="m-0 font-serif text-xl leading-relaxed text-mocha sm:text-[22px]">{summary}</p>
         </div>
         {album && counts ? (
           // One block in the column (not one gap per row), with room in its own padding for the chip

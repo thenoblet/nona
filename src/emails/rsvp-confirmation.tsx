@@ -150,9 +150,9 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
 }
 
 /**
- * The guest's personal link for the day, as a card like the album's own "Your personal link": the
- * same name, so the guest knows it again there, and a button that opens it. The plain text keeps
- * the heading, the line and the link's address.
+ * The guest's personal link, as a card like the album's own "Your personal link": the same name,
+ * so the guest knows it again there, the ask to open it before sharing a first photo (Ruling CG),
+ * and a button that opens it. The plain text keeps the heading, the line and the link's address.
  */
 function PersonalLinkCard({ link }: { link: string }) {
   return (
@@ -183,7 +183,7 @@ function PersonalLinkCard({ link }: { link: string }) {
               Your personal link
             </Heading>
             <Text style={{ ...paragraph, margin: "8px auto 18px", maxWidth: "460px", fontSize: "16px", lineHeight: "26px" }}>
-              Use this link on the day to keep your photos together.
+              Open this link on your phone before you share your first photo, and your photos stay together on any phone.
             </Text>
             <Button
               href={link}

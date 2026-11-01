@@ -275,6 +275,13 @@ export const media = pgTable(
       .where(
         sql`${table.purpose} = 'album' and ${table.status} = 'ready' and ${table.hiddenAt} is null and ${table.deletedAt} is null and not ${table.removedByUploader}`,
       ),
+    // How many guests shared the moments everyone sees (the home page's "from 180 of you", Task 20):
+    // their guest ids, in order, so they are counted once each from this index alone, with no sort.
+    index("media_album_sharers_idx")
+      .on(table.guestId)
+      .where(
+        sql`${table.purpose} = 'album' and ${table.status} = 'ready' and ${table.hiddenAt} is null and ${table.deletedAt} is null and not ${table.removedByUploader}`,
+      ),
     index("media_guest_id_idx").on(table.guestId),
     // The admin's album (Task 17), newest upload first, the id breaking ties, read without a sort.
     // Its trailing columns are what the admin filters a page on, so a page's ids and a search of

@@ -4,11 +4,12 @@ import type { Slide } from "./playlist";
 
 const slide: Slide = {
   id: "a",
-  src: { src: "/_next/static/media/a.jpg", width: 800, height: 1200, blurDataURL: "data:image/jpeg;base64,AAAA" },
-  alt: "Photo a",
   kind: "photo",
-  by: "[Guest]",
-  detail: "Reception · just now",
+  src: "https://media.example/derived/a/0123456789abcdef/view.webp",
+  width: 1600,
+  height: 1200,
+  by: "Ama Owusu",
+  detail: "Reception · 4 min ago",
 };
 
 const answer = (body: unknown, status = 200) => async () => new Response(JSON.stringify(body), { status });
@@ -16,6 +17,11 @@ const answer = (body: unknown, status = 200) => async () => new Response(JSON.st
 describe("fetchSlides", () => {
   it("returns the server's list", async () => {
     expect(await fetchSlides({ fetcher: answer({ slides: [slide] }) })).toEqual([slide]);
+  });
+
+  it("accepts a moment shared without a name, and one whose size isn't known", async () => {
+    const unnamed: Slide = { ...slide, id: "b", kind: "video", by: null, width: null, height: null };
+    expect(await fetchSlides({ fetcher: answer({ slides: [slide, unnamed] }) })).toEqual([slide, unnamed]);
   });
 
   it("accepts an empty list (every photo hidden)", async () => {
@@ -36,6 +42,9 @@ describe("fetchSlides", () => {
   it("returns null for an answer that is not a slide list, such as a proxy's error page", async () => {
     expect(await fetchSlides({ fetcher: async () => new Response("<html>Bad gateway</html>") })).toBeNull();
     expect(await fetchSlides({ fetcher: answer({ slides: [{ id: "a" }] }) })).toBeNull();
+    expect(await fetchSlides({ fetcher: answer({ slides: [{ ...slide, src: { src: "/a.jpg" } }] }) })).toBeNull();
+    expect(await fetchSlides({ fetcher: answer({ slides: [{ ...slide, by: 7 }] }) })).toBeNull();
+    expect(await fetchSlides({ fetcher: answer({ slides: [{ ...slide, kind: "audio" }] }) })).toBeNull();
     expect(await fetchSlides({ fetcher: answer({ slides: "a" }) })).toBeNull();
   });
 

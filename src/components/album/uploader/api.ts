@@ -21,7 +21,7 @@ export class ApiError extends Error {
 }
 
 export type ApiRequest = {
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   /** How long one try may take. */
   timeoutMs: number;

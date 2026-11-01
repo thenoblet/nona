@@ -5,7 +5,6 @@ import { build } from "esbuild";
 import postgres from "postgres";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createGuest } from "@/lib/data/guests";
-import { isVisible as isVisibleForApp } from "@/lib/data/media";
 import { getDb } from "@/lib/db/client";
 import { media, wishes } from "@/lib/db/schema";
 import { dbConfig } from "@/lib/env";
@@ -91,10 +90,6 @@ describe("isVisible", () => {
     expect(await isVisible(randomUUID())).toBe(false);
     expect(await isVisible("sample-1")).toBe(false);
     expect(await isVisible("")).toBe(false);
-  });
-
-  it("is the one the app's data layer hands out", () => {
-    expect(isVisibleForApp).toBe(isVisible);
   });
 });
 

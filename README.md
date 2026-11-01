@@ -67,7 +67,7 @@ longer changes it on the site. Anything still to confirm is in square brackets, 
 ## Data: Postgres, and what is still a stand-in
 
 RSVPs, the site's editable content (times, venues, text) and written wishes are stored in
-Postgres, beside the tables the album will use: guests, media, site images, upload events and
+Postgres, beside the album's own tables: guests, media, site images, upload events and
 settings (`src/lib/db/schema.ts`). Schema migrations (`drizzle/`) run at server start. A new
 database starts with guest uploads closed (`uploads_open` is false), so no deploy opens them before
 the couple do.
@@ -76,17 +76,10 @@ A reply whose confirmation never reached the queue (at most three a day go to on
 server restarted at the wrong moment) shows as "Not sent"; when the queue starts, it tries the
 last day's again.
 
-The album is still a stub with its final function signatures, so the pages won't change when the
-real backend arrives: `listMedia` and `mediaStats` in `src/lib/data/media.ts` return a fixed set
-of sample photos. Next: the media rows, with their files in Cloudflare R2. Voice and video wishes
-are next too.
-
-Search for `TODO` to find the other placeholders: uploads (presigned multipart to R2), downloads
-(per-celebration zips, built by a separate media worker), voice and video recording, the device
-cookie for "My uploads", and live updates for the album (`src/app/(site)/album/page.tsx`: it will
-poll every 30 s, as the slideshow already does).
-
-When guest media is served from R2, add its host to `images.remotePatterns` in `next.config.ts`.
+What is still to come is marked `TODO` in the code: the rest of the wedding party's portraits and
+the gift registry's link (`src/components/home/Sections.tsx`), and videos that play on the
+slideshow rather than show their poster (`src/components/slideshow/SlideshowStage.tsx`). Downloading
+the whole album, or all of one's own, as per-celebration zips made by the media worker comes later.
 
 ## The venue TV
 
@@ -97,6 +90,9 @@ the mouse and click the full-screen button). It runs on its own all evening:
   controls fade away after a few seconds without movement;
 - it asks for new photos every 30 s; if the network drops it keeps showing what it has and tries
   again, and a photo that fails to load is skipped;
+- a new photo or video reaches it only after the TV delay, so the couple can hide anything first:
+  `SLIDESHOW_DELAY_SECONDS` (3 minutes when unset) until they set one under Admin → Photos; a
+  hidden one leaves it at its next ask;
 - keys: **←** and **→** move, **space** pauses, **F** toggles full screen.
 
 Set the laptop itself never to sleep as well: the wake lock only holds while the tab is visible.

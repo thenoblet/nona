@@ -5,7 +5,9 @@ import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
 import { getSiteContent } from "@/lib/content/get";
-import { personalLink, readGuestIds } from "@/lib/guests/cookie";
+import { findGuestById } from "@/lib/data/guests";
+import { ownGuestId, personalLink, readGuestIds } from "@/lib/guests/cookie";
+import type { OwnGuest } from "@/components/album/guestName";
 import { describeError } from "@/lib/log-error";
 import { albumStats, listAlbum } from "@/lib/media/album";
 import { readUploadsSwitch, UPLOADS_GRACE_MILLISECONDS } from "@/lib/media/uploads-switch";
@@ -87,7 +89,8 @@ function SlideshowRow() {
 /** Whether guests may share now, and how: read at request time, as the couple's switch decides. */
 type Sharing =
   | { state: "pending" }
-  | { state: "open"; cameraFirst: boolean }
+  /** `ownGuest`: the browser's own guest, whose name it shares as after a link took it over (Ruling CG). */
+  | { state: "open"; cameraFirst: boolean; ownGuest: OwnGuest | null }
   /** Closed; after a close, `graceUntil` while uploads started before it may still finish. */
   | { state: "closed"; phase: "before" | "after"; graceUntil: string | null };
 
@@ -98,13 +101,14 @@ type Sharing =
  */
 async function AlbumHead({ searchParams }: Pick<PageProps<"/album">, "searchParams">) {
   await connection();
-  const [{ mode }, uploads] = await Promise.all([
+  const [{ mode }, uploads, ownGuest] = await Promise.all([
     searchParams,
     // Unreadable, the buttons show: the upload API, which fails closed, says so if sharing is shut.
     readUploadsSwitch().catch((error: unknown) => {
       console.error("[album] could not read the uploads switch:", describeError(error));
       return null;
     }),
+    readOwnGuest(),
   ]);
   // Request time: connection() above.
   const now = new Date();
@@ -113,7 +117,20 @@ async function AlbumHead({ searchParams }: Pick<PageProps<"/album">, "searchPara
     const graceUntil = graceEnds > now.getTime() ? new Date(graceEnds).toISOString() : null;
     return <AlbumHeadBody sharing={{ state: "closed", phase: uploads.closedAt ? "after" : "before", graceUntil }} />;
   }
-  return <AlbumHeadBody sharing={{ state: "open", cameraFirst: resolveMode(now, mode) === "day" }} />;
+  return <AlbumHeadBody sharing={{ state: "open", cameraFirst: resolveMode(now, mode) === "day", ownGuest }} />;
+}
+
+/** The browser's own guest and its name, for "Sharing as"; null for none, or when it can't be read. */
+async function readOwnGuest(): Promise<OwnGuest | null> {
+  try {
+    const ownId = await ownGuestId();
+    const guest = ownId ? await findGuestById(ownId) : null;
+    return guest ? { id: guest.id, displayName: guest.displayName } : null;
+  } catch (error) {
+    // The error's name and code only: a query error carries its parameters.
+    console.error("[album] could not read the browser's guest:", describeError(error));
+    return null;
+  }
 }
 
 /**
@@ -130,7 +147,7 @@ function AlbumHeadBody({ sharing }: { sharing: Sharing }) {
           {open ? "Live album" : "Album"} · {couple.hashtag}
         </p>
         <h1 className="m-0 font-script text-[54px] leading-[1.1] font-normal sm:text-6xl">Capture it with us</h1>
-        {open ? <SharingAs /> : sharing.state === "pending" ? <div aria-hidden className="h-5 w-44 rounded-full bg-white/10" /> : null}
+        {sharing.state === "open" ? <SharingAs ownGuest={sharing.ownGuest} /> : sharing.state === "pending" ? <div aria-hidden className="h-5 w-44 rounded-full bg-white/10" /> : null}
       </div>
       {sharing.state === "closed" ? (
         sharing.phase === "after" ? (

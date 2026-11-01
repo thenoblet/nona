@@ -59,7 +59,18 @@ describe("phoneSearchKeys", () => {
 });
 
 describe("plainName", () => {
-  it.each(["Ama Owusu", "Akosua Ɔfori-Atta", "Ámà Owusu-Ansah", "Ama\u0301 Owusu", "Nana Yaa O'Neil", "J. Doe", "Kwame Mensah Jr."])(
+  it.each([
+    "Ama Owusu",
+    "Akosua Ɔfori-Atta",
+    "Ámà Owusu-Ansah",
+    "Ama\u0301 Owusu",
+    "Nana Yaa O'Neil",
+    "J. Doe",
+    "Kwame Mensah Jr.",
+    // A couple's reply (Ruling CH): & and , can't make a link or an address.
+    "Mr & Mrs Mensah",
+    "Mensah, Kofi",
+  ])(
     "keeps %s, a plain name",
     (name) => {
       expect(plainName(name)).toBe(name);
@@ -77,6 +88,8 @@ describe("plainName", () => {
     "a.b.c",
     "пример.рф",
     "Call 024 000 0000",
+    "a&b.com",
+    "Kofi & Ama, evil.example",
     "A".repeat(61),
   ])("refuses %s, which could read as a link, an address or a number", (name) => {
     expect(plainName(name)).toBeNull();

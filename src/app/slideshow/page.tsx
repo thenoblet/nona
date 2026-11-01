@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { Suspense } from "react";
+import { describeError } from "@/lib/log-error";
 import { albumUrl, qrSvg } from "@/lib/qr";
 import { PauseMusic } from "@/components/slideshow/PauseMusic";
 import { Slideshow } from "@/components/slideshow/Slideshow";
@@ -11,9 +13,10 @@ export const metadata: Metadata = {
 };
 
 /**
- * Guests' newest photos. Landscape screens (the venue TV, laptops, a phone on its side) get
- * the TV layout with a QR code to the album; portrait phones get the photo full screen.
- * The layout is chosen in CSS (the `tv` variant in globals.css), never from the user agent.
+ * Guests' newest photos and videos (a video by its poster), each shown once the TV delay has passed
+ * (slides.ts). Landscape screens (the venue TV, laptops, a phone on its side) get the TV layout with
+ * a QR code to the album; portrait phones get the photo full screen. The layout is chosen in CSS
+ * (the `tv` variant in globals.css), never from the user agent.
  */
 export default function SlideshowPage() {
   return (
@@ -27,8 +30,22 @@ export default function SlideshowPage() {
 }
 
 async function LiveSlideshow() {
-  const [slides, qr] = await Promise.all([loadSlides(), albumQr()]);
+  await connection();
+  const [slides, qr] = await Promise.all([slidesOrNone(), albumQr()]);
   return <Slideshow slides={slides} qrSvg={qr} />;
+}
+
+/**
+ * The latest slides, or none when the album can't be read: the slideshow then shows its empty
+ * screen and asks again every 30 s, as it does when a refresh fails, rather than an error page.
+ */
+async function slidesOrNone() {
+  try {
+    return await loadSlides();
+  } catch (error) {
+    console.error("[slideshow] could not read the album:", describeError(error));
+    return [];
+  }
 }
 
 async function albumQr() {

@@ -22,7 +22,7 @@ vi.mock("@/lib/data/guests", async (importOriginal) => {
 });
 
 import { guestCookieName, readGuestIds, signGuestIds } from "@/lib/guests/cookie";
-import { POST } from "./route";
+import { PATCH, POST } from "./route";
 
 const URL_BASE = "https://example.com/api/guest";
 
@@ -30,6 +30,10 @@ function post(body: unknown = {}) {
   return POST(
     new Request(URL_BASE, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   );
+}
+
+function patch(body: unknown, contentType = "application/json") {
+  return PATCH(new Request(URL_BASE, { method: "PATCH", headers: { "Content-Type": contentType }, body: JSON.stringify(body) }));
 }
 
 async function guestCount(): Promise<number> {
@@ -196,11 +200,51 @@ describe("POST /api/guest", () => {
     expect(output).not.toContain("Secret Name");
   });
 
+  it("never renames the browser's guest with a name it's sent, and answers the guest's own name (Ruling CG)", async () => {
+    const { guestId } = await (await post({ displayName: "Ama Owusu" })).json();
+    const again = await post({ displayName: "Kofi" });
+    expect(await again.json()).toMatchObject({ guestId, displayName: "Ama Owusu" });
+    expect((await findGuestById(guestId))?.displayName).toBe("Ama Owusu");
+  });
+
   it("starts a new own guest when the browser's cookie names one that is gone", async () => {
     browserCookies.values.set(guestCookieName(), signGuestIds([randomUUID()]));
     const response = await post({ displayName: "Akosua" });
     expect(response.status).toBe(200);
     const { guestId } = await response.json();
     expect(await readGuestIds()).toEqual([guestId]);
+  });
+});
+
+describe("PATCH /api/guest (Change, Ruling CG)", () => {
+  it("renames the browser's own guest, uncached, and leaves the cookie", async () => {
+    const { guestId } = await (await post({ displayName: "Kofi" })).json();
+    const setsBefore = browserCookies.sets.length;
+    const response = await patch({ displayName: " Kofi Boateng " });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ guestId, displayName: "Kofi Boateng" });
+    expect((await findGuestById(guestId))?.displayName).toBe("Kofi Boateng");
+    expect(browserCookies.sets).toHaveLength(setsBefore);
+  });
+
+  it("leaves the name for a blank one", async () => {
+    const { guestId } = await (await post({ displayName: "Kofi" })).json();
+    expect(await (await patch({ displayName: "  " })).json()).toEqual({ guestId, displayName: "Kofi" });
+  });
+
+  it("answers 204 for a browser without a guest, making none and setting no cookie", async () => {
+    const response = await patch({ displayName: "Kofi" });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await guestCount()).toBe(0);
+    expect(browserCookies.sets).toHaveLength(0);
+  });
+
+  it("refuses anything but JSON with 415, and a body without a name with 400, renaming nothing", async () => {
+    const { guestId } = await (await post({ displayName: "Kofi" })).json();
+    expect((await patch({ displayName: "Ama" }, "text/plain")).status).toBe(415);
+    for (const body of [{}, { displayName: 42 }, { displayName: null }]) expect((await patch(body)).status).toBe(400);
+    expect((await findGuestById(guestId))?.displayName).toBe("Kofi");
   });
 });

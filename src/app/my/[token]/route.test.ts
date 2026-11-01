@@ -76,14 +76,28 @@ describe("GET /my/[token]", () => {
     expect(await readGuestIds()).toEqual([]);
   });
 
-  it("silently adds the linked guest after a browser's own, which stays first, and opens its uploads", async () => {
-    const [own, linked] = [await createGuest("Kofi"), await createGuest("Ama")];
-    sendCookie([own.id]);
+  it("asks a browser with its own, different guest to confirm too, changing nothing: opening a link never adopts (Ruling CG)", async () => {
+    const [own, remembered, linked] = [await createGuest("Kofi"), await createGuest("Yaw"), await createGuest("Ama")];
+    for (const ids of [[own.id], [own.id, linked.id, remembered.id]]) {
+      sendCookie(ids);
+      const response = await open(linked.linkToken);
+      expect(response.status).toBe(302);
+      expect(response.headers.get("Location")).toBe(`/my/${linked.linkToken}/confirm`);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(browserCookies.sets).toHaveLength(0);
+      expect(await readGuestIds()).toEqual(ids);
+    }
+  });
+
+  it("opens the uploads of a browser whose own guest is the linked one, changing nothing", async () => {
+    const [linked, remembered] = [await createGuest("Ama"), await createGuest("Yaw")];
+    sendCookie([linked.id, remembered.id]);
     const response = await open(linked.linkToken);
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("/album?view=mine");
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(await readGuestIds()).toEqual([own.id, linked.id]);
+    expect(browserCookies.sets).toHaveLength(0);
+    expect(await readGuestIds()).toEqual([linked.id, remembered.id]);
   });
 
   it("asks to confirm when the browser's cookie is forged, as if it had none", async () => {
@@ -171,13 +185,30 @@ describe("POST /my/[token], from the confirm page", () => {
     expect(await guestCount()).toBe(2);
   });
 
-  it("never replaces a browser's own guest, whichever is chosen", async () => {
+  it('"Yes, that\'s me" on a browser that already shared makes the linked guest its own from now on, its earlier guest remembered first (Ruling CG)', async () => {
+    const [own, remembered, linked] = [await createGuest("Kofi"), await createGuest("Yaw"), await createGuest("Ama")];
+    sendCookie([own.id, remembered.id]);
+    const response = await choose(linked.linkToken, "yes");
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/album?view=mine");
+    expect(await readGuestIds()).toEqual([linked.id, own.id, remembered.id]);
+    // Nobody's uploads move and no guest is merged or made.
+    expect(await guestCount()).toBe(3);
+    expect((await findGuestById(own.id))?.displayName).toBe("Kofi");
+  });
+
+  it('"Yes, that\'s me" on a browser whose own guest is the linked one changes nothing', async () => {
+    const [linked, remembered] = [await createGuest("Ama"), await createGuest("Yaw")];
+    sendCookie([linked.id, remembered.id]);
+    expect((await choose(linked.linkToken, "yes")).status).toBe(303);
+    expect(await readGuestIds()).toEqual([linked.id, remembered.id]);
+  });
+
+  it('"No, I\'m someone else" on a browser with its own guest keeps it first and remembers the linked one beside it', async () => {
     const [own, linked] = [await createGuest("Kofi"), await createGuest("Ama")];
-    for (const choice of ["yes", "no"]) {
-      sendCookie([own.id]);
-      expect((await choose(linked.linkToken, choice)).status).toBe(303);
-      expect(await readGuestIds()).toEqual([own.id, linked.id]);
-    }
+    sendCookie([own.id]);
+    expect((await choose(linked.linkToken, "no")).status).toBe(303);
+    expect(await readGuestIds()).toEqual([own.id, linked.id]);
     expect(await guestCount()).toBe(2);
   });
 

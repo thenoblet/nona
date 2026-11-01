@@ -26,13 +26,13 @@ export function posterKeys(mediaId: string): Record<string, string> {
 /**
  * Inserts an album item, by default a ready photo listed at `listedAt` (now, by the database's
  * clock, when not given), and returns its id. A listed time may be given to the microsecond as
- * text ("2026-12-05 18:00:05.123456+00").
+ * text ("2026-12-05 18:00:05.123456+00"), or as so many seconds before now by the database's clock.
  */
 export async function addAlbumItem(
-  overrides: Partial<AlbumRow> & { listedAtText?: string } = {},
+  overrides: Partial<AlbumRow> & { listedAtText?: string; listedSecondsAgo?: number } = {},
 ): Promise<string> {
   const id = overrides.id ?? randomUUID();
-  const { listedAtText, ...row } = overrides;
+  const { listedAtText, listedSecondsAgo, ...row } = overrides;
   const kind = row.kind ?? "photo";
   const status = row.status ?? "ready";
   const listed = status === "ready";
@@ -57,7 +57,11 @@ export async function addAlbumItem(
       thumbhash: status === "ready" ? "1QcSHQRnh493V4dIh4eXh1h4kJUI" : null,
       averageColor: status === "ready" ? "#a08070" : null,
       ...row,
-      listedAt: listedAtText ? sql`${listedAtText}::timestamptz` : (row.listedAt ?? (listed ? sql`clock_timestamp()` : null)),
+      listedAt: listedAtText
+        ? sql`${listedAtText}::timestamptz`
+        : listedSecondsAgo !== undefined
+          ? sql`clock_timestamp() - make_interval(secs => ${listedSecondsAgo})`
+          : (row.listedAt ?? (listed ? sql`clock_timestamp()` : null)),
     } as AlbumRow);
   return id;
 }
