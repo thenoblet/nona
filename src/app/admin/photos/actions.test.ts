@@ -139,6 +139,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await afterResponse();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await Promise.all(itemsMade.splice(0).map((mediaId) => deleteManifest(mediaId).catch(() => {})));
 });
 
@@ -402,7 +403,6 @@ describe("with the couple", () => {
 
     const lines = logged.mock.calls.map((call) => call.join(" ")).filter((line) => line.includes("TV delay"));
     expect(lines).toEqual(["[moderation] TV delay set to 60 s by an admin", "[moderation] TV delay reset to the default by an admin"]);
-    vi.unstubAllEnvs();
   });
 
   it("saves the TV delay from 0 to 900 seconds, which the slideshow's cache then drops, and refuses anything else", async () => {

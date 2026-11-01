@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { dbConfig } from "@/lib/env";
+import { resetDb } from "../../../test/db";
 import { runMigrations } from "./migrate";
 
 const sql = postgres({ ...dbConfig(), max: 1 });
@@ -38,7 +39,7 @@ describe("runMigrations", () => {
     // From an empty album, analysed as empty, whatever an earlier run (the e2e's included) left
     // behind: a few rows, or the statistics they leave after a truncate, make a sort of them look
     // cheaper than the index's order, and the plan would show it.
-    await sql`truncate media cascade`;
+    await resetDb();
     await sql`analyze media`;
     const plan = await sql.begin(async (transaction) => {
       // The test table is nearly empty, so make the planner show what it would do with a full one.

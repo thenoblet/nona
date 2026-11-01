@@ -287,6 +287,40 @@ test.describe("the switches", () => {
     }
   });
 
+  test("the confirm's yes waits until the switch's state is read again, so it can't change under a click", async ({ browser, baseURL }) => {
+    const context = await couple(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await page.goto("/admin/photos");
+      await page.waitForLoadState("networkidle");
+      // Hold the page's re-read (its RSC request) until the test lets it go.
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let reread = false;
+      await page.route("**/admin/photos**", async (route) => {
+        const headers = route.request().headers();
+        if (headers["rsc"] === "1" && !headers["next-router-prefetch"]) {
+          reread = true;
+          await held;
+        }
+        await route.continue();
+      });
+      await page.getByRole("switch", { name: "Uploads" }).click();
+      const card = page.locator('[data-switch="uploads"]');
+      await expect(card.getByText("Close uploads?")).toBeVisible();
+      await expect.poll(() => reread).toBe(true);
+      const yes = card.getByRole("button", { name: "Close uploads" });
+      await expect(yes).toBeDisabled();
+      await expect(card.getByRole("button", { name: "Cancel" })).toBeEnabled();
+      release();
+      await expect(yes).toBeEnabled();
+      await page.unroute("**/admin/photos**");
+      await card.getByRole("button", { name: "Cancel" }).click();
+    } finally {
+      await context.close();
+    }
+  });
+
   test("Convert backlog videos shows its hint and confirm copy, and turns the real switch off and on", async ({ browser, baseURL }) => {
     const context = await couple(browser, baseURL);
     try {
@@ -342,6 +376,8 @@ test.describe("the switches", () => {
       await expect(card.getByText("Default", { exact: true })).toBeVisible();
       await expect(card.getByRole("button", { name: "Use the default" })).toHaveCount(0);
       await expect(card.getByLabel("Seconds")).toHaveValue("180");
+      // The button that had focus is gone: focus is on the seconds, still in the card.
+      await expect(card.getByLabel("Seconds")).toBeFocused();
       expect(await setting("slideshow_delay_seconds")).toBeUndefined();
     } finally {
       await context.close();

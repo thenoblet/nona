@@ -96,13 +96,16 @@ function backlogModel(waiting: number): SwitchModel {
  * switch doesn't move until the confirm's yes; Cancel or Escape leaves it. Its state is always the
  * server's, read again as the confirm opens and as it closes (the other admin may have flipped it
  * since this page loaded, and the question follows), and after the change; a change to where it
- * already stood says so.
+ * already stood says so. The yes waits while the confirm's re-read is under way, so the question
+ * and its button can't change under a click.
  */
 function SwitchCard({ model, on, testId }: { model: SwitchModel; on: boolean; testId: string }) {
   const questionId = useId();
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [switching, startSwitching] = useTransition();
+  // The re-read as the confirm opens: pending until the page has the switch's state from the server.
+  const [rereading, startRereading] = useTransition();
   const router = useRouter();
   const switchButton = useRef<HTMLButtonElement>(null);
   const cancelButton = useRef<HTMLButtonElement>(null);
@@ -120,8 +123,9 @@ function SwitchCard({ model, on, testId }: { model: SwitchModel; on: boolean; te
 
   function open() {
     setConfirming(true);
-    // Re-read the switch as the confirm opens: the question follows what is true now.
-    router.refresh();
+    // Re-read the switch as the confirm opens: the question follows what is true now, and the yes
+    // waits for it.
+    startRereading(() => router.refresh());
   }
 
   function close() {
@@ -185,7 +189,13 @@ function SwitchCard({ model, on, testId }: { model: SwitchModel; on: boolean; te
           <p id={questionId}>{question}</p>
           <p>{detail}</p>
           <div className="admin-confirm-actions">
-            <button type="button" className="admin-btn admin-btn-small admin-btn-primary" disabled={switching} onClick={flip}>
+            <button
+              type="button"
+              className="admin-btn admin-btn-small admin-btn-primary"
+              disabled={switching || rereading}
+              aria-busy={rereading || undefined}
+              onClick={flip}
+            >
               {switching ? "Saving…" : yes}
             </button>
             <button ref={cancelButton} type="button" className="admin-btn admin-btn-small" disabled={switching} onClick={cancel}>
@@ -224,6 +234,7 @@ function TvDelayCard({ seconds, saved, defaultSeconds }: { seconds: number; save
   const [notice, setNotice] = useState<Notice | null>(null);
   const [saving, startSaving] = useTransition();
   const [resetting, startResetting] = useTransition();
+  const secondsField = useRef<HTMLInputElement>(null);
   const typed = draft.trim();
   const value = /^\d{1,3}$/.test(typed) ? Number(typed) : Number.NaN;
   const valid = Number.isInteger(value) && value >= 0 && value <= DELAY_MAX_SECONDS;
@@ -260,7 +271,11 @@ function TvDelayCard({ seconds, saved, defaultSeconds }: { seconds: number; save
       } catch {
         result = { ok: false, error: NOT_SAVED };
       }
-      if (result.ok) setDraft(String(defaultSeconds));
+      if (result.ok) {
+        setDraft(String(defaultSeconds));
+        // Use the default goes away with the saved delay: focus stays in the card, on the seconds.
+        secondsField.current?.focus();
+      }
       setNotice(
         result.ok
           ? { text: `Back to the default. New moments reach the TV ${defaultSeconds === 0 ? "at once" : `after ${delayWords(defaultSeconds)}`}.`, tone: "ok" }
@@ -283,6 +298,7 @@ function TvDelayCard({ seconds, saved, defaultSeconds }: { seconds: number; save
         <div className={`admin-field${notice?.tone === "bad" ? " admin-field-invalid" : ""}`}>
           <label htmlFor={inputId}>Seconds</label>
           <input
+            ref={secondsField}
             id={inputId}
             name="seconds"
             type="number"
