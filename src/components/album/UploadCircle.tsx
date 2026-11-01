@@ -12,7 +12,8 @@ import { isBusy, type UploadSnapshot } from "./uploader/state";
  * morph). Once everything has arrived (Ruling BJ) the ring completes, an ember disc pops, its tick
  * draws, one ember pulse goes out, and about 2 s later the circle fades away.
  *
- * A failure looks like an error notice (Ruling BK): the ring closes in red, a solid red badge with a
+ * A failure looks like an error notice (Ruling BK): the ring turns red (filling on with the others'
+ * bytes while they send, full once none is), a solid red badge with a
  * white "!" sits on it, it shakes once as the failure arrives, and a small red-tinted label beside
  * it says "1 didn't send · Tap to see" until the guest taps. With reduced motion the ring jumps, and
  * there is no shake, pop, draw, pulse or fade (the site's reduced-motion rules stop them).
@@ -57,6 +58,16 @@ export function circleOf(snapshot: Pick<UploadSnapshot, "view">): CircleState | 
         ? `Show uploads, ${didntSend}`
         : `Show uploads, ${percent}% sent${failedCount > 0 ? `, ${didntSend}` : ""}`,
   };
+}
+
+/**
+ * The ring: ember, filling with the bytes sent. Once a file has failed it turns red, and still fills
+ * with what the others send while they do; only when nothing is sending is it a full red ring, so
+ * even a lone file that failed before its first byte shows one.
+ */
+export function ringOf(circle: CircleState): { filled: number; tone: "ember" | "alert" } {
+  if (circle.failedCount === 0) return { filled: circle.percent, tone: "ember" };
+  return { filled: circle.sending ? circle.percent : 100, tone: "alert" };
 }
 
 /** What a screen reader hears as the circle's news comes in: each quarter sent, a failure, then the end. */
@@ -128,6 +139,7 @@ export function UploadCircle({
 
   if (phase === "gone" || !circle) return null;
   const state = done ? "done" : failed ? "failed" : "sending";
+  const ring = ringOf(circle);
   const single = circle.centre.endsWith("%");
   return (
     <div className={`flex items-center gap-2 transition-[opacity,scale] duration-300 ${phase === "fading" ? "scale-90 opacity-0" : ""}`}>
@@ -147,13 +159,12 @@ export function UploadCircle({
             cy="28"
             r={RADIUS}
             fill="none"
-            stroke={failed ? "var(--color-alert)" : "var(--color-ember)"}
+            stroke={ring.tone === "alert" ? "var(--color-alert)" : "var(--color-ember)"}
             strokeWidth="3"
             strokeLinecap="round"
             strokeDasharray={CIRCUMFERENCE}
-            // A failure closes the ring in red, whatever was sent (even nothing, for a lone file).
-            strokeDashoffset={failed ? 0 : CIRCUMFERENCE * (1 - circle.percent / 100)}
-            className={`upload-ring ${circle.percent > 0 || failed ? "" : "opacity-0"}`}
+            strokeDashoffset={CIRCUMFERENCE * (1 - ring.filled / 100)}
+            className={`upload-ring ${ring.filled > 0 ? "" : "opacity-0"}`}
           />
         </svg>
         {/* Only what is still sending; a failure is the red ring's, the badge's and the label's to say. */}

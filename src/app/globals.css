@@ -412,11 +412,19 @@
  */
 ::view-transition-group(upload-morph),
 ::view-transition-group(upload-morph-offer),
-::view-transition-group(upload-morph-below) {
-  /* One curve for the glide, the rounding and what follows: set by the morph (Upload.tsx). */
+::view-transition-group(upload-morph-below),
+::view-transition-group(upload-morph-dock) {
+  /* One curve for the glide, the rounding, what follows and the dock: set by the morph (Upload.tsx). */
   animation-duration: var(--upload-morph-duration, 550ms);
   animation-timing-function: var(--upload-morph-easing, cubic-bezier(0.65, 0, 0.35, 1));
 }
+/*
+ * Groups stack in the old page's paint order, which puts the album (after the card) above the
+ * card's shape: the shape is lifted over what follows it, all the way into its corner, and the
+ * music's dock stays above them all.
+ */
+::view-transition-group(upload-morph) { z-index: 1; }
+::view-transition-group(upload-morph-dock) { z-index: 2; }
 ::view-transition-group(upload-morph) {
   overflow: clip;
   background: #fff;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { circleOf, milestoneOf } from "./UploadCircle";
+import { circleOf, milestoneOf, ringOf } from "./UploadCircle";
 import { createUploadStore, UPLOAD_WORDS } from "./uploader/state";
 
 /*
@@ -92,5 +92,32 @@ describe("the floating progress circle", () => {
     store.update(failed.id, { status: "sending", percent: 50, failure: null });
     expect(circleOf(store.getSnapshot())).toMatchObject({ percent: 67, centre: "1", failedCount: 0, sending: true });
     expect(milestoneOf(circleOf(store.getSnapshot())!)).toBe("Uploads: 50% sent.");
+  });
+
+  it("turns the ring red on a failure, filling on with the others' bytes while they send, and full once none is", () => {
+    const { store } = storeWithPreviews();
+    const [video, photo] = pick(store, "gallery", picked("clip.mp4", "video/mp4", 3_000_000), picked("a.jpg", "image/jpeg", 1_000_000));
+    store.update(video.id, { status: "sending", percent: 30 });
+    // 0.9 MB of the 4 MB on their way.
+    expect(ringOf(circleOf(store.getSnapshot())!)).toEqual({ filled: 23, tone: "ember" });
+
+    // The photo fails before a byte: red at once, still filling with the video's progress (its 0.9 MB of 3 MB).
+    store.update(photo.id, { status: "failed", failure: connectionDropped });
+    expect(ringOf(circleOf(store.getSnapshot())!)).toEqual({ filled: 30, tone: "alert" });
+    store.update(video.id, { status: "sending", percent: 60 });
+    expect(ringOf(circleOf(store.getSnapshot())!)).toEqual({ filled: 60, tone: "alert" });
+
+    // Nothing left sending: a full red ring.
+    store.update(video.id, { status: "added", percent: 100 });
+    expect(ringOf(circleOf(store.getSnapshot())!)).toEqual({ filled: 100, tone: "alert" });
+  });
+
+  it("gives a lone file that failed before its first byte a full red ring, not an empty one", () => {
+    const { store } = storeWithPreviews();
+    const [shot] = pick(store, "photo", picked("a.jpg", "image/jpeg", 1_000_000));
+    store.update(shot.id, { status: "failed", failure: connectionDropped });
+    const circle = circleOf(store.getSnapshot())!;
+    expect(circle).toMatchObject({ percent: 0, sending: false, failedCount: 1 });
+    expect(ringOf(circle)).toEqual({ filled: 100, tone: "alert" });
   });
 });

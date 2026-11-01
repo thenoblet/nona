@@ -537,8 +537,13 @@ test.describe("uploading from the phone", () => {
       const [removedSize, hiddenSize] = await Promise.all([removed, hidden].map(async (path) => (await stat(path)).size));
       expect(removedSize).not.toBe(hiddenSize);
       const sent = await mediaOf(guestId);
-      const first = sent.find((row) => Number(row.size_bytes) === removedSize)!;
-      const second = sent.find((row) => Number(row.size_bytes) === hiddenSize)!;
+      const firstMatch = sent.find((row) => Number(row.size_bytes) === removedSize);
+      const secondMatch = sent.find((row) => Number(row.size_bytes) === hiddenSize);
+      // A miss says so plainly, rather than as a property of undefined.
+      expect(firstMatch).toBeDefined();
+      expect(secondMatch).toBeDefined();
+      const first = firstMatch!;
+      const second = secondMatch!;
       // The guest removes the first; the couple hide the second.
       expect((await page.request.post(`/api/media/${first.id}/remove`)).status()).toBe(200);
       await sql`update media set hidden_at = now(), hidden_by = 'couple' where id = ${second.id}`;
