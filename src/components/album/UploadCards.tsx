@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { cameraCaption, isBusy, thumbOf, UPLOAD_WORDS, type UploadItem, type UploadStatus, type UploadView } from "./uploader/state";
+import { useServerThumb } from "./uploader/server-thumb";
 
 /*
  * The cards under the album's header while a guest shares (gate A): the camera card for one shot,
@@ -102,6 +103,8 @@ function Track({
 function Preview({ item, className, iconSize }: { item: UploadItem; className: string; iconSize: number }) {
   const [localFailed, setLocalFailed] = useState(false);
   const thumb = thumbOf(item, localFailed);
+  // Only an icon to show: once the file is added, the server's own thumbnail (Ruling BB).
+  useServerThumb(item, !item.previewUrl || localFailed);
   if (thumb.kind === "icon") {
     return (
       <span data-thumb="icon" className={`${className} grid place-items-center bg-blush text-mocha/60`}>

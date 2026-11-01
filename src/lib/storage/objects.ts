@@ -274,6 +274,28 @@ export async function presignGet(
 }
 
 /**
+ * A presigned GET for a derived file in the public bucket (a video's phone version, a HEIC's JPEG),
+ * downloaded under `filename`: its public URL can't name the file, and a guest's download should
+ * arrive as NONA26-…, not video.mp4. DOWNLOAD_URL_SECONDS long.
+ */
+export async function presignDerivedDownload(
+  key: string,
+  options: { filename: string; expiresInSeconds: number },
+): Promise<string> {
+  const { filename, expiresInSeconds } = options;
+  if (!Number.isInteger(expiresInSeconds) || expiresInSeconds < 1 || expiresInSeconds > MAX_LINK_SECONDS) {
+    throw new RangeError(
+      `expiresInSeconds must be a whole number from 1 to ${MAX_LINK_SECONDS}, not ${expiresInSeconds}`,
+    );
+  }
+  return getSignedUrl(
+    storageClient(),
+    new GetObjectCommand({ Bucket: publicBucket(), Key: assertDerivedKey(key), ResponseContentDisposition: attachment(filename) }),
+    { expiresIn: expiresInSeconds },
+  );
+}
+
+/**
  * Writes a derived file to the public bucket, cached for good. The body may be bytes or a stream
  * of unknown length; a large one goes up in 5 MiB parts, four at a time, each part's request under
  * the client's timeouts. There is no overall deadline: pass a signal (the job's) to end it.

@@ -80,7 +80,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
               todayLabel={todayLabel}
               now={current ? { title: current.title, place: scheduleItemPlace(current, venues).replace(", Tepa", "") } : null}
             />
-            <LiveAlbum />
+            <LiveAlbum now={now.getTime()} />
             <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule}
               venues={venues}
               liveUrl={live.show ? live.url : null}

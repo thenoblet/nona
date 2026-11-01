@@ -5,6 +5,7 @@ import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { errorMessage } from "@/lib/log-error";
 import { workerConfig, type WorkerConfig } from "./config";
 import { convertHandler } from "./jobs/convert";
+import { jpegHandler } from "./jobs/jpeg";
 import { photoHandler } from "./jobs/photo";
 import { playableHandler } from "./jobs/playable";
 import { posterHandler } from "./jobs/poster";
@@ -30,18 +31,19 @@ try {
 const jobQueue = () => getBoss(config.queuePoolSize);
 
 /**
- * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash; media.poster,
- * a video's probe and poster; media.playable, a clean copy of a video's own streams, which the album
- * plays an H.264 video from; media.convert, an H.264 version of a video every phone can play (on
- * demand at once, the backlog while its switch is on); and media.visibility, deleting a hidden item's
- * public files and purging them from Cloudflare (CF_PURGE_TOKEN and CF_ZONE_ID). A queue with none
- * yet keeps its jobs waiting, unfailed (Ruling AA), until the release that brings its handler:
- * - media.jpeg: Task 15, a HEIC's full-size JPEG, on its first download;
+ * Each queue's handler: media.photo, a photo's thumbnail, viewing size and ThumbHash; media.jpeg, an
+ * iPhone photo's full-size JPEG, on its first download; media.poster, a video's probe and poster;
+ * media.playable, a clean copy of a video's own streams, which the album plays an H.264 video from;
+ * media.convert, an H.264 version of a video every phone can play (on demand at once, the backlog
+ * while its switch is on); and media.visibility, deleting a hidden item's public files and purging
+ * them from Cloudflare (CF_PURGE_TOKEN and CF_ZONE_ID). A queue with none yet keeps its jobs
+ * waiting, unfailed (Ruling AA), until the release that brings its handler:
  * - media.wish: Task 16, a voice or video wish's recording;
  * - media.card: Task 19, a site photo's link-preview card.
  */
 const handlers: MediaHandlers = {
   [MEDIA_QUEUES.photo]: photoHandler({ heifMemoryBytes: config.heifMemoryBytes, heifThreads: config.threads.heif, jobQueue }),
+  [MEDIA_QUEUES.jpeg]: jpegHandler({ heifMemoryBytes: config.heifMemoryBytes, heifThreads: config.threads.heif, jobQueue }),
   [MEDIA_QUEUES.poster]: posterHandler({
     ffmpegMemoryBytes: config.ffmpegMemoryBytes,
     posterThreads: config.threads.poster,

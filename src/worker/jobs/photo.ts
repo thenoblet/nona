@@ -64,7 +64,7 @@ const MAX_OTHER_PIXELS = 100_000_000;
  * within 366 MiB of address space (a 48 MP one within 271 MiB), far inside WORKER_HEIF_MEMORY_BYTES's
  * 2 GiB, and writes a baseline JPEG that sharp then decodes at a 174 MiB peak (a detailed 200 MP one).
  */
-const MAX_HEIF_PIXELS = MAX_JPEG_PIXELS;
+export const MAX_HEIF_PIXELS = MAX_JPEG_PIXELS;
 const HEIC_JPEG_QUALITY = 95;
 /** heif-dec's time limit unless the options say otherwise: it takes about a second for a 12 MP photo. */
 const HEIC_DECODE_MILLISECONDS = 60_000;
@@ -76,7 +76,7 @@ const MAX_HEIF_IMAGES = 8;
  * Scratch room beyond the original: a HEIC's decoded JPEG, which at 210 MP and quality 95 (3 bytes
  * a pixel at worst) stays under this.
  */
-const DECODED_JPEG_BYTES = 1024 * 1024 * 1024;
+export const DECODED_JPEG_BYTES = 1024 * 1024 * 1024;
 
 /** What the job takes from the worker's settings. */
 export type PhotoOptions = {
@@ -90,8 +90,11 @@ export type PhotoOptions = {
   jobQueue: JobQueue;
 };
 
-/** Where and how a job runs libheif's tools. */
-type HeifContext = PhotoOptions & { folder: string; signal: AbortSignal };
+/** Where and how a job runs libheif's tools (media.jpeg's too). */
+export type HeifContext = Pick<PhotoOptions, "heifMemoryBytes" | "heifThreads" | "heifDecodeMilliseconds"> & {
+  folder: string;
+  signal: AbortSignal;
+};
 
 /** One of a HEIF's top-level images, as heif-info lists it. */
 export type HeifImage = { width: number; height: number; primary: boolean };
@@ -106,7 +109,7 @@ type Derived = Stills & {
 };
 
 /** The first bytes of a file, for its magic numbers. */
-async function readHead(path: string): Promise<Uint8Array> {
+export async function readHead(path: string): Promise<Uint8Array> {
   const file = await open(path, "r");
   try {
     const { buffer, bytesRead } = await file.read(Buffer.alloc(PHOTO_TYPE_HEAD_BYTES), 0, PHOTO_TYPE_HEAD_BYTES, 0);
@@ -211,9 +214,10 @@ async function heifImages(original: string, context: HeifContext): Promise<HeifI
 /**
  * Decodes a HEIC with heif-dec into a JPEG beside it, upright. heif-dec (libheif 1.23) has no way
  * to decode the primary image alone: it writes one JPEG per top-level image, numbered in
- * heif-info's order when there are several, and the one wanted is the primary's.
+ * heif-info's order when there are several, and the one wanted is the primary's. media.jpeg uses it
+ * too, for a HEIC's full-size JPEG: the same checks, caps and failures.
  */
-async function decodeHeic(original: string, context: HeifContext): Promise<string> {
+export async function decodeHeic(original: string, context: HeifContext): Promise<string> {
   const images = await heifImages(original, context);
   const output = join(context.folder, "decoded.jpg");
   // Its threads from WORKER_HEIF_THREADS, never libheif's own 4 tiles at once (Ruling R).

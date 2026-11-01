@@ -7,8 +7,9 @@ import type { MediaFilter, MediaItem } from "./types";
 export { isVisible } from "@/lib/media/rows";
 
 /**
- * STUB, below. A fixed set of sample uploads built from the couple's photos, until the album
- * (Task 15) and the slideshow and home counts (Task 20) read the media table.
+ * STUB, below. A fixed set of sample uploads built from the couple's photos, until the slideshow
+ * and the after-the-wedding counts (Task 20) read the media table. The album reads it already
+ * (src/lib/media/album.ts, Task 15).
  */
 
 /** The stand-in "this phone" so My uploads has something to show. */

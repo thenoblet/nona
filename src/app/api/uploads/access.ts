@@ -34,6 +34,21 @@ export async function browserGuests(bucket: RateLimitBucket): Promise<BrowserGue
   return { ok: true, guestIds };
 }
 
+export type ViewerGuests = { ok: true; guestIds: string[] } | { ok: false; response: Response };
+
+/**
+ * Every guest this browser knows (its own first), for what anyone may look at (the album, a
+ * moment, a download): a browser without a guest is let through with none; one with a guest takes a
+ * request from its own guest's bucket, and past its limit gets the 429 with Retry-After. Never by IP.
+ */
+export async function viewerGuests(bucket: RateLimitBucket): Promise<ViewerGuests> {
+  const guestIds = await readGuestIds();
+  if (guestIds.length === 0) return { ok: true, guestIds };
+  const { allowed, retryAfterSeconds } = takeToken(guestIds[0], bucket);
+  if (!allowed) return { ok: false, response: rateLimitedResponse(retryAfterSeconds) };
+  return { ok: true, guestIds };
+}
+
 /** The upload, when one of the browser's guests uploaded it; null otherwise (one primary-key read). */
 export async function ownedUpload(mediaId: string, guestIds: string[]): Promise<UploadRow | null> {
   if (!isUuid(mediaId)) return null;

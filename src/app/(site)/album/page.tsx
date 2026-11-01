@@ -5,12 +5,13 @@ import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
 import { getSiteContent } from "@/lib/content/get";
-import { listMedia, SAMPLE_DEVICE } from "@/lib/data/media";
+import { personalLink, readGuestIds } from "@/lib/guests/cookie";
 import { describeError } from "@/lib/log-error";
+import { albumStats, listAlbum } from "@/lib/media/album";
 import { readUploadsSwitch, UPLOADS_GRACE_MILLISECONDS } from "@/lib/media/uploads-switch";
 import { resolveMode } from "@/lib/mode";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
-import { PillLink, TextLink } from "@/components/ui/Button";
+import { Halo } from "@/components/ui/Halo";
 import { Icon } from "@/components/ui/Icon";
 import { AlbumBrowser } from "@/components/album/AlbumBrowser";
 import { SharingAs } from "@/components/album/SharingAs";
@@ -29,7 +30,11 @@ export const metadata: Metadata = {
   },
 };
 
-/** The shared album the table QR codes open. Phone layout first; the grid widens on larger screens. */
+/**
+ * The shared album the table QR codes open. Phone layout first; the grid widens on larger screens.
+ * The header holds the share buttons and, under them, the slideshow (gate B screen 7, option A);
+ * Wishes stays top right.
+ */
 export default function AlbumPage({ searchParams }: PageProps<"/album">) {
   return (
     <main className="min-h-dvh bg-blush pb-28">
@@ -47,33 +52,44 @@ export default function AlbumPage({ searchParams }: PageProps<"/album">) {
           <Suspense fallback={<AlbumHeadBody sharing={{ state: "pending" }} />}>
             <AlbumHead searchParams={searchParams} />
           </Suspense>
+          <SlideshowRow />
         </PhoneHeader>
 
         {/* Empty (and hidden) until the guest sends something. */}
         <div className="relative mx-auto -mt-3.5 w-full max-w-xl px-4 empty:hidden sm:px-8">
           <UploadProgress />
         </div>
-      </UploadProvider>
 
-      {/* Marked so it slides with the upload card as the card morphs into its circle and back. */}
-      <div data-upload-below className="mx-auto w-full max-w-3xl px-4 sm:px-8">
-        <Suspense fallback={<GridSkeleton />}>
-          <AlbumMedia />
-        </Suspense>
-
-        <div className="mt-7 mb-9 flex flex-wrap items-center justify-center gap-x-6.5 gap-y-3">
-          <PillLink href="/slideshow" variant="cocoa">
-            <span className="flex items-center gap-2.5">
-              <Icon name="slideshow" size={15} className="text-ember" />
-              Watch the slideshow
-            </span>
-          </PillLink>
-          <TextLink href="/wishes" className="text-cocoa">
-            Wishes wall
-          </TextLink>
+        {/* Marked so it slides with the upload card as the card morphs into its circle and back. */}
+        <div data-upload-below className="mx-auto w-full max-w-3xl px-4 sm:px-8">
+          <Suspense fallback={<GridSkeleton />}>
+            <AlbumMedia searchParams={searchParams} />
+          </Suspense>
         </div>
-      </div>
+      </UploadProvider>
     </main>
+  );
+}
+
+/**
+ * Gate B screen 7, option A: one quiet row under the share buttons, seen on arrival. Not prefetched:
+ * it sits in view as the page loads, and the slideshow's code shouldn't spend a guest's mobile data
+ * before they ask for it.
+ */
+function SlideshowRow() {
+  return (
+    <Link
+      href="/slideshow"
+      prefetch={false}
+      className="mt-4 flex min-h-14 items-center gap-3 border-t border-white/10 pt-3 text-white no-underline"
+    >
+      <Halo icon="slideshow" tone="dark" />
+      <span className="flex min-w-0 flex-1 flex-col gap-px">
+        <span className="font-serif text-xl leading-[1.15] italic">Watch the slideshow</span>
+        <span className="truncate text-xs text-mist">Everyone&apos;s moments, one after another</span>
+      </span>
+      <Icon name="forward" size={18} className="shrink-0 text-ember" />
+    </Link>
   );
 }
 
@@ -145,14 +161,41 @@ function AlbumHeadBody({ sharing }: { sharing: Sharing }) {
   );
 }
 
-/** Read at request time so new uploads show up. */
-async function AlbumMedia() {
+/**
+ * The album's first page, read at request time with the browser's own guests (their moments read
+ * as theirs, and only they see theirs not ready yet), the album's counts, and the guest's personal
+ * link for My uploads. When the album can't be read, it says so and the header still shows.
+ */
+async function AlbumMedia({ searchParams }: Pick<PageProps<"/album">, "searchParams">) {
   await connection();
-  const [{ celebrations }, items] = await Promise.all([getSiteContent(), listMedia()]);
-  // TODO: identify this phone with a device cookie instead of the sample device.
-  // TODO: ask for the latest list every 30 s, as the slideshow does (pollSlides in
-  // src/components/slideshow/feed.ts), so new uploads appear without a reload.
-  return <AlbumBrowser celebrations={celebrations} items={items} myDevice={SAMPLE_DEVICE} />;
+  const [{ view }, guestIds] = await Promise.all([searchParams, readGuestIds()]);
+  const mine = view === "mine";
+  const album = await Promise.all([
+    getSiteContent(),
+    listAlbum({ viewerGuestIds: guestIds, mine }),
+    albumStats(guestIds),
+    guestIds[0] ? personalLink(guestIds[0]) : Promise.resolve(null),
+  ]).catch((error: unknown) => {
+    console.error("[album] could not read the album:", describeError(error));
+    return null;
+  });
+  if (!album) {
+    return (
+      <p className="mt-6 mb-0 rounded-[var(--radius-paper)] bg-white px-5 py-9 text-center font-serif text-xl text-mocha italic shadow-[var(--shadow-paper)]">
+        The album can&apos;t load right now. Try again in a minute.
+      </p>
+    );
+  }
+  const [{ celebrations }, firstPage, stats, link] = album;
+  return (
+    <AlbumBrowser
+      celebrations={celebrations.map((celebration) => celebration.id)}
+      firstPage={firstPage}
+      startMine={mine}
+      stats={stats}
+      personalLink={link}
+    />
+  );
 }
 
 function GridSkeleton() {
