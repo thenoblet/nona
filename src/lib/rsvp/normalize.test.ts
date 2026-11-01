@@ -78,7 +78,7 @@ describe("plainName", () => {
     "пример.рф",
     "Call 024 000 0000",
     "A".repeat(61),
-  ])("refuses %s, which could read as a link, an address or a message", (name) => {
+  ])("refuses %s, which could read as a link, an address or a number", (name) => {
     expect(plainName(name)).toBeNull();
   });
 });
