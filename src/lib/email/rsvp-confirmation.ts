@@ -6,16 +6,9 @@ import { buildIcs, celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ic
 import { celebrationPlace } from "@/lib/content/place";
 import type { SiteContent } from "@/lib/content/schema";
 import type { RsvpRecord } from "@/lib/data/types";
+import { plainName } from "@/lib/rsvp/normalize";
 
 const SUBJECT = "Your reply to Noblet & Nancy";
-
-/** Only a plain name is echoed back: the address is unverified, so a link must not ride along. */
-function greetingName(fullName: string): string | null {
-  // A period only ends an initial or suffix ("J. Doe", "Jr."), so "bit.ly" is not a name.
-  const plain =
-    fullName.length <= 60 && /^(?:[\p{L}\p{M}' -]|\.(?= |$))+$/u.test(fullName);
-  return plain ? fullName : null;
-}
 
 /** "05" reads as "5"; a day the couple wrote some other way is shown as written. */
 const dayOfMonth = (day: string) => (/^\d+$/.test(day) ? String(Number(day)) : day);
@@ -29,13 +22,17 @@ const stubFor = (weekday: string, day: string, month: string) => ({
 
 /**
  * The confirmation email for a reply, rendered from the template in `src/emails`. The same reply
- * always renders the same bytes (the calendar file is stamped with the reply's time), so a retry
- * under the same idempotency key sends exactly what the first try did.
+ * always renders the same bytes (the calendar file is stamped with the reply's time, and the
+ * personal link is the reply's guest's, read from the database), so a retry under the same
+ * idempotency key sends exactly what the first try did. `personalLink` shows only to a guest
+ * coming to at least one celebration; without one (a reply sent before personal links) the email
+ * is as it always was.
  */
 export async function renderRsvpConfirmation(
   rsvp: RsvpRecord,
   content: SiteContent,
   siteUrl: string,
+  personalLink: string | null = null,
 ): Promise<{ subject: string; text: string; html: string; ics: string | null }> {
   const answered = content.celebrations.filter(
     (celebration) => rsvp.answers[celebration.id],
@@ -45,7 +42,7 @@ export async function renderRsvpConfirmation(
   );
   const celebrations: ConfirmationCelebration[] = answered.map((celebration) => {
     const comingTo = rsvp.answers[celebration.id] === "yes";
-    const { place, gpsLine } = celebrationPlace(celebration, content.venues);
+    const { place, gps } = celebrationPlace(celebration, content.venues);
     return {
       id: celebration.id,
       name: celebration.name,
@@ -53,7 +50,7 @@ export async function renderRsvpConfirmation(
       stub: stubFor(celebration.weekday, celebration.day, celebration.month),
       time: celebration.time,
       place,
-      gpsLine,
+      gps,
       placeDetail: celebration.placeDetail,
       attending: comingTo,
       googleCalendarUrl: comingTo
@@ -65,9 +62,11 @@ export async function renderRsvpConfirmation(
   const html = unwrapOutlookOnly(
     await render(
       createElement(RsvpConfirmation, {
-        guestName: greetingName(rsvp.fullName),
+        // Only a plain name is echoed back: the address is unverified, so a link must not ride along.
+        guestName: plainName(rsvp.fullName),
         celebrations,
         siteUrl,
+        personalLink,
       }),
     ),
   );

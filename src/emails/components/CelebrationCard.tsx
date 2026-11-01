@@ -14,8 +14,8 @@ export type ConfirmationCelebration = {
   time: string;
   /** "BN 111 Katakyie St, Tepa". */
   place: string;
-  /** "GhanaPost GPS · AX-0084-3317", or null while the venue's GPS is still to confirm. */
-  gpsLine: string | null;
+  /** The GhanaPost GPS label and code ("GhanaPost GPS · ", "AX-0084-3317"), or null while the venue's GPS is still to confirm. */
+  gps: { label: string; code: string } | null;
   /** An extra note under the GPS line, such as "Main hall, upstairs". */
   placeDetail?: string;
   attending: boolean;
@@ -103,10 +103,13 @@ export function CelebrationCard({ celebration }: { celebration: ConfirmationCele
             {celebration.time}
             <br />
             {celebration.place}
-            {celebration.gpsLine ? (
+            {celebration.gps ? (
               <>
                 <br />
-                <span style={{ whiteSpace: "nowrap" }}>{celebration.gpsLine}</span>
+                {/* Free to wrap on a narrow phone, but only before the code: the code stays whole (it
+                    would break at its hyphens otherwise), so a guest can read it off as written. */}
+                {celebration.gps.label}
+                <span style={{ whiteSpace: "nowrap" }}>{celebration.gps.code}</span>
               </>
             ) : null}
             {celebration.placeDetail ? (

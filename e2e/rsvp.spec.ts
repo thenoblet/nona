@@ -1,8 +1,22 @@
-import { expect, test, type APIRequestContext, type Browser, type Locator, type Page } from "@playwright/test";
+import { randomBytes } from "node:crypto";
+import { expect, test, type APIRequestContext, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import postgres from "postgres";
+import sharp from "sharp";
 import { rsvp as builtInRsvp } from "../src/content/wedding";
 import { TEST_DB_ENV } from "../test/env";
 import { ACCESS_HEADER, accessToken } from "./cloudflare-access";
+
+// The e2e server is a production build, so the guest cookie carries the __Host- prefix.
+const GUEST_COOKIE = "__Host-nona_guest";
+
+/** The phone's own guest, as the uploader asks for it before its first upload. */
+async function ownGuestOf(phone: BrowserContext): Promise<string> {
+  const response = await phone.request.post("/api/guest", { data: {} });
+  expect(response.ok()).toBe(true);
+  return (await response.json()).guestId;
+}
+
+const moments = (page: Page) => page.getByRole("main").getByRole("list", { name: "Moments" });
 
 function testDb() {
   return postgres({
@@ -65,6 +79,99 @@ test("a second reply is kept beside the first, and the guest is told nothing abo
     expect(rows.map((row) => row.superseded_at)).toEqual([null, null]);
   } finally {
     await sql.end();
+  }
+});
+
+test("a reply's own guest is known only through its email: the phone that sent it gets no cookie, and the emailed link keeps the guest's photos together on any phone", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(180_000);
+  const phone = () => browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const [sender, dayPhone, otherPhone] = [await phone(), await phone(), await phone()];
+  const sql = testDb();
+  let guestId: string | undefined;
+  try {
+    const page = await sender.newPage();
+    await page.goto("/rsvp");
+    // A plain name, so the guest takes it (Ruling CC); "E2E …" would not be one.
+    await page.getByLabel("Your full name").fill("Abena Album-Link");
+    await page.getByLabel("Phone or WhatsApp").fill("0244000555");
+    await page.getByLabel("Email").fill("e2e-album-link@example.com");
+    await page.getByRole("radiogroup", { name: /white wedding/i }).getByText("Joyfully accept").click();
+    await page.getByRole("button", { name: "Send my reply" }).click();
+    await expect(page.getByRole("heading", { name: "Thank you" })).toBeVisible();
+
+    // Whoever typed the address never holds the guest its email links to (Ruling CB).
+    expect((await sender.cookies()).filter((cookie) => cookie.name === GUEST_COOKIE)).toEqual([]);
+    const [reply] = await sql`
+      SELECT rsvps.guest_id, guests.link_token, guests.display_name
+      FROM rsvps JOIN guests ON guests.id = rsvps.guest_id
+      WHERE rsvps.email = 'e2e-album-link@example.com'`;
+    expect(reply.display_name).toBe("Abena Album-Link");
+    const replyGuestId: string = reply.guest_id;
+    guestId = replyGuestId;
+
+    // On the day, a phone with no guest opens the emailed link, says "Yes, that's me", and uploads as that guest.
+    const day = await dayPhone.newPage();
+    await day.goto(`/my/${reply.link_token}`);
+    await expect(day.getByRole("heading", { name: "Is this you, Abena Album-Link?" })).toBeVisible();
+    await day.getByRole("button", { name: "Yes, that's me" }).click();
+    await expect(day).toHaveURL(/\/album\?view=mine$/);
+    expect(await ownGuestOf(dayPhone)).toBe(replyGuestId);
+    await day.goto("/album?mode=before");
+    await expect(day.getByRole("main").getByText("Choose photos & videos")).toBeVisible();
+    const photo = await sharp(randomBytes(900 * 600 * 3), { raw: { width: 900, height: 600, channels: 3 } }).jpeg({ quality: 80 }).toBuffer();
+    await day.getByRole("main").getByLabel("Take a photo").setInputFiles({ name: "rsvp-link.jpg", mimeType: "image/jpeg", buffer: photo });
+    await expect(day.getByRole("region", { name: "Your photo" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
+    const [{ id: mediaId }] = await sql`SELECT id FROM media WHERE guest_id = ${replyGuestId}`;
+    await expect.poll(async () => (await sql`SELECT status FROM media WHERE id = ${mediaId}`)[0].status, { timeout: 60_000 }).toBe("ready");
+    await day.goto("/album?mode=before&view=mine");
+    await expect(moments(day).locator(`[data-moment="${mediaId}"]`)).toBeVisible();
+
+    // The same link on another phone brings that upload there too, under My uploads.
+    const other = await otherPhone.newPage();
+    await other.goto(`/my/${reply.link_token}`);
+    await other.getByRole("button", { name: "Yes, that's me" }).click();
+    await expect(other).toHaveURL(/\/album\?view=mine$/);
+    await expect(other.getByRole("main").getByRole("tab", { name: "My uploads" })).toHaveAttribute("aria-selected", "true");
+    await expect(moments(other).locator(`[data-moment="${mediaId}"]`).getByRole("img", { name: "Your upload" })).toBeVisible();
+  } finally {
+    // Later specs count the album's photos.
+    if (guestId) await sql`DELETE FROM media WHERE guest_id = ${guestId}`;
+    await sql.end();
+    for (const context of [sender, dayPhone, otherPhone]) await context.close();
+  }
+});
+
+test("a reply under a name that isn't a plain name gets an unnamed guest: its link's page never shows that text", async ({ browser, baseURL }) => {
+  const [sender, recipient] = [await browser.newContext({ baseURL }), await browser.newContext({ baseURL })];
+  const sql = testDb();
+  try {
+    // Anyone can reply with someone else's address and any name (Ruling CC).
+    const page = await sender.newPage();
+    await page.goto("/rsvp");
+    await page.getByLabel("Your full name").fill("Claim your gift at evil.example");
+    await page.getByLabel("Phone or WhatsApp").fill("0244000666");
+    await page.getByLabel("Email").fill("e2e-not-a-name@example.com");
+    await page.getByRole("radiogroup", { name: /white wedding/i }).getByText("Joyfully accept").click();
+    await page.getByRole("button", { name: "Send my reply" }).click();
+    await expect(page.getByRole("heading", { name: "Thank you" })).toBeVisible();
+
+    const [reply] = await sql`
+      SELECT guests.link_token, guests.display_name
+      FROM rsvps JOIN guests ON guests.id = rsvps.guest_id
+      WHERE rsvps.email = 'e2e-not-a-name@example.com'`;
+    expect(reply.display_name).toBeNull();
+
+    const linked = await recipient.newPage();
+    await linked.goto(`/my/${reply.link_token}`);
+    await expect(linked.getByRole("heading", { name: "Is this your link?" })).toBeVisible();
+    await expect(linked.getByText("evil.example")).toHaveCount(0);
+  } finally {
+    await sql.end();
+    await sender.close();
+    await recipient.close();
   }
 });
 

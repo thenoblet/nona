@@ -3,8 +3,10 @@ import { sql } from "drizzle-orm";
 import postgres from "postgres";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
+import { guests, rsvps } from "@/lib/db/schema";
 import { dbConfig } from "@/lib/env";
 import { resetDb } from "../../../test/db";
+import { findGuestById } from "./guests";
 import type { RsvpInput } from "./types";
 import {
   getRsvp,
@@ -136,6 +138,62 @@ describe("saveRsvp keeps every reply", () => {
     await saveRsvp({ ...base, otherNames: "Kojo Owusu" });
     await saveRsvp({ ...base, answers: { ceremony: "yes", reception: "no", thanks: "no" } });
     expect(await listRsvps()).toHaveLength(3);
+  });
+});
+
+describe("saveRsvp's guest (Ruling CB)", () => {
+  async function guestRows() {
+    return getDb().select().from(guests);
+  }
+
+  it("gives a new reply a guest of its own, named after it, whose link only the reply knows", async () => {
+    const { record } = await saveRsvp({ ...base, fullName: "  Ama Owusu ", email: "ama@example.com" });
+    expect(record.guestId).toEqual(expect.any(String));
+    expect((await getRsvp(record.id))?.guestId).toBe(record.guestId);
+    expect((await findGuestById(record.guestId!))?.displayName).toBe("Ama Owusu");
+    expect(await guestRows()).toHaveLength(1);
+  });
+
+  it.each(["bit.ly/x", "Claim your gift at evil.example", "see http://evil.test", "a@evil.test", "A".repeat(61)])(
+    "leaves the guest of a reply named %s unnamed: only a plain name is shown back (Ruling CC)",
+    async (fullName) => {
+      const { record } = await saveRsvp({ ...base, fullName });
+      expect((await findGuestById(record.guestId!))?.displayName).toBeNull();
+    },
+  );
+
+  it.each(["Akosua Ɔfori-Atta", "Ámà Owusu-Ansah", "Kwame Mensah Jr."])("names the guest of a reply named %s", async (fullName) => {
+    const { record } = await saveRsvp({ ...base, fullName });
+    expect((await findGuestById(record.guestId!))?.displayName).toBe(fullName);
+  });
+
+  it("gives every reply its own guest, the same person's second reply too, and a reply without an email", async () => {
+    const first = await saveRsvp({ ...base, email: "ama@example.com" });
+    const second = await saveRsvp({ ...base, email: "ama@example.com", partySize: "2 people" });
+    const withoutEmail = await saveRsvp({ ...base, fullName: "Kofi Mensah" });
+    const guestIds = [first, second, withoutEmail].map(({ record }) => record.guestId);
+    expect(new Set(guestIds).size).toBe(3);
+    expect(await guestRows()).toHaveLength(3);
+  });
+
+  it("answers the same reply sent again with the first one and its guest, making no second guest", async () => {
+    const sent = await saveRsvp(base);
+    const again = await saveRsvp(base);
+    expect(again.record.id).toBe(sent.record.id);
+    expect(again.record.guestId).toBe(sent.record.guestId);
+    expect(await guestRows()).toHaveLength(1);
+  });
+
+  it("makes one guest for two identical replies sent at once", async () => {
+    await Promise.all([saveRsvp(base), saveRsvp(base)]);
+    expect(await listRsvps()).toHaveLength(1);
+    expect(await guestRows()).toHaveLength(1);
+  });
+
+  it("reads a reply sent before personal links as having no guest", async () => {
+    const { record } = await saveRsvp(base);
+    await getDb().update(rsvps).set({ guestId: null });
+    expect((await getRsvp(record.id))?.guestId).toBeUndefined();
   });
 });
 

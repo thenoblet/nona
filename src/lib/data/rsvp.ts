@@ -4,7 +4,8 @@ import { alias } from "drizzle-orm/pg-core";
 import { EVENT_IDS, type EventId } from "@/lib/content/schema";
 import { getDb } from "@/lib/db/client";
 import { rsvpFlagDismissals, rsvps } from "@/lib/db/schema";
-import { emailKey, nameKey, phoneKey } from "@/lib/rsvp/normalize";
+import { emailKey, nameKey, phoneKey, plainName } from "@/lib/rsvp/normalize";
+import { createGuest } from "./guests";
 import type { RsvpFlag, RsvpInput, RsvpRecord } from "./types";
 
 type Row = typeof rsvps.$inferSelect;
@@ -20,6 +21,7 @@ function toRecord(row: Row, flags: RsvpFlag[] = []): RsvpRecord {
     answers: row.answers,
     otherNames: row.otherNames ?? undefined,
     song: row.song ?? undefined,
+    guestId: row.guestId ?? undefined,
     receivedAt: row.receivedAt.toISOString(),
     supersededAt: row.supersededAt?.toISOString() ?? null,
     emailStatus: row.emailStatus,
@@ -41,6 +43,12 @@ const PEOPLE: Record<string, number> = {
  * minutes of it is a double tap and returns that reply, so it gets no second confirmation email.
  * Only the newest counts: yes, then no, then yes again is three replies. The advisory lock makes
  * two simultaneous submissions for one name run one after the other.
+ *
+ * Each new reply gets a guest of its own, made in the same transaction, whose personal link only
+ * its confirmation email carries (Ruling CB): never the submitting browser's guest, since the email
+ * address is unverified. The guest takes the reply's name only when it is a plain name, as the
+ * email's greeting does (Ruling CC); otherwise it is unnamed, and the link's page asks "Is this your
+ * link?". A double tap keeps the first reply and its guest.
  */
 export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }> {
   const guestName = nameKey(input.fullName);
@@ -75,6 +83,7 @@ export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }
       .limit(1);
     if (newest?.repeated) return { record: toRecord(newest.reply) };
 
+    const guest = await createGuest(plainName(input.fullName), transaction);
     const [created] = await transaction
       .insert(rsvps)
       .values({
@@ -88,6 +97,7 @@ export async function saveRsvp(input: RsvpInput): Promise<{ record: RsvpRecord }
         answers: input.answers,
         otherNames,
         song,
+        guestId: guest.id,
         // The time now, with the lock held, not when the transaction began: a reply that waited
         // for the lock is never dated before the one it waited for.
         receivedAt: sql`clock_timestamp()`,

@@ -12,7 +12,7 @@ Mobile-first: every page is designed for a phone, then widened for larger screen
 |---|---|
 | `/` | Landing page (editorial cover). "Open the invitation" starts the music and opens `/home`. |
 | `/home` | The homepage. The date picks one of three versions: **before** (the invitation), **wedding weekend** (5 and 6 Dec: photo sharing and today's schedule) and **after** (thank you, full album, wishes). |
-| `/rsvp` | Reply form. A confirmation email follows, with calendar files (`/calendar`). |
+| `/rsvp` | Reply form. A confirmation email follows, with calendar files (`/calendar`) and, for a guest who is coming, their personal album link (`/my/<token>`): each reply gets a guest of its own, known only through that email, never the phone that sent it. |
 | `/album` | The shared album the table QR codes open. |
 | `/wishes` | Guestbook: written, voice or video wishes. |
 | `/today` | Wedding-day screen: what's happening now, the schedule, quick actions. |

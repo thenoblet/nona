@@ -37,6 +37,11 @@ export type RsvpFlag = {
 
 export type RsvpRecord = RsvpInput & {
   id: string;
+  /**
+   * The reply's own guest, whose personal link its confirmation carries (Ruling CB); missing for a
+   * reply sent before personal links.
+   */
+  guestId?: string;
   receivedAt: string;
   /** Set when the couple kept another reply over this one; null for a current reply. */
   supersededAt: string | null;

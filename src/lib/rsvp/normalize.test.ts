@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailKey, nameKey, phoneKey, phoneSearchKeys } from "./normalize";
+import { emailKey, nameKey, phoneKey, phoneSearchKeys, plainName } from "./normalize";
 
 describe("nameKey", () => {
   it("ignores case and extra spaces", () => {
@@ -55,5 +55,30 @@ describe("phoneSearchKeys", () => {
   it("is nothing for a number with no digits yet", () => {
     expect(phoneSearchKeys("00")).toEqual([]);
     expect(phoneSearchKeys("+")).toEqual([]);
+  });
+});
+
+describe("plainName", () => {
+  it.each(["Ama Owusu", "Akosua Ɔfori-Atta", "Ámà Owusu-Ansah", "Ama\u0301 Owusu", "Nana Yaa O'Neil", "J. Doe", "Kwame Mensah Jr."])(
+    "keeps %s, a plain name",
+    (name) => {
+      expect(plainName(name)).toBe(name);
+    },
+  );
+
+  it.each([
+    "bit.ly/x",
+    "bit.ly",
+    "Claim your gift at evil.example",
+    "see http://evil.test",
+    "visit www.evil.test",
+    "a@evil.test",
+    "evil.com",
+    "a.b.c",
+    "пример.рф",
+    "Call 024 000 0000",
+    "A".repeat(61),
+  ])("refuses %s, which could read as a link, an address or a number", (name) => {
+    expect(plainName(name)).toBeNull();
   });
 });

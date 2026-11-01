@@ -1,14 +1,24 @@
 import { wedding } from "@/content/wedding";
 import type { Celebration, ScheduleItem, SiteContent, Venue } from "./schema";
 
+/** A venue's GhanaPost GPS: the label written before it, "GhanaPost GPS · ", and the code. */
+export type GhanaPostGps = { label: string; code: string };
+
 /** Where a celebration is held, as guests see it. */
 export type CelebrationPlace = {
   /** "BN 111 Katakyie St, Tepa". */
   place: string;
-  /** "GhanaPost GPS · AX-0084-3317", or null while the venue's GPS is still to confirm. */
+  /**
+   * The GPS label and code apart, for a layout that keeps the code whole (the email's tickets), or
+   * null while the venue's GPS is still to confirm.
+   */
+  gps: GhanaPostGps | null;
+  /** "GhanaPost GPS · AX-0084-3317": the label and code joined, the one place they are; null with `gps`. */
   gpsLine: string | null;
   directionsUrl: string;
 };
+
+const GPS_LABEL = "GhanaPost GPS · ";
 
 /** Details still to confirm are written in square brackets, like "[AS-0000-0000]". */
 const isPlaceholder = (text: string) => /\[.*\]/.test(text);
@@ -22,9 +32,11 @@ const withTown = (venue: Venue) => `${venue.name}, ${wedding.town}`;
  */
 export function celebrationPlace(celebration: Pick<Celebration, "venue">, venues: SiteContent["venues"]): CelebrationPlace {
   const venue = venues[celebration.venue];
+  const gps = isPlaceholder(venue.gps) ? null : { label: GPS_LABEL, code: venue.gps };
   return {
     place: withTown(venue),
-    gpsLine: isPlaceholder(venue.gps) ? null : `GhanaPost GPS · ${venue.gps}`,
+    gps,
+    gpsLine: gps ? `${gps.label}${gps.code}` : null,
     directionsUrl: venue.mapsUrl,
   };
 }

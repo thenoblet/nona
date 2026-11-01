@@ -20,9 +20,15 @@ function toGuest(row: typeof guests.$inferSelect): Guest {
   };
 }
 
-/** A new guest with their own personal-link token: 32 random bytes, URL-safe as it is. */
-export async function createGuest(displayName: string | null): Promise<Guest> {
-  const [row] = await getDb()
+/** Where a guest can be written: the database, or a transaction the guest is made inside. */
+type GuestWriter = Pick<ReturnType<typeof getDb>, "insert">;
+
+/**
+ * A new guest with their own personal-link token: 32 random bytes, URL-safe as it is. Written
+ * inside `writer`'s transaction when one is given, as a reply's own guest is (saveRsvp).
+ */
+export async function createGuest(displayName: string | null, writer: GuestWriter = getDb()): Promise<Guest> {
+  const [row] = await writer
     .insert(guests)
     .values({ displayName: cleanName(displayName), linkToken: randomBytes(32).toString("base64url") })
     .returning();

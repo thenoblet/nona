@@ -44,3 +44,17 @@ export function phoneSearchKeys(typed: string): string[] {
 export function emailKey(email: string): string {
   return email.trim().toLowerCase();
 }
+
+/**
+ * The name as typed when it is a plain name, or null. Plain means letters of any script with their
+ * accents, spaces, apostrophes and hyphens, with a period only to end an initial or a suffix
+ * ("J. Doe", "Jr."), and at most 60 characters. A reply's name is typed by anyone, for an email
+ * address nobody verified, so only a plain name is ever shown back: in the confirmation's greeting
+ * and as the name of the reply's guest on its personal link's page (Ruling CC). Nothing that could
+ * read as a link, an address or a number ("bit.ly/x", "Claim your gift at evil.example") rides along;
+ * words alone pass, so a name is shown as text, never as a link.
+ */
+export function plainName(name: string): string | null {
+  const plain = name.length <= 60 && /^(?:[\p{L}\p{M}' -]|\.(?= |$))+$/u.test(name);
+  return plain ? name : null;
+}

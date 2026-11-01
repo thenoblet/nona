@@ -1,4 +1,4 @@
-import { Button, Container, Head, Heading, Html, Preview, Section, Text } from "react-email";
+import { Button, Column, Container, Head, Heading, Html, Preview, Row, Section, Text } from "react-email";
 import { CelebrationCard, type ConfirmationCelebration } from "./components/CelebrationCard";
 import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
@@ -15,6 +15,11 @@ export type RsvpConfirmationProps = {
   celebrations: ConfirmationCelebration[];
   /** The site's address without a trailing slash, e.g. https://nobletxnancy.com. */
   siteUrl: string;
+  /**
+   * The guest's personal link (https://…/my/<token>), shown only to a guest coming to at least one
+   * celebration; null or left out for a reply sent before personal links.
+   */
+  personalLink?: string | null;
 };
 
 const paragraph = {
@@ -39,10 +44,10 @@ const smallCaps = {
  * The confirmation a guest gets after replying with an email address, as a keepsake: the couple's
  * photo fading into a blush page, the greeting, a ticket for each celebration they answered
  * (Google Calendar links for the ones they're coming to, the calendar file attached beside them),
- * how to change the reply and the couple's sign-off. Rendered by the confirmation job, never in a
- * request.
+ * for a guest who is coming their personal link for the album, how to change the reply and the
+ * couple's sign-off. Rendered by the confirmation job, never in a request.
  */
-export default function RsvpConfirmation({ guestName, celebrations, siteUrl }: RsvpConfirmationProps) {
+export default function RsvpConfirmation({ guestName, celebrations, siteUrl, personalLink }: RsvpConfirmationProps) {
   const comingToAny = celebrations.some((celebration) => celebration.attending);
   const intro = comingToAny
     ? "Thank you for your reply. We can't wait to celebrate with you. Here is what we have for you."
@@ -67,7 +72,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl }: R
             <Container style={{ maxWidth: "600px" }}>
               <Header siteUrl={siteUrl} />
 
-              <Section className="nn-pad" style={{ padding: "4px 40px 0" }}>
+              <Section tdClassName="nn-pad" style={{ padding: "4px 40px 0" }}>
                 <Heading
                   as="h1"
                   style={{
@@ -86,7 +91,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl }: R
                 <Text style={{ ...paragraph, margin: "10px auto 0", maxWidth: "440px" }}>{intro}</Text>
               </Section>
 
-              <Section className="nn-pad" style={{ padding: "32px 34px 0" }}>
+              <Section tdClassName="nn-pad" style={{ padding: "32px 34px 0" }}>
                 {celebrations.map((celebration) => (
                   <CelebrationCard key={celebration.id} celebration={celebration} />
                 ))}
@@ -97,7 +102,9 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl }: R
                 ) : null}
               </Section>
 
-              <Section className="nn-pad" style={{ padding: "36px 40px 0", textAlign: "center" }}>
+              {comingToAny && personalLink ? <PersonalLinkCard link={personalLink} /> : null}
+
+              <Section tdClassName="nn-pad" style={{ padding: "36px 40px 0", textAlign: "center" }}>
                 <Text style={{ ...paragraph, margin: "0 0 20px", fontSize: "16px", lineHeight: "26px" }}>
                   Need to change something? Send a new reply with the same name and phone or email.
                 </Text>
@@ -115,6 +122,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl }: R
                   Change my reply
                 </Button>
                 <Text
+                  className="nn-sign"
                   style={{
                     margin: "42px 0 0",
                     textAlign: "center",
@@ -125,7 +133,7 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl }: R
                     color: colours.emberInk,
                   }}
                 >
-                  {/* Too long for a narrow screen, it breaks after "With love,". */}
+                  {/* Too long for a narrow screen, it breaks after "With love,"; on a phone it is a little smaller (nn-sign). */}
                   With love, <span style={{ whiteSpace: "nowrap" }}>Noblet &amp; Nancy</span>
                 </Text>
                 <Text style={{ ...smallCaps, margin: "10px 0 0", textAlign: "center", color: colours.mocha }}>
@@ -138,6 +146,62 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl }: R
         </Section>
       </body>
     </Html>
+  );
+}
+
+/**
+ * The guest's personal link for the day, as a card like the album's own "Your personal link": the
+ * same name, so the guest knows it again there, and a button that opens it. The plain text keeps
+ * the heading, the line and the link's address.
+ */
+function PersonalLinkCard({ link }: { link: string }) {
+  return (
+    <Section tdClassName="nn-pad" style={{ padding: "22px 34px 0" }}>
+      <Section
+        style={{
+          backgroundColor: colours.white,
+          border: `1px solid ${colours.ticket}`,
+          borderRadius: "14px",
+          borderCollapse: "separate",
+        }}
+      >
+        <Row>
+          <Column className="nn-ticket" style={{ padding: "24px 28px 26px", textAlign: "center" }}>
+            <Heading
+              as="h2"
+              style={{
+                margin: 0,
+                textAlign: "center",
+                fontFamily: fonts.serif,
+                fontStyle: "italic",
+                fontWeight: 500,
+                fontSize: "25px",
+                lineHeight: "30px",
+                color: colours.cocoa,
+              }}
+            >
+              Your personal link
+            </Heading>
+            <Text style={{ ...paragraph, margin: "8px auto 18px", maxWidth: "460px", fontSize: "16px", lineHeight: "26px" }}>
+              Use this link on the day to keep your photos together.
+            </Text>
+            <Button
+              href={link}
+              style={{
+                ...smallCaps,
+                fontSize: "11px",
+                padding: "15px 30px",
+                borderRadius: "999px",
+                backgroundColor: colours.ember,
+                color: colours.cocoa,
+              }}
+            >
+              Open my link
+            </Button>
+          </Column>
+        </Row>
+      </Section>
+    </Section>
   );
 }
 
