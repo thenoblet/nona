@@ -1,10 +1,12 @@
-import { COUNTDOWN_FROM, RECORDING_SECONDS, type RecordedKind } from "./recording";
+import { WISH_SECONDS } from "@/lib/media/wish-seconds";
+import { COUNTDOWN_FROM, type RecordedKind } from "./recording";
 
 /*
  * The voice and video recorder's states (gate B, 4a–4d), as a pure transition function the
  * composer keeps in a reducer, so every step is tested apart from the browser:
  *
  *   idle ─tap→ asking ─(voice: started)→ recording ─stop or the limit→ stopping ─recorded→ review
+ *                                          recording ─recorded→ review   (the browser stopped it itself)
  *                     ─(video: granted)→ countdown 3, 2, 1 ─started→ recording
  *                     ─refused→ blocked ─picked→ review   (the phone's own camera or recorder)
  *   review ─again→ idle (or blocked, for a take from the phone's own camera)
@@ -66,9 +68,9 @@ export type RecorderEvent =
 
 export const IDLE: RecorderState = { phase: "idle" };
 
-/** The most a recording of this kind runs, in milliseconds. */
+/** The most a recording of this kind runs, in milliseconds: the limit the worker trims to (WISH_SECONDS). */
 function limitMs(kind: RecordedKind): number {
-  return RECORDING_SECONDS[kind] * 1000;
+  return WISH_SECONDS[kind] * 1000;
 }
 
 /** The recorder's next state. Pure: what to do in the browser follows from the state it returns. */
@@ -89,6 +91,9 @@ export function transition(kind: RecordedKind, state: RecorderState, event: Reco
       return state;
     case "recording": {
       if (event.type === "refused") return { phase: "blocked", why: event.why, pickProblem: null };
+      // The browser stopped the recorder itself (its track ended) before the machine heard a stop:
+      // the take it handed over is kept, never dropped.
+      if (event.type === "recorded") return { phase: "review", take: event.take };
       if (event.type !== "tick" && event.type !== "stop") return state;
       const elapsedMs = Math.min(Math.max(0, event.at - state.startedAt), limitMs(kind));
       // At the limit it stops itself, as gate B's ring runs out.
@@ -118,7 +123,7 @@ export function transition(kind: RecordedKind, state: RecorderState, event: Reco
 
 /** Whole seconds left while recording, as the ring's "0:41 left" counts them; the limit otherwise. */
 export function secondsLeft(kind: RecordedKind, state: RecorderState): number {
-  const limit = RECORDING_SECONDS[kind];
+  const limit = WISH_SECONDS[kind];
   if (state.phase === "stopping") return Math.max(0, Math.ceil(limit - state.elapsedMs / 1000));
   if (state.phase !== "recording") return limit;
   return Math.max(0, Math.ceil(limit - state.elapsedMs / 1000));

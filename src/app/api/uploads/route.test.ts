@@ -364,18 +364,25 @@ describe("an upload, start to finish", () => {
     }
   });
 
-  it("queues a video for its poster and a wish's recording for the wish job", async () => {
+  it("queues a video for its poster, and nothing for a wish's recording until a wish names it (Ruling CE)", async () => {
     await signIn();
-    const cases: [StartBody, MediaQueueName, string][] = [
-      [smallFile({ contentType: "video/quicktime", filename: "IMG_0002.MOV" }), MEDIA_QUEUES.poster, "video"],
-      [smallFile({ purpose: "wish", contentType: "audio/mp4", filename: "wish.m4a" }), MEDIA_QUEUES.wish, "audio"],
-      [smallFile({ purpose: "wish", contentType: "video/mp4", filename: "wish.mp4" }), MEDIA_QUEUES.wish, "video"],
+    const video = await uploadWhole(smallFile({ contentType: "video/quicktime", filename: "IMG_0002.MOV" }));
+    await afterResponse();
+    expect(await jobsFor(MEDIA_QUEUES.poster, video.mediaId)).toHaveLength(1);
+    expect(await mediaRow(video.mediaId)).toMatchObject({ kind: "video", purpose: "album", status: "uploaded" });
+
+    const cases: [StartBody, string][] = [
+      [smallFile({ purpose: "wish", contentType: "audio/mp4", filename: "wish.m4a" }), "audio"],
+      [smallFile({ purpose: "wish", contentType: "video/mp4", filename: "wish.mp4" }), "video"],
     ];
-    for (const [body, queueName, kind] of cases) {
+    for (const [body, kind] of cases) {
       const session = await uploadWhole(body);
       await afterResponse();
-      expect(await jobsFor(queueName, session.mediaId), body.filename).toHaveLength(1);
-      expect(await mediaRow(session.mediaId), body.filename).toMatchObject({ kind, purpose: body.purpose, status: "uploaded" });
+      // Until addWish links it, nothing makes public files of it: an orphan never gets any.
+      for (const queueName of Object.values(MEDIA_QUEUES)) {
+        expect(await jobsFor(queueName as MediaQueueName, session.mediaId), `${body.filename} ${queueName}`).toHaveLength(0);
+      }
+      expect(await mediaRow(session.mediaId), body.filename).toMatchObject({ kind, purpose: "wish", status: "uploaded", derived: {} });
     }
   });
 

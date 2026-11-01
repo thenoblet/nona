@@ -26,12 +26,13 @@ import {
 } from "./video-tools";
 
 /*
- * media.wish (Task 16): a voice or video wish's recording made into what the wishes wall plays. The
- * upload API queues it once the recording has arrived (purpose `wish`); the wish that names it may
- * come a moment later (addWish), and the wall shows it only through that wish. The commands follow
- * the ffmpeg notes, §2.4 and §2.5, binding (Ruling BS). A job:
- * 1. finds an uploaded, visible recording (Ruling AG): anything else, a second delivery included,
- *    does nothing;
+ * media.wish (Task 16): a voice or video wish's recording made into what the wishes wall plays.
+ * Ruling CE: it is queued only once a wish names the recording (addWish, after its response; the
+ * sweeper, for one whose job was lost; an unhide), never when the upload completes, so a recording
+ * whose wish never comes (an orphan) is never made into public files: its original stays private.
+ * The commands follow the ffmpeg notes, §2.4 and §2.5, binding (Ruling BS). A job:
+ * 1. finds an uploaded, visible recording that a wish (not deleted) names (Ruling AG): anything else,
+ *    an orphan or a second delivery included, does nothing;
  * 2. streams the original into its scratch folder, and probes it there (layer 3 of the type checks):
  *    - a voice note must have sound and no moving picture, in one of the containers a phone's
  *      recorder writes (MP4/M4A/3GP, WebM, Ogg, WAV, MP3, AAC, AMR); its cover art, if any, is left;
@@ -119,6 +120,11 @@ export type VoiceFacts = {
   audioCodec: string;
   /** The file's length, when it says (a browser's WebM doesn't). */
   durationSeconds: number | null;
+  /**
+   * Whether that length is only ffprobe's estimate from the bitrate (an MP3, AMR or raw AAC file has
+   * no index to say), too rough to hold the made file to: only its limit is checked then.
+   */
+  durationEstimated: boolean;
 };
 
 export type VoiceCheck =
@@ -151,6 +157,9 @@ function seconds(value: string | undefined): number | null {
   return value !== undefined && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+/** The containers whose length ffprobe estimates from the bitrate: no index says it (ffmpeg's mp3, amr and aac demuxers). */
+const ESTIMATED_LENGTH_FORMATS = new Set(["mp3", "amr", "aac"]);
+
 /** A moving picture: a video stream that isn't cover art, a still image or a track of thumbnails. */
 function isMotionVideo(stream: VoiceStream): boolean {
   const disposition = stream.disposition ?? {};
@@ -178,6 +187,7 @@ export function voiceFactsFrom(probeJson: unknown): VoiceCheck {
       audioStreamIndex: sound.index,
       audioCodec: sound.codec_name as string,
       durationSeconds: seconds(format?.duration) ?? seconds(sound.duration),
+      durationEstimated: ESTIMATED_LENGTH_FORMATS.has(format?.format_name ?? ""),
     },
   };
 }
@@ -403,7 +413,10 @@ async function makeVoice(paths: { original: string; output: string }, run: Video
   const convertMilliseconds = Math.round(performance.now() - startedAt);
   if ((await sizeOf(paths.output)) === 0) throw blameFileFromThirdAttempt("ffmpeg exited 0 but wrote nothing", run.retryCount, run.source);
   const made = await probeMade(paths.output, run);
-  const problem = voiceProblem(made, check.facts.durationSeconds) ?? (await containerProblem(paths.output));
+  // An estimated length can be seconds out on a variable-bitrate MP3: then only the limit is checked
+  // (-xerror already fails a file cut short as it is read).
+  const originalSeconds = check.facts.durationEstimated ? null : check.facts.durationSeconds;
+  const problem = voiceProblem(made, originalSeconds) ?? (await containerProblem(paths.output));
   if (problem) throw blameFileFromThirdAttempt(`ffmpeg exited 0, but ${problem}`, run.retryCount, run.source);
   return {
     path: paths.output,

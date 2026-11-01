@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { Wish, WishRecording } from "@/lib/data/types";
 import { Icon, PauseGlyph, PlayGlyph } from "@/components/ui/Icon";
 import { wishMediaWatch } from "./wish-media-watch";
@@ -93,16 +94,29 @@ function aspectOf(recording: WishRecording): string {
   return String(Math.min(16 / 9, Math.max(4 / 5, ratio)));
 }
 
-/** A video message on the wall: its poster with a play button; tapped, it plays in place with the phone's own controls. */
+/** The poster thumbnail's own size: the picture's shape fitted within 480 px, as the worker made it. */
+export function thumbSizeOf(recording: Pick<WishRecording, "width" | "height">): { width: number; height: number } {
+  const width = recording.width ?? 400;
+  const height = recording.height ?? 500;
+  const scale = Math.min(1, 480 / Math.max(width, height));
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+}
+
+/**
+ * A video message on the wall (fix round 1): until a tap, only its poster's thumbnail, the 480 px
+ * one (about 30 KB), lazily loaded with its size given, on its average colour; no video element
+ * at all, so nothing of the video, and no poster-sized picture, is fetched before a tap, above or
+ * below the fold. Tapped, the video element is made and plays at once, with the phone's controls.
+ */
 export function VideoPlayer({ wish, recording, index }: { wish: Wish; recording: WishRecording; index: number }) {
   const video = useRef<HTMLVideoElement>(null);
   const [started, setStarted] = useState(false);
+  const thumb = thumbSizeOf(recording);
 
   function play() {
-    const element = video.current;
-    if (!element) return;
-    setStarted(true);
-    void element.play().catch(() => {});
+    // The element is made now, inside the tap, so play() is the tap's own (phones allow sound then).
+    flushSync(() => setStarted(true));
+    void video.current?.play().catch(() => {});
   }
 
   return (
@@ -110,28 +124,44 @@ export function VideoPlayer({ wish, recording, index }: { wish: Wish; recording:
       className={`paper-card flex flex-col rounded-[var(--radius-paper)] bg-white px-2 pt-2 ${cardShadow}`}
       style={{ transform: `rotate(${index % 2 ? 0.4 : -0.4}deg)` }}
     >
-      <div className="relative overflow-hidden bg-cocoa" style={{ aspectRatio: aspectOf(recording) }}>
-        <video
-          ref={video}
-          src={recording.url}
-          poster={recording.poster ?? undefined}
-          preload="none"
-          playsInline
-          controls={started}
-          aria-label={`Video message from ${wish.signedAs}`}
-          className={`absolute inset-0 size-full ${started ? "object-contain" : "object-cover"}`}
-        />
-        {started ? null : (
-          <button
-            type="button"
-            onClick={play}
-            aria-label={`Play video message from ${wish.signedAs}`}
-            className="absolute inset-0 flex cursor-pointer items-center justify-center"
-          >
-            <span className="press flex size-14 items-center justify-center rounded-full bg-white/95 text-cocoa shadow-[0_4px_14px_rgb(61_41_39/0.2)]">
-              <PlayGlyph size={18} className="ml-0.5" />
-            </span>
-          </button>
+      <div
+        className="relative overflow-hidden bg-cocoa"
+        style={{ aspectRatio: aspectOf(recording), backgroundColor: started ? undefined : (recording.color ?? undefined) }}
+      >
+        {started ? (
+          <video
+            ref={video}
+            src={recording.url}
+            playsInline
+            controls
+            aria-label={`Video message from ${wish.signedAs}`}
+            className="absolute inset-0 size-full object-contain"
+          />
+        ) : (
+          <>
+            {recording.thumb ? (
+              // eslint-disable-next-line @next/next/no-img-element -- guest media never goes through Next's image optimiser
+              <img
+                src={recording.thumb}
+                alt=""
+                width={thumb.width}
+                height={thumb.height}
+                loading="lazy"
+                decoding="async"
+                className="absolute inset-0 size-full object-cover"
+              />
+            ) : null}
+            <button
+              type="button"
+              onClick={play}
+              aria-label={`Play video message from ${wish.signedAs}`}
+              className="absolute inset-0 flex cursor-pointer items-center justify-center"
+            >
+              <span className="press flex size-14 items-center justify-center rounded-full bg-white/95 text-cocoa shadow-[0_4px_14px_rgb(61_41_39/0.2)]">
+                <PlayGlyph size={18} className="ml-0.5" />
+              </span>
+            </button>
+          </>
         )}
       </div>
       <footer className="flex items-baseline justify-between gap-3 px-2.5 pt-3 pb-3.5">
@@ -150,14 +180,17 @@ export function VideoPlayer({ wish, recording, index }: { wish: Wish; recording:
  */
 export function PendingWish({ wish, index }: { wish: Wish; index: number }) {
   const router = useRouter();
-  const pending = wish.pending;
-  const [state, setState] = useState(pending?.state ?? "processing");
+  const mediaId = wish.pending?.mediaId ?? null;
+  const [state, setState] = useState(wish.pending?.state ?? "processing");
   const [gone, setGone] = useState(false);
+  // The wall is read again once for this card: should the server still say "getting ready" (a
+  // ready recording whose file isn't there), the card waits as it is rather than refresh forever.
+  const refreshed = useRef(false);
 
   useEffect(() => {
-    if (!pending || state !== "processing") return;
+    if (!mediaId || state !== "processing") return;
     let stop: (() => void) | null = null;
-    stop = wishMediaWatch().watch(pending.mediaId, (item) => {
+    stop = wishMediaWatch().watch(mediaId, (item) => {
       if (!item) {
         setGone(true);
         stop?.();
@@ -166,11 +199,13 @@ export function PendingWish({ wish, index }: { wish: Wish; index: number }) {
         stop?.();
       } else if (item.state === "ready") {
         stop?.();
+        if (refreshed.current) return;
+        refreshed.current = true;
         startTransition(() => router.refresh());
       }
     });
     return () => stop?.();
-  }, [pending, state, router]);
+  }, [mediaId, state, router]);
 
   if (gone) return null;
   const what = wish.kind === "video" ? "video" : "voice note";

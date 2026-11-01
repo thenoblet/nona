@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { sendRecordedWish } from "@/app/(site)/wishes/actions";
 import { Icon } from "@/components/ui/Icon";
 import { MorphText } from "@/components/album/UploadCards";
@@ -10,6 +10,7 @@ import { cameraCaption, createUploadStore, UPLOAD_WORDS, type UploadFailure, typ
 import { linkWish } from "./link-wish";
 import type { Take } from "./recorder-machine";
 import type { RecordedKind } from "./recording";
+import { holdTakeUrl, takeUrlOf } from "./take-url";
 
 /*
  * Sending a recorded wish (gate B 4c, Ruling BU), loaded with the recorder: the recording goes up
@@ -35,15 +36,18 @@ const SENT_SHOWS_MILLISECONDS = 1_100;
 
 type Linking = { phase: "waiting" } | { phase: "linking" } | { phase: "done" } | { phase: "failed"; failure: UploadFailure };
 
-/** The card's own store, with the recording on it: purpose wish, a video's picture as its preview. */
+/** The card's own store, with the recording on it, purpose wish. */
 function storeWith(kind: RecordedKind, file: File): { store: UploadStore; itemId: string | null } {
   const store = createUploadStore({
     purpose: "wish",
-    // Only a video's picture is worth a preview; a voice note shows a microphone.
-    previews: { create: (picked) => (kind === "video" ? URL.createObjectURL(picked) : null), revoke: (url) => URL.revokeObjectURL(url) },
+    // The card shows the take through take-url.ts, held while it shows and let go after, so the
+    // store makes no object URL of its own (one it would only revoke on a tidy that never comes).
+    previews: { create: () => null, revoke: () => {} },
     // The card is this one item's: it never tidies away while the guest watches it.
     tidy: { cameraMs: 24 * 60 * 60 * 1000, batchMs: 24 * 60 * 60 * 1000 },
   });
+  // Any source but "gallery" gives the one-file card's captions (gate A's camera card), which is
+  // what this card is, whether it holds a video message or a voice note.
   store.add([file], kind === "video" ? "video" : "photo");
   return { store, itemId: store.getSnapshot().items[0]?.id ?? null };
 }
@@ -53,8 +57,22 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const engine = useRef<Engine | null>(null);
   const linkStarted = useRef(false);
+  const sentTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [linking, setLinking] = useState<Linking>({ phase: "waiting" });
   const [engineFailed, setEngineFailed] = useState(false);
+  const previewUrl = useMemo(() => (kind === "video" ? takeUrlOf(take.file) : null), [kind, take.file]);
+
+  // The take's picture is held while the card shows it.
+  useEffect(() => (kind === "video" ? holdTakeUrl(take.file) : undefined), [kind, take.file]);
+
+  // Gone (sent, recording again, or the page moving on): the uploader and the thank-you's timer go too.
+  useEffect(
+    () => () => {
+      clearTimeout(sentTimer.current);
+      engine.current?.destroy();
+    },
+    [],
+  );
 
   /** Makes the wish of the arrived recording, once at a time. */
   const link = useCallback(
@@ -63,7 +81,7 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
       const state = await linkWish({ kind, mediaId, signedAs }, sendRecordedWish);
       if (state.status === "sent") {
         setLinking({ phase: "done" });
-        setTimeout(() => onSent(state.sent), SENT_SHOWS_MILLISECONDS);
+        sentTimer.current = setTimeout(() => onSent(state.sent), SENT_SHOWS_MILLISECONDS);
       } else if (state.status === "refused") {
         setLinking({ phase: "failed", failure: { reason: "We couldn't send this wish", hint: state.message, canRetry: false } });
       } else if (state.status === "error") {
@@ -73,18 +91,22 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
     [kind, signedAs, onSent],
   );
 
+  /** Loads the upload client (once) and hands it the recording; a load that fails can be tried again. */
+  const startUploading = useCallback(() => {
+    if (!itemId || engine.current || store.get(itemId)?.status !== "queued") return;
+    loadEngineForPick().then(
+      ({ startEngine }) => {
+        if (engine.current) return;
+        engine.current = startEngine(store, { purpose: "wish", guestName: () => signedAs, onPersonalLink: () => {} }, { storage: null });
+        engine.current.pump();
+      },
+      () => setEngineFailed(true),
+    );
+  }, [itemId, store, signedAs]);
+
   // Once: the upload client takes the recording; and the moment the server has it, the wish is made.
   useEffect(() => {
-    if (itemId && store.get(itemId)?.status === "queued" && !engine.current) {
-      loadEngineForPick().then(
-        ({ startEngine }) => {
-          if (engine.current) return;
-          engine.current = startEngine(store, { purpose: "wish", guestName: () => signedAs, onPersonalLink: () => {} }, { storage: null });
-          engine.current.pump();
-        },
-        () => setEngineFailed(true),
-      );
-    }
+    startUploading();
     const arrived = () => {
       const item = itemId ? store.get(itemId) : undefined;
       if (item?.status !== "added" || !item.mediaId || linkStarted.current) return;
@@ -92,13 +114,13 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
       void link(item.mediaId);
     };
     return store.subscribe(arrived);
-  }, [store, itemId, signedAs, link]);
+  }, [store, itemId, link, startUploading]);
 
   const item = snapshot.items.find((candidate) => candidate.id === itemId) ?? null;
   const mediaId = item?.status === "added" ? item.mediaId : null;
 
   const failure: UploadFailure | null = engineFailed
-    ? { reason: UPLOAD_WORDS.notSent, hint: "Check the connection, then try again.", canRetry: false }
+    ? { reason: UPLOAD_WORDS.notSent, hint: "Check the connection, then try again.", canRetry: true }
     : linking.phase === "failed"
       ? linking.failure
       : (item?.failure ?? null);
@@ -117,6 +139,12 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
   const title = failure ? failure.reason : done ? "Sent to the wall" : "Sending your wish";
 
   function tryAgain() {
+    if (engineFailed) {
+      // The upload client didn't load: load it again, the take as it was.
+      setEngineFailed(false);
+      startUploading();
+      return;
+    }
     if (linking.phase === "failed" && mediaId) {
       void link(mediaId);
       return;
@@ -128,9 +156,9 @@ export default function WishSender({ kind, take, signedAs, onSent, onRecordAgain
     <div className="flex flex-col gap-3 pt-1 pb-0.5" aria-live="polite" data-wish-send={status}>
       <div className="flex items-center gap-3">
         <span data-status={status} className="relative -mb-1.5 size-[62px] shrink-0">
-          {kind === "video" && item?.previewUrl ? (
+          {previewUrl ? (
             <video
-              src={`${item.previewUrl}#t=0.1`}
+              src={`${previewUrl}#t=0.1`}
               muted
               playsInline
               preload="metadata"

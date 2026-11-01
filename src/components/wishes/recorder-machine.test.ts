@@ -4,11 +4,9 @@ import {
   declaredRecordingType,
   mediaConstraints,
   pickRecordingType,
-  RECORDING_SECONDS,
   recordingFileName,
   type RecordedKind,
 } from "./recording";
-import { WISH_SECONDS } from "@/lib/media/limits";
 
 /*
  * The voice and video recorder (gate B 4a–4d, Rulings BT and BU), apart from the browser: its
@@ -87,10 +85,6 @@ describe("the recorder's states", () => {
     expect(video.at(-1)).toEqual({ phase: "stopping", elapsedMs: 30_000 });
   });
 
-  it("stops at the same limits the worker trims to", () => {
-    expect(RECORDING_SECONDS).toEqual(WISH_SECONDS);
-  });
-
   it("counts a video message down 3, 2, 1 over the camera before it records", () => {
     const states = run("video", [{ type: "tap" }, { type: "granted" }, { type: "count" }, { type: "count" }, { type: "count" }, { type: "started", at: 9 }]);
     expect(states.map((state) => (state.phase === "countdown" ? state.count : state.phase))).toEqual([
@@ -110,8 +104,8 @@ describe("the recorder's states", () => {
     const blocked = run("video", [{ type: "tap" }, { type: "refused", why: "refused" }]).at(-1) as RecorderState;
     expect(blocked).toEqual({ phase: "blocked", why: "refused", pickProblem: null });
 
-    const refusedPick = transition("video", blocked, { type: "pickRefused", problem: "This video message is over 200 MB, the most a wish takes." });
-    expect(refusedPick).toMatchObject({ phase: "blocked", pickProblem: expect.stringContaining("200 MB") });
+    const refusedPick = transition("video", blocked, { type: "pickRefused", problem: "This video message is over 400 MB, the most a wish takes." });
+    expect(refusedPick).toMatchObject({ phase: "blocked", pickProblem: expect.stringContaining("400 MB") });
 
     const picked = take("picker");
     const review = transition("video", refusedPick, { type: "picked", take: picked });
@@ -130,9 +124,17 @@ describe("the recorder's states", () => {
     expect(transition("voice", { phase: "sending", take: recorded }, { type: "sendFailed" })).toEqual({ phase: "review", take: recorded });
   });
 
+  it("keeps a take the browser handed over while still recording (it stopped the recorder itself)", () => {
+    const recorded = take();
+    expect(transition("video", { phase: "recording", startedAt: 0, elapsedMs: 4_000 }, { type: "recorded", take: recorded })).toEqual({
+      phase: "review",
+      take: recorded,
+    });
+  });
+
   it("ignores events that don't belong where they arrive, and is reset from anywhere", () => {
     const recording: RecorderState = { phase: "recording", startedAt: 0, elapsedMs: 1_000 };
-    for (const event of [{ type: "tap" }, { type: "send" }, { type: "recorded", take: take() }, { type: "another" }] as RecorderEvent[]) {
+    for (const event of [{ type: "tap" }, { type: "send" }, { type: "another" }, { type: "pickRefused", problem: "No" }] as RecorderEvent[]) {
       expect(transition("voice", recording, event), event.type).toBe(recording);
     }
     expect(transition("voice", IDLE, { type: "tick", at: 5 })).toBe(IDLE);

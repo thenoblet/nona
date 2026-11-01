@@ -6,12 +6,6 @@
 
 export type RecordedKind = "voice" | "video";
 
-/**
- * The longest each recording runs, in seconds: the recorder stops itself there (the worker trims
- * anything longer anyway, WISH_SECONDS in limits.ts, which this must match).
- */
-export const RECORDING_SECONDS: Record<RecordedKind, number> = { voice: 60, video: 30 };
-
 /** A video message counts down before it records, so the guest can settle in front of the camera. */
 export const COUNTDOWN_FROM = 3;
 

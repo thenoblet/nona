@@ -855,7 +855,7 @@ describe("wishes", () => {
       derived: { audio: derivedKey(id, "0123456789abcdef", "audio", "m4a") },
       ...mediaValues,
     });
-    const wish = await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [guestId] });
+    const wish = await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [guestId] }, { defer: () => {} });
     if (!wish) throw new Error("addWish refused the recording");
     return { wishId: wish.id, mediaId, guestId };
   }

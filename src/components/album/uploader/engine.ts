@@ -201,6 +201,11 @@ export type Engine = {
   dismiss(itemId: string): void;
   /** Sends again the Cancels an earlier visit couldn't get answered. */
   replayPendingCancels(): Promise<void>;
+  /**
+   * Lets the uploader go once its card has gone (a wish's sending card, Task 16): its timers, its
+   * store subscription, the page guard and Uppy. Nothing it holds is sent after this.
+   */
+  destroy(): void;
 };
 
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -245,6 +250,9 @@ class UploadEngine implements Engine {
   #guarding = false;
   /** When this page last told other tabs it is still sending. */
   #lastSaidSendingAt = 0;
+  /** Lets go of the store's updates (destroy). */
+  #unsubscribe: () => void = () => {};
+  #destroyed = false;
 
   constructor(store: UploadStore, options: EngineOptions, dependencies: EngineDependencies) {
     this.#store = store;
@@ -300,7 +308,7 @@ class UploadEngine implements Engine {
       for (const waiter of this.#onlineWaiters.splice(0)) waiter();
       this.pump();
     });
-    this.#store.subscribe(() => this.#watchSending());
+    this.#unsubscribe = this.#store.subscribe(() => this.#watchSending());
     this.#watchSending();
     this.#environment.onPageHide(() => stopSayingSending(this.#storage));
   }
@@ -375,7 +383,7 @@ class UploadEngine implements Engine {
 
   pump(): void {
     clearTimeout(this.#pumpTimer);
-    if (this.#environment.isOffline()) return;
+    if (this.#destroyed || this.#environment.isOffline()) return;
     const now = Date.now();
     let wakeAt = Number.POSITIVE_INFINITY;
     // Smallest first: a photo picked with a big video is Added in moments, not after the video.
@@ -450,6 +458,21 @@ class UploadEngine implements Engine {
     // Gone for good, even while a start is still on its way: #run holds its own run to finish with,
     // and a Cancel still owed is sent again then (or on the next visit), with nothing on the card.
     this.#runs.delete(itemId);
+  }
+
+  destroy(): void {
+    if (this.#destroyed) return;
+    this.#destroyed = true;
+    clearTimeout(this.#pumpTimer);
+    clearInterval(this.#timeLeftTimer);
+    this.#timeLeftTimer = undefined;
+    this.#unsubscribe();
+    if (this.#guarding) {
+      this.#guarding = false;
+      this.#pageGuard.update(false);
+    }
+    stopSayingSending(this.#storage);
+    this.#uppy.destroy();
   }
 
   async replayPendingCancels(): Promise<void> {

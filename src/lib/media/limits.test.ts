@@ -34,12 +34,12 @@ function refusal(result: UploadCheck): { error: string; message: string } {
 }
 
 describe("the limits", () => {
-  it("are the plan's: photos 50 MB, videos 2 GB, voice wishes 20 MB, video wishes 200 MB", () => {
+  it("are the plan's: photos 50 MB, videos 2 GB, voice wishes 20 MB, video wishes 400 MB (Ruling CD)", () => {
     expect(SIZE_LIMITS).toEqual({
       photo: 50 * MEBIBYTE,
       video: 2 * 1024 * MEBIBYTE,
       voiceWish: 20 * MEBIBYTE,
-      videoWish: 200 * MEBIBYTE,
+      videoWish: 400 * MEBIBYTE,
     });
   });
 
@@ -247,7 +247,7 @@ describe("checkUpload", () => {
     });
     expect(refusal(check({ ...video, purpose: "wish", size: SIZE_LIMITS.videoWish + 1 }))).toEqual({
       error: "too-large",
-      message: "This video message is over 200 MB, the most a wish takes.",
+      message: "This video message is over 400 MB, the most a wish takes.",
     });
     const voice = { purpose: "wish" as const, contentType: "audio/mp4", filename: "wish.m4a" };
     expect(check({ ...voice, size: SIZE_LIMITS.voiceWish })).toMatchObject({ ok: true });

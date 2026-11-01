@@ -421,6 +421,22 @@ describe("a wish's recording (Task 16, Ruling BU: the same upload client)", () =
     expect(guard.updates).toEqual([true, false]);
   });
 
+  it("lets go of everything once destroyed (the sending card has gone): the page guard, and no more sends", async () => {
+    const { server, store, pick, engine, guard } = setUp({ purpose: "wish", storage: null });
+    const [item] = pick([new File([new Uint8Array(MEBIBYTE).fill(4)], "voice-wish.webm", { type: "audio/webm" })], "video");
+    await until(() => itemOf(store, item.id)?.status === "added");
+    const callsBefore = server.calls.length;
+
+    engine.destroy();
+    engine.destroy();
+    store.add([new File([new Uint8Array(MEBIBYTE).fill(5)], "another.webm", { type: "audio/webm" })], "video");
+    engine.pump();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(server.calls.length).toBe(callsBefore);
+    expect(guard.updates.at(-1)).toBe(false);
+  });
+
   it("sends a video message as purpose wish too, and the album's own as album", async () => {
     const wish = setUp({ purpose: "wish", storage: null });
     wish.pick([video(MEBIBYTE, "video-wish.webm")], "video");

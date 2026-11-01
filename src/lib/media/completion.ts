@@ -84,7 +84,11 @@ export function errorName(error: unknown): string | undefined {
   return error instanceof Error ? error.name : undefined;
 }
 
-/** The queue that processes an uploaded item: a wish's recording, a video's poster or a photo. */
+/**
+ * The queue that processes an uploaded item: a wish's recording, a video's poster or a photo. A
+ * wish's recording is sent there only once a wish names it (Ruling CE): by addWish, the sweeper, or
+ * an unhide.
+ */
 export function processingQueue(upload: Pick<UploadRow, "purpose" | "kind">): MediaQueueName {
   if (upload.purpose === "wish") return MEDIA_QUEUES.wish;
   return upload.kind === "video" ? MEDIA_QUEUES.poster : MEDIA_QUEUES.photo;
@@ -102,14 +106,18 @@ export async function recordEvent(upload: UploadRow, kind: UploadEventKind): Pro
 /**
  * Queues the item's processing and records that it completed, after the response. Never throws:
  * an item whose job doesn't get queued (the queue still starting, or down) stays `uploaded`, and
- * the worker's sweeper queues it.
+ * the worker's sweeper queues it. A wish's recording isn't queued here (Ruling CE): it is made only
+ * once a wish names it (addWish sends its job), so a recording whose wish never comes (an orphan)
+ * never has a public file; its original stays private.
  */
 async function announceUploaded(upload: UploadRow): Promise<void> {
-  try {
-    const boss = await getBoss();
-    await boss.send(processingQueue(upload), { mediaId: upload.id });
-  } catch (error) {
-    console.error(`[uploads] could not queue ${upload.id} for processing; the sweeper will:`, describeError(error));
+  if (upload.purpose !== "wish") {
+    try {
+      const boss = await getBoss();
+      await boss.send(processingQueue(upload), { mediaId: upload.id });
+    } catch (error) {
+      console.error(`[uploads] could not queue ${upload.id} for processing; the sweeper will:`, describeError(error));
+    }
   }
   await recordEvent(upload, "completed");
 }

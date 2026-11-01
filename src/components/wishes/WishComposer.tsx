@@ -2,6 +2,7 @@
 
 import { useActionState, useCallback, useReducer, useState, type ComponentType, type FormEvent } from "react";
 import { sendWish, type WishFormState } from "@/app/(site)/wishes/actions";
+import { SIGNATURE_MAX_CHARACTERS, signatureProblem } from "@/lib/data/signature";
 import type { WishKind } from "@/lib/data/types";
 import { PillButton } from "@/components/ui/Button";
 import { Field, TextArea, TextInput } from "@/components/ui/Field";
@@ -21,14 +22,6 @@ const modes: { value: WishKind; label: string }[] = [
 
 const initialState: WishFormState = { status: "idle" };
 
-const MAX_NAME_CHARACTERS = 80;
-
-/** The signature's problem, as the server would say it, or null. */
-function signatureProblem(signedAs: string): string | null {
-  if (!signedAs) return "Please sign your wish with your name.";
-  if ([...signedAs].length > MAX_NAME_CHARACTERS) return `Please keep your name under ${MAX_NAME_CHARACTERS} characters.`;
-  return null;
-}
 
 /**
  * The guestbook form (gate B 4a–4d): write a wish (sent with a Server Action), or record a voice
@@ -152,7 +145,7 @@ export function WishComposer() {
             type="text"
             autoComplete="name"
             required
-            maxLength={MAX_NAME_CHARACTERS}
+            maxLength={SIGNATURE_MAX_CHARACTERS}
             // Keyed so the remembered name fills in once it loads on the phone.
             key={savedName ?? "no-name"}
             defaultValue={state.values?.signedAs ?? savedName ?? ""}

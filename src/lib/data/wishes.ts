@@ -1,7 +1,12 @@
 import "server-only";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import type { PgBoss } from "pg-boss";
 import { getDb } from "@/lib/db/client";
 import { media, wishes } from "@/lib/db/schema";
+import { getBoss } from "@/lib/jobs/boss";
+import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
+import { describeError } from "@/lib/log-error";
+import type { Defer } from "@/lib/media/completion";
 import { clockTime } from "@/lib/media/album-item";
 import { publicUrl } from "@/lib/storage/keys";
 import { isUuid } from "./ids";
@@ -14,7 +19,8 @@ import type { RecordedWishInput, TextWishInput, Wish, WishKind, WishMediaState }
  * Ruling BR: a recorded wish shows to everyone once its recording is ready; while it is being made
  * ready, or once that has failed, only to the guest who sent it (by the guest cookie), so they can
  * see it landed; and a hidden or deleted one never shows. An orphan recording (an upload that
- * completed but whose wish never came) has no wish, so it is on no wall and in no list.
+ * completed but whose wish never came) has no wish, so it is on no wall and in no list; and as only
+ * a linked recording is made (Ruling CE: addWish queues its job), it never has a public file either.
  */
 
 /** The media kind each recorded wish's recording must be. */
@@ -41,6 +47,7 @@ const recordingColumns = {
   durationSeconds: media.durationSeconds,
   width: media.width,
   height: media.height,
+  averageColor: media.averageColor,
   visible: sql<boolean>`${media.hiddenAt} is null and ${media.deletedAt} is null and not ${media.removedByUploader}`,
 };
 
@@ -61,6 +68,7 @@ type RecordingRow = {
   durationSeconds: number | null;
   width: number | null;
   height: number | null;
+  averageColor: string | null;
   visible: boolean;
 };
 
@@ -81,11 +89,17 @@ function toWish(row: WishRow, recording: RecordingRow | null): Wish {
   if (row.kind === "text" || !row.mediaId || !recording) return wish;
   const played = playedKey(row.kind, recording);
   if (recording.status === "ready" && played) {
-    const poster = recording.derived["poster-view"];
+    const thumb = recording.derived["poster-thumb"];
     return {
       ...wish,
       ...(recording.durationSeconds === null ? {} : { duration: clockTime(recording.durationSeconds) }),
-      recording: { url: publicUrl(played), poster: poster ? publicUrl(poster) : null, width: recording.width, height: recording.height },
+      recording: {
+        url: publicUrl(played),
+        thumb: thumb ? publicUrl(thumb) : null,
+        color: recording.averageColor,
+        width: recording.width,
+        height: recording.height,
+      },
     };
   }
   return { ...wish, pending: { mediaId: row.mediaId, state: recording.status === "failed" ? "failed" : "processing" } };
@@ -161,9 +175,14 @@ export function addWish(input: TextWishInput): Promise<Wish>;
  * belongs to one wish (wishes_media_id_unique): asked again for the same one (a send whose answer
  * was lost), it answers the wish it already has when that is this browser's; any other is refused.
  * One statement, so two sends at once make one wish. The wish takes the recording's guest.
+ *
+ * Ruling CE: the recording is made into what the wall plays only now, once a wish names it. The call
+ * that links it sends its media.wish job through `options.defer` (the action's after(), so the
+ * request never waits on the queue); a send asked again, or refused, sends none. A job that can't be
+ * sent is logged: the sweeper queues a linked recording left `uploaded`.
  */
-export function addWish(input: RecordedWishInput): Promise<Wish | null>;
-export async function addWish(input: TextWishInput | RecordedWishInput): Promise<Wish | null> {
+export function addWish(input: RecordedWishInput, options: LinkOptions): Promise<Wish | null>;
+export async function addWish(input: TextWishInput | RecordedWishInput, options?: LinkOptions): Promise<Wish | null> {
   if (input.kind === "text") {
     const [row] = await getDb()
       .insert(wishes)
@@ -193,11 +212,31 @@ export async function addWish(input: TextWishInput | RecordedWishInput): Promise
       and ${visibleRecording}
     on conflict (media_id) where media_id is not null do nothing
     returning id`);
-  const wishId = inserted[0]?.id ?? (await sameSendAgain(mediaId, owners, input.kind));
+  const linked = inserted[0]?.id ?? null;
+  if (linked && options) options.defer(() => sendRecordingJob(mediaId, options));
+  const wishId = linked ?? (await sameSendAgain(mediaId, owners, input.kind));
   if (!wishId) return null;
   const [row] = (await getDb().select(wishColumns).from(wishes).where(eq(wishes.id, wishId)).limit(1)) as WishRow[];
   const [recording] = (await recordingsQuery([mediaId])) as RecordingRow[];
   return row ? toWish(row, recording ?? null) : null;
+}
+
+/** How addWish has a linked recording made (Ruling CE). */
+export type LinkOptions = {
+  /** Runs the job's send after the response: the action passes Next's after(). It never throws. */
+  defer: Defer;
+  /** The queue the job goes to: the app's own unless a test passes its own. */
+  jobQueue?: () => Promise<Pick<PgBoss, "send">>;
+};
+
+/** Sends the linked recording's media.wish job. Never throws: the sweeper queues one left `uploaded`. */
+async function sendRecordingJob(mediaId: string, options: LinkOptions): Promise<void> {
+  try {
+    const queue = options.jobQueue ? await options.jobQueue() : await getBoss();
+    await queue.send(MEDIA_QUEUES.wish, { mediaId });
+  } catch (error) {
+    console.error(`[wishes] could not queue media=${mediaId}'s recording; the sweeper will:`, describeError(error));
+  }
 }
 
 /** The wish this browser already made of the recording, for a send asked again; null for any other. */

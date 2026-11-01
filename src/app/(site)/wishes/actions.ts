@@ -1,10 +1,11 @@
 "use server";
 
 import { refresh } from "next/cache";
+import { after } from "next/server";
 import * as zod from "zod";
 import { isUuid } from "@/lib/data/ids";
+import { signatureProblem } from "@/lib/data/signature";
 import { addWish } from "@/lib/data/wishes";
-import { NAME_MAX_CHARACTERS } from "@/lib/db/schema";
 import { ensureOwnGuest, readGuestIds } from "@/lib/guests/cookie";
 import { takeToken } from "@/lib/guests/rate-limit";
 import { describeError } from "@/lib/log-error";
@@ -19,19 +20,9 @@ export type WishFormState = {
 };
 
 const MAX_MESSAGE = 1000;
-const MAX_NAME = NAME_MAX_CHARACTERS;
 
-const NO_NAME = "Please sign your wish with your name.";
-const LONG_NAME = `Please keep your name under ${MAX_NAME} characters.`;
 const DIDNT_SEND = "Your wish didn't send. Please try again.";
 const TOO_MANY = "You've sent a few wishes just now. Please wait a minute, then send this one.";
-
-/** The signature as kept, or why it can't be. */
-function checkSignature(signedAs: string): string | null {
-  if (!signedAs) return NO_NAME;
-  if ([...signedAs].length > MAX_NAME) return LONG_NAME;
-  return null;
-}
 
 /**
  * Saves a written wish in Postgres and re-renders the page so it appears on the wall. It comes from
@@ -52,8 +43,8 @@ export async function sendWish(_prev: WishFormState, formData: FormData): Promis
   const errors: WishFormState["errors"] = {};
   if (!message) errors.message = "Please write a few words for Noblet and Nancy.";
   else if (message.length > MAX_MESSAGE) errors.message = `Please keep your wish under ${MAX_MESSAGE} characters.`;
-  const signatureProblem = checkSignature(signedAs);
-  if (signatureProblem) errors.signedAs = signatureProblem;
+  const signature = signatureProblem(signedAs);
+  if (signature) errors.signedAs = signature;
   if (errors.message || errors.signedAs) return { status: "error", values, errors };
 
   let wish;
@@ -100,8 +91,8 @@ export async function sendRecordedWish(input: { kind: "voice" | "video"; mediaId
   const parsed = recordedWishInput.safeParse(input);
   if (!parsed.success) return { status: "error", message: DIDNT_SEND };
   const signedAs = parsed.data.signedAs.trim();
-  const signatureProblem = checkSignature(signedAs);
-  if (signatureProblem) return { status: "error", message: signatureProblem };
+  const signature = signatureProblem(signedAs);
+  if (signature) return { status: "error", message: signature };
 
   try {
     const guestIds = await readGuestIds();
@@ -109,7 +100,8 @@ export async function sendRecordedWish(input: { kind: "voice" | "video"; mediaId
     if (guestIds.length === 0 || !isUuid(parsed.data.mediaId)) return { status: "refused", message: REFUSED };
     const { allowed, retryAfterSeconds } = takeToken(guestIds[0], "wish");
     if (!allowed) return { status: "rate-limited", retryAfterSeconds };
-    const wish = await addWish({ kind: parsed.data.kind, mediaId: parsed.data.mediaId, signedAs, guestIds });
+    // Linked, its recording is made now (Ruling CE): the job is sent after the response.
+    const wish = await addWish({ kind: parsed.data.kind, mediaId: parsed.data.mediaId, signedAs, guestIds }, { defer: after });
     if (!wish) return { status: "refused", message: REFUSED };
     refresh();
     return { status: "sent", sent: { id: wish.id, signedAs: wish.signedAs } };

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createGuest } from "@/lib/data/guests";
 import { getDb } from "@/lib/db/client";
 import { media, wishes } from "@/lib/db/schema";
-import { RATE_LIMITS } from "@/lib/guests/rate-limit";
+import { RATE_LIMITS, takeToken } from "@/lib/guests/rate-limit";
 import { resetDb } from "../../../../test/db";
 import { browserCookies } from "../../../../test/next-cookies";
 
@@ -12,6 +12,34 @@ import { browserCookies } from "../../../../test/next-cookies";
 vi.mock("next/headers", () => import("../../../../test/next-cookies"));
 const router = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/cache", () => ({ refresh: router.refresh }));
+
+// after() runs its task once the response is sent; the tests run those tasks when they choose.
+const afterTasks = vi.hoisted(() => [] as (() => unknown)[]);
+vi.mock("next/server", () => ({
+  after: (task: () => unknown) => {
+    afterTasks.push(task);
+  },
+}));
+
+// The job queue, standing in for pg-boss: every job sent, by queue.
+const queue = vi.hoisted(() => ({ sent: [] as { name: string; data: unknown }[] }));
+vi.mock("@/lib/jobs/boss", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/jobs/boss")>();
+  return {
+    ...real,
+    getBoss: async () => ({
+      send: async (name: string, data: unknown) => {
+        queue.sent.push({ name, data });
+        return "job-1";
+      },
+    }),
+  };
+});
+
+/** Runs every task the action handed to after(), as Next does once the response is sent. */
+async function afterResponse(): Promise<void> {
+  for (const task of afterTasks.splice(0)) await task();
+}
 
 import { guestCookieName, readGuestIds, signGuestIds } from "@/lib/guests/cookie";
 import { sendRecordedWish, sendWish, type WishFormState } from "./actions";
@@ -53,6 +81,8 @@ beforeEach(async () => {
   await resetDb();
   browserCookies.clear();
   router.refresh.mockClear();
+  afterTasks.length = 0;
+  queue.sent.length = 0;
   (globalThis as { __nonaRateLimits?: Map<string, number> }).__nonaRateLimits?.clear();
 });
 
@@ -109,6 +139,24 @@ describe("sendRecordedWish: a voice or video wish, after its recording has arriv
     const [row] = await getDb().select().from(wishes);
     expect(row).toMatchObject({ kind: "voice", mediaId, guestId: guest.id, signedAs: "Ama Owusu" });
     expect(router.refresh).toHaveBeenCalledOnce();
+    // Its recording is made now that a wish names it (Ruling CE), once, after the response.
+    expect(queue.sent).toEqual([]);
+    await afterResponse();
+    expect(queue.sent).toEqual([{ name: "media.wish", data: { mediaId } }]);
+  });
+
+  it("has the recording made once even when the phone sends again after a lost answer, and still ends in its processing", async () => {
+    const guest = await createGuest("Ama");
+    asGuests(guest.id);
+    const mediaId = await uploadedRecording(guest.id, "video");
+
+    const first = await sendRecordedWish({ kind: "video", mediaId, signedAs: "Ama" });
+    // The answer is lost on the way back; link-wish.ts asks again.
+    const again = await sendRecordedWish({ kind: "video", mediaId, signedAs: "Ama" });
+    await afterResponse();
+
+    expect(again).toEqual(first);
+    expect(queue.sent).toEqual([{ name: "media.wish", data: { mediaId } }]);
   });
 
   it("refuses a recording that isn't the browser's, or is of the other kind, without a word about whose it is", async () => {
@@ -153,10 +201,9 @@ describe("sendRecordedWish: a voice or video wish, after its recording has arriv
   it("is limited by the browser's own guest: past the wish burst it says how long to wait, and the phone waits it out", async () => {
     const guest = await createGuest("Ama");
     asGuests(guest.id);
-    for (let sent = 0; sent < RATE_LIMITS.wish.burst; sent += 1) {
-      await sendRecordedWish({ kind: "voice", mediaId: randomUUID(), signedAs: "Ama" });
-    }
     const mediaId = await uploadedRecording(guest.id);
+    // The burst used up at once (each send's own database work would let tokens refill meanwhile).
+    for (let sent = 0; sent < RATE_LIMITS.wish.burst; sent += 1) takeToken(guest.id, "wish");
 
     const state = await sendRecordedWish({ kind: "voice", mediaId, signedAs: "Ama" });
 

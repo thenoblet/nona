@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
+import type { PgBoss } from "pg-boss";
 import postgres from "postgres";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { media, wishes } from "@/lib/db/schema";
 import { dbConfig } from "@/lib/env";
@@ -9,9 +10,30 @@ import { publicUrl } from "@/lib/storage/keys";
 import { resetDb } from "../../../test/db";
 import { createGuest } from "./guests";
 import type { Wish } from "./types";
-import { addWish, findOwnWishMedia, listWishes, recordingsQuery, wallQuery } from "./wishes";
+import { addWish, findOwnWishMedia, listWishes, recordingsQuery, wallQuery, type LinkOptions } from "./wishes";
 
-beforeEach(resetDb);
+/**
+ * What addWish is given to send a linked recording's job (Ruling CE): after() as the action passes
+ * it, run at once here, and a job queue that records every job it is sent.
+ */
+const sentJobs: { queue: string; data: unknown }[] = [];
+const recordingQueue = {
+  send: async (queue: string, data?: object | null) => {
+    sentJobs.push({ queue, data });
+    return "job";
+  },
+} as Pick<PgBoss, "send">;
+const linking: LinkOptions = {
+  defer: (task) => {
+    void task();
+  },
+  jobQueue: async () => recordingQueue,
+};
+
+beforeEach(async () => {
+  await resetDb();
+  sentJobs.length = 0;
+});
 
 /** Moves a wish's sending time back, as if it had been sent that many minutes ago. */
 async function sentMinutesAgo(id: string, minutes: number): Promise<void> {
@@ -40,8 +62,8 @@ describe("addWish", () => {
   });
 
   it("refuses a voice or video wish without its recording", async () => {
-    await expect(addWish({ kind: "voice", signedAs: "Ama", mediaId: "", guestIds: [] })).rejects.toThrow();
-    await expect(addWish({ kind: "video", signedAs: "Ama", mediaId: "", guestIds: [] })).rejects.toThrow();
+    await expect(addWish({ kind: "voice", signedAs: "Ama", mediaId: "", guestIds: [] }, linking)).rejects.toThrow();
+    await expect(addWish({ kind: "video", signedAs: "Ama", mediaId: "", guestIds: [] }, linking)).rejects.toThrow();
   });
 
   it("keeps the sending browser's own guest with a written wish", async () => {
@@ -96,6 +118,7 @@ async function recording(
       derived,
       durationSeconds: status === "ready" ? 24.4 : null,
       width: status === "ready" && kind === "video" ? 720 : null,
+      averageColor: status === "ready" && kind === "video" ? "#a08070" : null,
       height: status === "ready" && kind === "video" ? 1280 : null,
       failureReason: status === "failed" ? "corrupt" : null,
       ...values,
@@ -105,7 +128,7 @@ async function recording(
 
 /** A recorded wish, linked as addWish links it; throws if it refuses. */
 async function recordedWish(guestId: string, kind: "voice" | "video", mediaId: string, signedAs = "Ama"): Promise<Wish> {
-  const wish = await addWish({ kind, mediaId, signedAs, guestIds: [guestId] });
+  const wish = await addWish({ kind, mediaId, signedAs, guestIds: [guestId] }, linking);
   if (!wish) throw new Error("addWish refused the recording");
   return wish;
 }
@@ -116,8 +139,8 @@ describe("addWish for a voice or video wish: it links only the sender's own fini
     const voice = await recording(guestId, "audio", "uploaded");
     const video = await recording(guestId, "video", "ready");
 
-    const voiceWish = await addWish({ kind: "voice", mediaId: voice, signedAs: "Ama", guestIds: [guestId] });
-    const videoWish = await addWish({ kind: "video", mediaId: video.toUpperCase(), signedAs: "Kofi", guestIds: [guestId] });
+    const voiceWish = await addWish({ kind: "voice", mediaId: voice, signedAs: "Ama", guestIds: [guestId] }, linking);
+    const videoWish = await addWish({ kind: "video", mediaId: video.toUpperCase(), signedAs: "Kofi", guestIds: [guestId] }, linking);
 
     expect(voiceWish).toMatchObject({ kind: "voice", signedAs: "Ama", pending: { mediaId: voice, state: "processing" } });
     expect(videoWish).toMatchObject({ kind: "video", signedAs: "Kofi", duration: "0:24" });
@@ -136,10 +159,10 @@ describe("addWish for a voice or video wish: it links only the sender's own fini
     const failed = await recording(own, "audio", "failed");
     const theirs = await recording(remembered, "video", "uploaded");
 
-    expect(await addWish({ kind: "voice", mediaId: failed, signedAs: "Ama", guestIds: [own, remembered] })).toMatchObject({
+    expect(await addWish({ kind: "voice", mediaId: failed, signedAs: "Ama", guestIds: [own, remembered] }, linking)).toMatchObject({
       pending: { state: "failed" },
     });
-    expect(await addWish({ kind: "video", mediaId: theirs, signedAs: "Ama", guestIds: [own, remembered] })).not.toBeNull();
+    expect(await addWish({ kind: "video", mediaId: theirs, signedAs: "Ama", guestIds: [own, remembered] }, linking)).not.toBeNull();
   });
 
   it("refuses another guest's recording, an album item, the wrong kind, an unfinished upload, a hidden, removed or deleted one, and nonsense", async () => {
@@ -163,10 +186,10 @@ describe("addWish for a voice or video wish: it links only the sender's own fini
       ["not an id", "not-a-uuid", "voice"],
     ];
     for (const [what, mediaId, kind] of cases) {
-      expect(await addWish({ kind, mediaId, signedAs: "Ama", guestIds: [guestId] }), what).toBeNull();
+      expect(await addWish({ kind, mediaId, signedAs: "Ama", guestIds: [guestId] }, linking), what).toBeNull();
     }
     // A browser with no guest has no recordings.
-    expect(await addWish({ kind: "voice", mediaId: await recording(guestId, "audio"), signedAs: "Ama", guestIds: [] })).toBeNull();
+    expect(await addWish({ kind: "voice", mediaId: await recording(guestId, "audio"), signedAs: "Ama", guestIds: [] }, linking)).toBeNull();
     expect(await getDb().select().from(wishes)).toEqual([]);
   });
 
@@ -177,13 +200,13 @@ describe("addWish for a voice or video wish: it links only the sender's own fini
 
     const first = await recordedWish(guestId, "voice", mediaId);
     const [again, together] = await Promise.all([
-      addWish({ kind: "voice", mediaId, signedAs: "Ama again", guestIds: [guestId] }),
-      addWish({ kind: "voice", mediaId, signedAs: "Ama again", guestIds: [guestId] }),
+      addWish({ kind: "voice", mediaId, signedAs: "Ama again", guestIds: [guestId] }, linking),
+      addWish({ kind: "voice", mediaId, signedAs: "Ama again", guestIds: [guestId] }, linking),
     ]);
 
     expect(again?.id).toBe(first.id);
     expect(together?.id).toBe(first.id);
-    expect(await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [other] })).toBeNull();
+    expect(await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [other] }, linking)).toBeNull();
     expect(await getDb().select({ id: wishes.id }).from(wishes)).toHaveLength(1);
   });
 
@@ -191,10 +214,58 @@ describe("addWish for a voice or video wish: it links only the sender's own fini
     const guestId = await newGuest();
     const mediaId = await recording(guestId, "video", "uploaded");
     const sends = await Promise.all(
-      Array.from({ length: 5 }, () => addWish({ kind: "video", mediaId, signedAs: "Ama", guestIds: [guestId] })),
+      Array.from({ length: 5 }, () => addWish({ kind: "video", mediaId, signedAs: "Ama", guestIds: [guestId] }, linking)),
     );
     expect(new Set(sends.map((wish) => wish?.id)).size).toBe(1);
     expect(await getDb().select({ id: wishes.id }).from(wishes)).toHaveLength(1);
+  });
+});
+
+describe("addWish has a recording made only once it links it (Ruling CE)", () => {
+  it("sends one media.wish job, after the response, for a new link; a duplicate send, and a refusal, send none", async () => {
+    const guestId = await newGuest();
+    const mediaId = await recording(guestId, "audio", "uploaded");
+    const deferred: (() => Promise<void>)[] = [];
+    const later: LinkOptions = { ...linking, defer: (task) => void deferred.push(task) };
+
+    const wish = await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [guestId] }, later);
+    expect(wish).not.toBeNull();
+    // Nothing is sent in the request: only once after() runs.
+    expect(sentJobs).toEqual([]);
+    await Promise.all(deferred.splice(0).map((task) => task()));
+    expect(sentJobs).toEqual([{ queue: "media.wish", data: { mediaId } }]);
+
+    expect((await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [guestId] }, later))?.id).toBe(wish?.id);
+    expect(await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [await newGuest()] }, later)).toBeNull();
+    await Promise.all(deferred.splice(0).map((task) => task()));
+    expect(sentJobs).toHaveLength(1);
+  });
+
+  it("sends one job however many sends race, and none for a recording it refuses", async () => {
+    const guestId = await newGuest();
+    const mediaId = await recording(guestId, "video", "uploaded");
+    await Promise.all(Array.from({ length: 5 }, () => addWish({ kind: "video", mediaId, signedAs: "Ama", guestIds: [guestId] }, linking)));
+    await addWish({ kind: "voice", mediaId: await recording(await newGuest(), "audio", "uploaded"), signedAs: "Ama", guestIds: [guestId] }, linking);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sentJobs).toEqual([{ queue: "media.wish", data: { mediaId } }]);
+  });
+
+  it("never fails the send when the queue is down: the sweeper queues a linked recording", async () => {
+    const guestId = await newGuest();
+    const mediaId = await recording(guestId, "audio", "uploaded");
+    const errors: unknown[] = [];
+    const down: LinkOptions = {
+      defer: (task) => void task().catch((error: unknown) => errors.push(error)),
+      jobQueue: async () => {
+        throw new Error("queue is down");
+      },
+    };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [guestId] }, down)).not.toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(errors).toEqual([]);
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 });
 
@@ -214,11 +285,13 @@ describe("listWishes for recorded wishes (Ruling BR)", () => {
       signedAs: "Ama",
       createdAt: voiceWish.createdAt,
       duration: "0:24",
-      recording: { url: publicUrl(`derived/${voice}/0123456789abcdef/audio.m4a`), poster: null, width: null, height: null },
+      recording: { url: publicUrl(`derived/${voice}/0123456789abcdef/audio.m4a`), thumb: null, color: null, width: null, height: null },
     });
     expect(shown.find((wish) => wish.id === videoWish.id)?.recording).toEqual({
       url: publicUrl(`derived/${video}/0123456789abcdef/video.mp4`),
-      poster: publicUrl(`derived/${video}/0123456789abcdef/poster-view.webp`),
+      // The 480 px thumbnail, never the 1600 px viewing size: the wall loads it lazily (fix round 1).
+      thumb: publicUrl(`derived/${video}/0123456789abcdef/poster-thumb.webp`),
+      color: "#a08070",
       width: 720,
       height: 1280,
     });

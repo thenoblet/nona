@@ -45,7 +45,7 @@ async function sentRecording(guestId: string, status: "uploaded" | "ready" | "fa
       uploadedAt: new Date(),
       derived: status === "ready" ? { audio: `derived/${id}/0123456789abcdef/audio.m4a` } : {},
     });
-  if (link && !(await addWish({ kind: "voice", mediaId: id, signedAs: "Ama", guestIds: [guestId] }))) {
+  if (link && !(await addWish({ kind: "voice", mediaId: id, signedAs: "Ama", guestIds: [guestId] }, { defer: () => {} }))) {
     throw new Error("addWish refused the recording");
   }
   return id;

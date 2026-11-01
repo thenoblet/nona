@@ -82,8 +82,13 @@ export type WishMediaState = "processing" | "ready" | "failed";
 export type WishRecording = {
   /** A voice note's M4A, or a video message's MP4. */
   url: string;
-  /** A video message's poster; null for a voice note. */
-  poster: string | null;
+  /**
+   * A video message's poster at thumbnail size (poster-thumb, 480 px on its long edge, about 30 KB),
+   * which the wall shows lazily until a tap; null for a voice note.
+   */
+  thumb: string | null;
+  /** The poster's average colour, shown while the thumbnail loads; null for a voice note. */
+  color: string | null;
   /** A video message's picture, upright; null for a voice note. */
   width: number | null;
   height: number | null;

@@ -269,12 +269,16 @@ async function iphoneVideo(seconds = 2): Promise<Buffer> {
   ]);
 }
 
-/** The original in the private bucket, and its row as the upload API leaves it once uploaded. */
+/**
+ * The original in the private bucket, its row as the upload API leaves it once uploaded, and (unless
+ * `linked` is false: an orphan) the wish addWish links it to, which is what has it processed (Ruling CE).
+ */
 async function uploadedWish(
   bytes: Uint8Array,
   kind: "audio" | "video",
   extension: string,
   values: Partial<typeof media.$inferInsert> = {},
+  { linked = true }: { linked?: boolean } = {},
 ): Promise<string> {
   const id = values.id ?? randomUUID();
   const key = originalKey(id, extension);
@@ -304,12 +308,13 @@ async function uploadedWish(
       uploadedAt: new Date("2026-12-06T12:01:00Z"),
       ...values,
     });
+  if (linked) await getDb().insert(wishes).values({ kind: kind === "audio" ? "voice" : "video", signedAs: "Ama Owusu", mediaId: id });
   return id;
 }
 
-/** The wish that names the recording, as addWish leaves it. */
-async function wishFor(mediaId: string, kind: "voice" | "video"): Promise<string> {
-  const [row] = await getDb().insert(wishes).values({ kind, signedAs: "Ama Owusu", mediaId }).returning({ id: wishes.id });
+/** The wish that names the recording, as addWish left it. */
+async function wishFor(mediaId: string): Promise<string> {
+  const [row] = await getDb().select({ id: wishes.id }).from(wishes).where(eq(wishes.mediaId, mediaId));
   return row.id;
 }
 
@@ -425,7 +430,7 @@ describe("voiceFactsFrom: a voice wish has sound and no picture (layer 3)", () =
   it("takes a recording with sound, preferring AAC, then the default stream, with its length when the file says it", () => {
     expect(voiceFactsFrom(probe([{ index: 0, codec_type: "audio", codec_name: "opus" }]))).toEqual({
       ok: true,
-      facts: { audioStreamIndex: 0, audioCodec: "opus", durationSeconds: null },
+      facts: { audioStreamIndex: 0, audioCodec: "opus", durationSeconds: null, durationEstimated: false },
     });
     expect(
       voiceFactsFrom(
@@ -437,7 +442,7 @@ describe("voiceFactsFrom: a voice wish has sound and no picture (layer 3)", () =
           { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "12.500000" },
         ),
       ),
-    ).toEqual({ ok: true, facts: { audioStreamIndex: 1, audioCodec: "aac", durationSeconds: 12.5 } });
+    ).toEqual({ ok: true, facts: { audioStreamIndex: 1, audioCodec: "aac", durationSeconds: 12.5, durationEstimated: false } });
     // An MP3's cover art is a picture, not a video: left behind, as the sound alone is mapped.
     expect(
       voiceFactsFrom(
@@ -449,7 +454,21 @@ describe("voiceFactsFrom: a voice wish has sound and no picture (layer 3)", () =
           { format_name: "mp3", duration: "4.0" },
         ),
       ),
-    ).toMatchObject({ ok: true, facts: { audioStreamIndex: 0 } });
+    ).toMatchObject({ ok: true, facts: { audioStreamIndex: 0, durationEstimated: true } });
+  });
+
+  it("marks a length ffprobe only estimates from the bitrate (MP3, AMR, raw AAC), which the made file isn't held to", () => {
+    for (const format of ["mp3", "amr", "aac"]) {
+      expect(voiceFactsFrom(probe([{ index: 0, codec_type: "audio", codec_name: "mp3" }], { format_name: format, duration: "9.9" })), format).toMatchObject({
+        ok: true,
+        facts: { durationSeconds: 9.9, durationEstimated: true },
+      });
+    }
+    for (const format of ["mov,mp4,m4a,3gp,3g2,mj2", "matroska,webm", "ogg", "wav"]) {
+      expect(voiceFactsFrom(probe([{ index: 0, codec_type: "audio", codec_name: "opus" }], { format_name: format, duration: "9.9" })), format).toMatchObject({
+        facts: { durationEstimated: false },
+      });
+    }
   });
 
   it("refuses a recording with a moving picture, or with no sound, as unsupported-type, and nonsense as corrupt", () => {
@@ -796,10 +815,30 @@ describe.skipIf(!ffmpegSeven)("media.wish: once, and withdrawn with its wish", (
     expect(programs.runs).toEqual([]);
   });
 
+  it("makes nothing of an orphan, a recording no wish names (Ruling CE): it never has a public file", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const orphan = await uploadedWish(await webmVideo("libvpx", 2, "320x240"), "video", "webm", {}, { linked: false });
+    const deletedWish = await uploadedWish(await webmVoice(2), "audio", "webm");
+    await getDb().update(wishes).set({ deletedAt: new Date(), signedAs: "deleted" }).where(eq(wishes.mediaId, deletedWish));
+
+    for (const mediaId of [orphan, deletedWish]) {
+      await processWish(wishJob(mediaId), wishOptions());
+      expect(await readItem(mediaId)).toMatchObject({ status: "uploaded", derived: {} });
+      expect(await publicKeysOf(mediaId)).toEqual([]);
+    }
+    expect(programs.runs).toEqual([]);
+    expect(publishing.keys).toEqual([]);
+
+    // Named by a wish, it is made.
+    await getDb().insert(wishes).values({ kind: "video", signedAs: "Ama Owusu", mediaId: orphan });
+    await processWish(wishJob(orphan), wishOptions());
+    expect(Object.keys((await readItem(orphan)).derived).sort()).toEqual(["poster-thumb", "poster-view", "video"]);
+  });
+
   it("is withdrawn, every file, when its wish is hidden, and made again under new keys when it is unhidden", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const mediaId = await uploadedWish(await webmVideo("libvpx", 2, "320x240"), "video", "webm");
-    const wishId = await wishFor(mediaId, "video");
+    const wishId = await wishFor(mediaId);
     await processWish(wishJob(mediaId), wishOptions());
     const first = (await readItem(mediaId)).derived;
     expect(await publicKeysOf(mediaId)).toEqual(Object.values(first).sort());
@@ -827,7 +866,7 @@ describe.skipIf(!ffmpegSeven)("media.wish: once, and withdrawn with its wish", (
   it("withdraws a voice note's file with its wish too", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const mediaId = await uploadedWish(await webmVoice(2), "audio", "webm");
-    const wishId = await wishFor(mediaId, "voice");
+    const wishId = await wishFor(mediaId);
     await processWish(wishJob(mediaId), wishOptions());
     expect(await publicKeysOf(mediaId)).toHaveLength(1);
 

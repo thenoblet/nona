@@ -5,14 +5,13 @@ import { Halo } from "@/components/ui/Halo";
 import { Icon, PauseGlyph, PlayGlyph } from "@/components/ui/Icon";
 import { copyText } from "@/components/album/viewer/device";
 import { declaredType } from "@/components/album/uploader/state";
-import { checkUpload } from "@/lib/media/limits";
+import { checkUpload, WISH_SECONDS } from "@/lib/media/limits";
 import { clockTime } from "@/lib/media/album-item";
 import { blockedWhyOf, secondsLeft, type RecorderEvent, type RecorderState, type Take } from "./recorder-machine";
 import {
   AUDIO_BITS_PER_SECOND,
   declaredRecordingType,
   pickRecordingType,
-  RECORDING_SECONDS,
   recordingFileName,
   VIDEO_BITS_PER_SECOND,
   type RecordedKind,
@@ -213,7 +212,7 @@ export default function RecorderPanel({ kind, state, dispatch, media }: Recorder
 
 /** The ring that empties as the recording runs (darker for the last ten seconds), around the stop button. */
 function Ring({ kind, state, small, onStop }: { kind: RecordedKind; state: RecorderState; small: boolean; onStop: () => void }) {
-  const total = RECORDING_SECONDS[kind] * 1000;
+  const total = WISH_SECONDS[kind] * 1000;
   const elapsed = state.phase === "recording" || state.phase === "stopping" ? state.elapsedMs : 0;
   const radius = small ? 48 : 62;
   const size = small ? 104 : 132;
@@ -523,10 +522,16 @@ function Blocked({ kind, problem, dispatch }: { kind: RecordedKind; problem: str
     const family = voice ? "audio/" : "video/";
     const checked = checkUpload({ purpose: "wish", filename: file.name, contentType, size: file.size });
     if (!checked.ok || !contentType.startsWith(family)) {
+      // A file of the other kind, or of a type a wish doesn't take (a FLAC, a 3GP named as video):
+      // said plainly, with what to choose instead; over its size or empty, the upload API's words.
       const wrongKind = checked.ok || checked.error === "unsupported-type";
       dispatch({
         type: "pickRefused",
-        problem: wrongKind ? (voice ? "That isn't a voice recording. Please choose one from your recorder." : "That isn't a video. Please record one with your camera.") : checked.message,
+        problem: wrongKind
+          ? voice
+            ? "We can't take that kind of file. Please choose a recording from your recorder."
+            : "We can't take that kind of file. Please record a video with your camera."
+          : checked.message,
       });
       return;
     }

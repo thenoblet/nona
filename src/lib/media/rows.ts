@@ -6,6 +6,7 @@ import {
   guests,
   media,
   uploadEvents,
+  wishes,
   type CONVERSION_STATES,
   type MEDIA_FILE_KINDS,
   type MEDIA_PURPOSES,
@@ -504,7 +505,19 @@ export type WishToProcess = ItemToProcess & {
   kind: MediaFileKind;
 };
 
-/** The recording, if media.wish has work to do for it (awaitsProcessing, and a wish's); otherwise null. One read on the primary key. */
+/**
+ * A wish names the recording, and isn't deleted (Ruling CE): only then is it made into public files.
+ * One read of wishes_media_id_unique.
+ */
+export function namedByAWish() {
+  return sql`exists (select 1 from ${wishes} where ${wishes.mediaId} = ${media.id} and ${wishes.deletedAt} is null)`;
+}
+
+/**
+ * The recording, if media.wish has work to do for it (awaitsProcessing, a wish's, and named by a
+ * wish that isn't deleted); otherwise null. A job for an orphan (its wish never came) does nothing,
+ * so an orphan never has a public file. One read on the primary key.
+ */
 export async function findWishToProcess(mediaId: string): Promise<WishToProcess | null> {
   if (!isUuid(mediaId)) return null;
   const [row] = await getDb()
@@ -517,7 +530,7 @@ export async function findWishToProcess(mediaId: string): Promise<WishToProcess 
       derivedGeneration: media.derivedGeneration,
     })
     .from(media)
-    .where(and(awaitsProcessing(mediaId), sql`${media.purpose} = 'wish'`))
+    .where(and(awaitsProcessing(mediaId), sql`${media.purpose} = 'wish'`, namedByAWish()))
     .limit(1);
   return row ?? null;
 }

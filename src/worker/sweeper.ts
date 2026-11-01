@@ -7,7 +7,7 @@ import { media } from "@/lib/db/schema";
 import { CONVERT_PRIORITY, MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
 import { describeError } from "@/lib/log-error";
 import { completeUpload, processingQueue } from "@/lib/media/completion";
-import { unfinishedUploads, type UploadCursor } from "@/lib/media/rows";
+import { namedByAWish, unfinishedUploads, type UploadCursor } from "@/lib/media/rows";
 import { mayContinueUpload, readUploadsSwitch } from "@/lib/media/uploads-switch";
 import type { PlayableJobData } from "./jobs/playable";
 
@@ -110,7 +110,8 @@ function minutesAgo(minutes: number): SQL {
 /**
  * Up to `limit` items `uploaded` more than 5 minutes ago, oldest first, read in order from the
  * partial index of uploaded items. Not a hidden or deleted one: its processing does nothing until
- * an unhide queues it again (Ruling AG). Exported for its plan's test.
+ * an unhide queues it again (Ruling AG). A wish's recording only once a wish names it (Ruling CE):
+ * an orphan is never made into public files. Exported for its plan's test.
  */
 export function uploadedItemsQuery(limit: number, reader: Reader = getDb()) {
   return reader
@@ -122,6 +123,7 @@ export function uploadedItemsQuery(limit: number, reader: Reader = getDb()) {
         sql`${media.uploadedAt} < ${minutesAgo(STUCK_AFTER_MINUTES)}`,
         isNull(media.hiddenAt),
         isNull(media.deletedAt),
+        sql`(${media.purpose} <> 'wish' or ${namedByAWish()})`,
       ),
     )
     .orderBy(asc(media.uploadedAt))

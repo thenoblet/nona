@@ -138,7 +138,7 @@ test("a voice wish is sent, shows 'Getting your wish ready…' to its sender onl
   }
 });
 
-test("a video wish counts down, records from the front camera, and plays with its poster once made", async ({ browser, baseURL }) => {
+test("a video wish counts down, records from the front camera, and plays from its small poster once made", async ({ browser, baseURL }) => {
   const signer = `${SIGNED_PREFIX} Video ${randomUUID().slice(0, 6)}`;
   const sender = await phone(browser, baseURL);
   const someoneElse = await phone(browser, baseURL);
@@ -159,11 +159,18 @@ test("a video wish counts down, records from the front camera, and plays with it
 
     const play = wall(page).getByRole("button", { name: `Play video message from ${signer}` });
     await expect(play).toBeVisible({ timeout: 120_000 });
-    const video = wall(page).getByLabel(`Video message from ${signer}`, { exact: true });
-    await expect(video).toHaveAttribute("preload", "none");
-    await expect(video).toHaveAttribute("src", /\/video\.mp4$/);
-    await expect(video).toHaveAttribute("poster", /\/poster-view\.webp$/);
+    // Before a tap (fix round 1): its 480 px poster thumbnail, lazy, sized; no video element at all.
+    const card = play.locator("xpath=ancestor::article");
+    const thumb = card.locator("img");
+    await expect(thumb).toHaveAttribute("src", /\/poster-thumb\.webp$/);
+    await expect(thumb).toHaveAttribute("loading", "lazy");
+    await expect(thumb).toHaveAttribute("width", /^\d+$/);
+    await expect(thumb).toHaveAttribute("height", /^\d+$/);
+    await expect(card.locator("video")).toHaveCount(0);
+    // Tapped, the video is made and plays.
     await play.click();
+    const video = wall(page).getByLabel(`Video message from ${signer}`, { exact: true });
+    await expect(video).toHaveAttribute("src", /\/video\.mp4$/);
     await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime), { timeout: 20_000 }).toBeGreaterThan(0);
 
     const [row] = await sql`select m.kind, m.status, m.width, m.height, m.video_codec from wishes w join media m on m.id = w.media_id where w.signed_as = ${signer}`;
@@ -230,6 +237,59 @@ test("when the browser refuses the camera or microphone, the phone's own camera 
     await recorderInput.setInputFiles({ name: "Recording 1.wav", mimeType: "audio/wav", buffer: toneWav() });
     await expect(page.getByRole("button", { name: "Listen back" })).toBeVisible();
     await send(page, `${SIGNED_PREFIX} Fallback ${randomUUID().slice(0, 6)}`, "voice");
+  } finally {
+    await context.close();
+  }
+});
+
+test("when the recorder's own code doesn't load, the camera goes off at once and the recorder says so, with Try again", async ({ browser, baseURL }) => {
+  const context = await phone(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      // As if the page had reloaded for a missing chunk a moment ago (load.ts): no second reload.
+      window.sessionStorage.setItem("nona:uploader-reloaded-at", String(Date.now()));
+      // Every stream the page is given, so the test can see whether its tracks were stopped.
+      const given: MediaStream[] = [];
+      (window as unknown as { givenStreams: MediaStream[] }).givenStreams = given;
+      const ask = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        const stream = await ask(constraints);
+        given.push(stream);
+        return stream;
+      };
+    });
+    await page.goto("/wishes");
+    // No signal for the recorder's panel: its chunk fails, every time, until the test lets it through.
+    let panelBlocked = true;
+    await page.route("**/_next/static/chunks/*.js", async (route) => {
+      const response = await route.fetch();
+      const body = await response.text();
+      if (panelBlocked && body.includes("Open my recorder")) await route.abort("internetdisconnected");
+      else await route.fulfill({ response, body });
+    });
+
+    await composer(page).getByRole("tab", { name: "Video" }).click();
+    await page.getByRole("button", { name: "Start recording a video message" }).click();
+
+    await expect(page.getByRole("alert").filter({ hasText: "The recorder didn't load. Check the connection, then try again." })).toBeVisible();
+    // The camera the tap asked for was let go: every track ended, the phone's light off.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const given = (window as unknown as { givenStreams: MediaStream[] }).givenStreams;
+          return given.length > 0 && given.every((stream) => stream.getTracks().every((track) => track.readyState === "ended"));
+        }),
+      )
+      .toBe(true);
+    // Not stuck waiting: the record button can be tapped again, and the tabs aren't held.
+    await expect(page.getByRole("button", { name: "Start recording a video message" })).toBeEnabled();
+    await expect(composer(page).getByRole("tab", { name: "Write" })).not.toHaveAttribute("aria-disabled", "true");
+
+    panelBlocked = false;
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByText(/^Recording in [123]…$/)).toBeVisible();
+    await expect(composer(page).getByText(/^0:\d\d left$/)).toBeVisible({ timeout: 15_000 });
   } finally {
     await context.close();
   }

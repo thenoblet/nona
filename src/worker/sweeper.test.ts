@@ -7,7 +7,7 @@ import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSetting } from "@/lib/data/settings";
 import { getDb } from "@/lib/db/client";
-import { media } from "@/lib/db/schema";
+import { media, wishes } from "@/lib/db/schema";
 import { dbConfig, storageConfig } from "@/lib/env";
 import { CONVERT_PRIORITY, MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { storageClient } from "@/lib/storage/client";
@@ -117,6 +117,7 @@ describe("the sweeper's first step: items stuck in uploaded", () => {
     const photo = await insertItem();
     const video = await insertItem({ kind: "video", contentType: "video/quicktime" });
     const wish = await insertItem({ purpose: "wish", kind: "audio", contentType: "audio/mp4" });
+    await getDb().insert(wishes).values({ kind: "voice", signedAs: "Ama", mediaId: wish });
 
     const result = await sweeper().sweep();
 
@@ -124,6 +125,21 @@ describe("the sweeper's first step: items stuck in uploaded", () => {
     expect(await liveJobs(MEDIA_QUEUES.photo, photo)).toHaveLength(1);
     expect(await liveJobs(MEDIA_QUEUES.poster, video)).toHaveLength(1);
     expect(await liveJobs(MEDIA_QUEUES.wish, wish)).toHaveLength(1);
+  });
+
+  it("leaves a wish's recording that no wish names (Ruling CE): an orphan is never processed, so never public", async () => {
+    const orphan = await insertItem({ purpose: "wish", kind: "video", contentType: "video/mp4" });
+    const deletedWish = await insertItem({ purpose: "wish", kind: "audio", contentType: "audio/mp4" });
+    await getDb().insert(wishes).values({ kind: "voice", signedAs: "deleted", mediaId: deletedWish, deletedAt: new Date() });
+
+    expect((await sweeper().sweep()).requeuedUploads).toBe(0);
+    expect(await liveJobs(MEDIA_QUEUES.wish, orphan)).toEqual([]);
+    expect(await liveJobs(MEDIA_QUEUES.wish, deletedWish)).toEqual([]);
+
+    // Named by a wish since, it is queued on the next sweep.
+    await getDb().insert(wishes).values({ kind: "video", signedAs: "Ama", mediaId: orphan });
+    expect((await sweeper().sweep()).requeuedUploads).toBe(1);
+    expect(await liveJobs(MEDIA_QUEUES.wish, orphan)).toHaveLength(1);
   });
 
   it("leaves an item that has a job (waiting, retrying, or in the dead letter queue), and one uploaded just now", async () => {
@@ -568,7 +584,8 @@ describe("the sweeper's third step (Ruling W): uploads whose phone dropped at th
 
       expect(result.rescuedUploads).toBe(1);
       expect(await statusOf(wish)).toBe("uploaded");
-      expect(await liveJobs(MEDIA_QUEUES.wish, wish)).toHaveLength(1);
+      // Made only once a wish names it (Ruling CE): addWish, or a later sweep, queues it then.
+      expect(await liveJobs(MEDIA_QUEUES.wish, wish)).toEqual([]);
     });
   });
 
