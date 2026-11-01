@@ -70,3 +70,8 @@ export async function setSetting<TKey extends SettingKey>(key: TKey, value: Sett
     .values({ key, value: json })
     .onConflictDoUpdate({ target: settings.key, set: { value: json, updatedAt: sql`now()` } });
 }
+
+/** Forgets the setting's saved value, so readers fall back to their default again. */
+export async function deleteSetting(key: SettingKey): Promise<void> {
+  await getDb().delete(settings).where(eq(settings.key, key));
+}

@@ -8,8 +8,6 @@ import { resetDb } from "../../../test/db";
 import {
   adminCountsQuery,
   adminPageQuery,
-  decodeAdminCursor,
-  encodeAdminCursor,
   findAdminItem,
   guestUploadsQuery,
   listAdminAlbum,
@@ -18,6 +16,7 @@ import {
 import { countsFor } from "./admin-item";
 import { adminWishesQuery, countAdminWishes, findAdminWish, listAdminWishes } from "./admin-wishes";
 import { deletableFrom } from "./moderation";
+import { decodeTimeCursor, encodeTimeCursor } from "./time-cursor";
 import { getDb } from "@/lib/db/client";
 import { wishes } from "@/lib/db/schema";
 
@@ -163,13 +162,40 @@ describe("listAdminAlbum", () => {
     expect(second.nextCursor).toBeNull();
   });
 
+  it("pages items that share one upload time across page breaks by their ids, with no item twice and none left out", async () => {
+    const tied = new Date("2026-12-05T18:00:00.123Z");
+    const ids: string[] = [];
+    for (let index = 0; index < 3; index += 1) ids.push(await addAlbumItem({ uploadedAt: new Date(tied.getTime() + (index + 1) * 1000) }));
+    for (let index = 0; index < 10; index += 1) ids.push(await addAlbumItem({ uploadedAt: tied }));
+    for (let index = 0; index < 2; index += 1) ids.push(await addAlbumItem({ uploadedAt: new Date(tied.getTime() - (index + 1) * 1000) }));
+    const uploaded = new Map((await listAdminAlbum({ filter: {}, limit: 50 })).items.map((item) => [item.id, item.uploadedAt]));
+    // Newest upload first, the id (descending) breaking ties, as media_admin_idx reads them.
+    const expected = [...ids].sort((first, second) => {
+      const byTime = uploaded.get(second)!.localeCompare(uploaded.get(first)!);
+      return byTime !== 0 ? byTime : second.localeCompare(first);
+    });
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = await listAdminAlbum({ filter: {}, cursor, limit: 4 });
+      seen.push(...page.items.map((item) => item.id));
+      cursor = page.nextCursor;
+      pages += 1;
+    } while (cursor && pages < 10);
+    expect(pages).toBe(4);
+    expect(seen).toEqual(expected);
+    expect(new Set(seen).size).toBe(15);
+  });
+
   it("reads a cursor it didn't make as the first page", async () => {
     const ids = await uploadedItems(2);
-    for (const cursor of ["nonsense", encodeAdminCursor({ uploadedAt: "yesterday", id: randomUUID() }), "x".repeat(300)]) {
+    for (const cursor of ["nonsense", encodeTimeCursor({ at: "yesterday", id: randomUUID() }), "x".repeat(300)]) {
       expect((await listAdminAlbum({ filter: {}, cursor })).items.map((item) => item.id)).toEqual(ids);
     }
-    const cursor = { uploadedAt: "2026-12-05T18:00:00.123456Z", id: randomUUID() };
-    expect(decodeAdminCursor(encodeAdminCursor(cursor))).toEqual(cursor);
+    const cursor = { at: "2026-12-05T18:00:00.123456Z", id: randomUUID() };
+    expect(decodeTimeCursor(encodeTimeCursor(cursor))).toEqual(cursor);
   });
 });
 
@@ -320,7 +346,7 @@ describe("the admin's plans (Ruling BW)", () => {
     return rows.map((row) => String(row["QUERY PLAN"])).join("\n");
   }
 
-  const cursor = { uploadedAt: "2026-12-05T18:00:00.000000Z", id: randomUUID() };
+  const cursor = { at: "2026-12-05T18:00:00.000000Z", id: randomUUID() };
   const noSortNoSeqScan = (plan: string) => {
     expect(plan).not.toContain("Seq Scan");
     expect(plan).not.toMatch(/\bSort\b/);
@@ -375,6 +401,33 @@ describe("the admin's plans (Ruling BW)", () => {
     }
   });
 
+  /**
+   * The plan Postgres makes with the values in it, as a prepared statement's first five runs get
+   * (custom plans): the pattern a search sends, the chip and the cursor written into the query.
+   */
+  async function literalPlan(query: { toSQL(): { sql: string; params: unknown[] } }): Promise<string> {
+    const { sql: text, params } = query.toSQL();
+    const literal = text.replace(/\$(\d+)/g, (_, position: string) => {
+      const value = params[Number(position) - 1];
+      return typeof value === "number" ? String(value) : `'${String(value).replace(/'/g, "''")}'`;
+    });
+    const rows = await client.unsafe(`explain ${literal}`).simple();
+    return rows.map((row) => String(row["QUERY PLAN"])).join("\n");
+  }
+
+  it("keeps to the indexes with the values written in too: a search that matches no one, and a chip", async () => {
+    for (const [filter, window] of [
+      [{ search: "zz" }, null],
+      [{ search: "zz" }, cursor],
+      [{ chip: "failed" as const }, null],
+    ] as const) {
+      const plan = await literalPlan(adminPageQuery(filter, window, 31));
+      expect(plan).toMatch(/Index Only Scan using media_admin_(state_)?idx/);
+      if (filter.search) expect(plan).toContain("'%zz%'");
+      noSortNoSeqScan(plan);
+    }
+  });
+
   it("joins a page's rows by primary key, keeping the index's order", async () => {
     const plan = await genericPlan(adminPageQuery({}, cursor, 31));
     expect(plan).toContain("Nested Loop");
@@ -396,7 +449,7 @@ describe("the admin's plans (Ruling BW)", () => {
   });
 
   it("pages the wishes along wishes_admin_idx, each recording by primary key, with no sort", async () => {
-    for (const window of [null, { createdAt: "2026-12-05T18:00:00.000000Z", id: randomUUID() }]) {
+    for (const window of [null, { at: "2026-12-05T18:00:00.000000Z", id: randomUUID() }]) {
       const plan = await genericPlan(adminWishesQuery(window, 51));
       expect(plan).toContain("wishes_admin_idx");
       expect(plan).not.toContain("Seq Scan");

@@ -1,5 +1,5 @@
 import "server-only";
-import { getSetting, setSetting } from "@/lib/data/settings";
+import { deleteSetting, getSetting, setSetting } from "@/lib/data/settings";
 
 /*
  * The venue TV's delay (Noblet, 30 Oct; Task 17): a moment reaches the slideshow only this many
@@ -40,8 +40,18 @@ export async function getSlideshowDelaySeconds(): Promise<number> {
   return (await readSlideshowDelay()).seconds;
 }
 
-/** Saves the admin's TV delay. Throws for anything but whole seconds from 0 to 900. */
+/**
+ * Saves the admin's TV delay. Throws for anything but whole seconds from 0 to 900. Logged, as the
+ * switches are, without who: how long the couple get to hide anything before the TV shows it.
+ */
 export async function saveSlideshowDelaySeconds(seconds: number): Promise<void> {
   if (!isSlideshowDelay(seconds)) throw new RangeError(`Refusing ${JSON.stringify(seconds)} as the TV delay`);
   await setSetting("slideshow_delay_seconds", seconds);
+  console.log(`[moderation] TV delay set to ${seconds} s by an admin`);
+}
+
+/** Forgets the admin's TV delay, so SLIDESHOW_DELAY_SECONDS (or 180) applies again. Logged. */
+export async function resetSlideshowDelay(): Promise<void> {
+  await deleteSetting("slideshow_delay_seconds");
+  console.log("[moderation] TV delay reset to the default by an admin");
 }

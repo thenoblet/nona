@@ -4,7 +4,7 @@ import { refresh, updateTag } from "next/cache";
 import { after } from "next/server";
 import { requireAdmin } from "@/lib/admin/access";
 import { isUuid } from "@/lib/data/ids";
-import { findAdminItem } from "@/lib/media/admin-album";
+import { findAdminItem, isAdminItem } from "@/lib/media/admin-album";
 import type { AdminItem, AdminWish } from "@/lib/media/admin-item";
 import { lockWords } from "@/lib/media/admin-item";
 import { findAdminWish } from "@/lib/media/admin-wishes";
@@ -27,12 +27,15 @@ import {
   type ModerationResult,
   type RetryResult,
 } from "@/lib/media/moderation";
-import { isSlideshowDelay, saveSlideshowDelaySeconds } from "@/lib/media/slideshow-delay";
+import { getSetting, SETTING_DEFAULTS } from "@/lib/data/settings";
+import { isSlideshowDelay, resetSlideshowDelay, saveSlideshowDelaySeconds } from "@/lib/media/slideshow-delay";
+import { readUploadsSwitch } from "@/lib/media/uploads-switch";
 
 /*
  * The admin Photos page's actions (Task 17). Reached by a direct POST as well as from the page, so
  * each one checks the couple first (requireAdmin), refuses an id or a value that isn't one before
- * calling anything, then calls Task 12's own function. One that changes what guests see drops the
+ * calling anything (an album action, an id that isn't one of the admin's album items: a wish's
+ * recording is the Wishes tab's), then calls Task 12's own function. One that changes what guests see drops the
  * album's and the slideshow's cache (updateTag(ALBUM_SLIDES_TAG): the next request reads afresh);
  * then the page re-renders (refresh()), its counts and switches with it. A media action answers
  * with the item as it now is, for the page to show at once.
@@ -55,7 +58,9 @@ function followUps(): ModerationOptions {
 
 export type MediaActionResult = { ok: true; item: AdminItem | null } | { ok: false; error: string };
 export type WishActionResult = { ok: true; wish: AdminWish | null } | { ok: false; error: string };
-export type SwitchResult = { ok: true } | { ok: false; error: string };
+/** A switch's answer: `changed` false when it already stood where it was asked to be (another admin, another tab). */
+export type SwitchResult = { ok: true; changed: boolean } | { ok: false; error: string };
+export type DelayResult = { ok: true } | { ok: false; error: string };
 
 const ITEM_GONE = "That photo or video isn't in the album any more. Reload to see the album as it is.";
 const WISH_GONE = "That wish isn't there any more. Reload to see the wishes as they are.";
@@ -65,6 +70,16 @@ const NOT_A_DELAY = "Use a whole number of seconds from 0 to 900.";
 
 function isId(value: unknown): value is string {
   return typeof value === "string" && isUuid(value);
+}
+
+/** Whether the id names an item of the admin's album, checked before any album action changes it. */
+async function isAlbumItem(value: unknown): Promise<boolean> {
+  return isId(value) && (await isAdminItem(value));
+}
+
+/** The lock's wording, for an album item or a recorded wish. */
+function lockedUntil(allowedFrom: Date): string {
+  return `Can be deleted permanently from ${lockWords(allowedFrom.toISOString())}. Hide it if it has to go now.`;
 }
 
 /** After a media action: the item as it now is, the caches its change touched, and the page again. */
@@ -78,7 +93,7 @@ async function afterMediaAction(
   if (result.ok) return { ok: true, item: await findAdminItem(mediaId) };
   switch (result.reason) {
     case "locked":
-      return { ok: false, error: `Can be deleted permanently from ${lockWords(result.allowedFrom.toISOString())}. Hide it if it has to go now.` };
+      return { ok: false, error: lockedUntil(result.allowedFrom) };
     case "nothing-to-retry":
       return { ok: false, error: "There's nothing to retry: it isn't failed any more." };
     case "not-uploaded":
@@ -91,45 +106,46 @@ async function afterMediaAction(
 /** "Hide from the album": guests stop seeing it at once, the TV too. No confirm: Undo and Unhide reverse it. */
 export async function hideMediaAction(mediaId: string): Promise<MediaActionResult> {
   const admin = await requireAdmin();
-  if (!isId(mediaId)) return { ok: false, error: ITEM_GONE };
+  if (!(await isAlbumItem(mediaId))) return { ok: false, error: ITEM_GONE };
   return afterMediaAction(mediaId, await hideMedia(mediaId, { admin: admin.email }, followUps()), true);
 }
 
 /** "Unhide" (and a hide's Undo): back in the album for everyone once its files are made again. */
 export async function unhideMediaAction(mediaId: string): Promise<MediaActionResult> {
   const admin = await requireAdmin();
-  if (!isId(mediaId)) return { ok: false, error: ITEM_GONE };
+  if (!(await isAlbumItem(mediaId))) return { ok: false, error: ITEM_GONE };
   return afterMediaAction(mediaId, await unhideMedia(mediaId, admin.email, followUps()), true);
 }
 
 /** "Move": to another celebration, or More moments; processing never moves it back. */
 export async function moveMediaAction(mediaId: string, celebration: string): Promise<MediaActionResult> {
   const admin = await requireAdmin();
-  if (!isId(mediaId)) return { ok: false, error: ITEM_GONE };
   if (typeof celebration !== "string" || !(ALBUM_CELEBRATIONS as readonly string[]).includes(celebration)) {
     return { ok: false, error: NOT_A_CELEBRATION };
   }
+  if (!(await isAlbumItem(mediaId))) return { ok: false, error: ITEM_GONE };
   return afterMediaAction(mediaId, await moveMedia(mediaId, celebration as AlbumCelebration, admin.email, followUps()), true);
 }
 
 /** "Highlight": a star for the couple's favourites; a highlighted video is converted first. Guests see no change. */
 export async function setHighlightAction(mediaId: string, on: boolean): Promise<MediaActionResult> {
   const admin = await requireAdmin();
-  if (!isId(mediaId) || typeof on !== "boolean") return { ok: false, error: ITEM_GONE };
+  if (typeof on !== "boolean") return { ok: false, error: RELOAD };
+  if (!(await isAlbumItem(mediaId))) return { ok: false, error: ITEM_GONE };
   return afterMediaAction(mediaId, await setHighlight(mediaId, on, admin.email, followUps()), false);
 }
 
 /** "Retry processing": a failed item's processing, or a ready video's failed conversion, again. */
 export async function retryProcessingAction(mediaId: string): Promise<MediaActionResult> {
   const admin = await requireAdmin();
-  if (!isId(mediaId)) return { ok: false, error: ITEM_GONE };
+  if (!(await isAlbumItem(mediaId))) return { ok: false, error: ITEM_GONE };
   return afterMediaAction(mediaId, await retryProcessing(mediaId, admin.email, followUps()), false);
 }
 
 /** "Delete permanently", after its confirm: only once the original's 30-day lock has passed. */
 export async function deleteMediaAction(mediaId: string): Promise<MediaActionResult> {
   const admin = await requireAdmin();
-  if (!isId(mediaId)) return { ok: false, error: ITEM_GONE };
+  if (!(await isAlbumItem(mediaId))) return { ok: false, error: ITEM_GONE };
   return afterMediaAction(mediaId, await deleteMediaPermanently(mediaId, admin.email, followUps()), true);
 }
 
@@ -138,8 +154,9 @@ async function afterWishAction(wishId: string, result: ModerationResult | Delete
   if (result.ok) updateTag(ALBUM_SLIDES_TAG);
   refresh();
   if (result.ok) return { ok: true, wish: await findAdminWish(wishId) };
-  if (result.reason === "locked") {
-    return { ok: false, error: `Can be deleted permanently from ${lockWords(result.allowedFrom.toISOString())}. Hide it if it has to go now.` };
+  if (result.reason === "locked") return { ok: false, error: lockedUntil(result.allowedFrom) };
+  if (result.reason === "not-uploaded") {
+    return { ok: false, error: "Its recording never finished uploading, so it can't be deleted permanently. Hide it instead." };
   }
   return { ok: false, error: WISH_GONE };
 }
@@ -169,25 +186,37 @@ export async function deleteWishAction(wishId: string): Promise<WishActionResult
 export async function setUploadsOpenAction(open: boolean): Promise<SwitchResult> {
   const admin = await requireAdmin();
   if (typeof open !== "boolean") return { ok: false, error: RELOAD };
+  // A page shown before the other admin (or another tab) flipped it asks for what is already so.
+  const before = await readUploadsSwitch();
   await setUploadsOpen(open, admin.email);
   refresh();
-  return { ok: true };
+  return { ok: true, changed: before.open !== open };
 }
 
 /** The Convert backlog videos switch, after its confirm; the worker follows within its 30 s heartbeat. */
 export async function setConvertBacklogAction(on: boolean): Promise<SwitchResult> {
   const admin = await requireAdmin();
   if (typeof on !== "boolean") return { ok: false, error: RELOAD };
+  const before = (await getSetting("convert_backlog", SETTING_DEFAULTS.convert_backlog)) === true;
   await setConvertBacklog(on, admin.email);
+  refresh();
+  return { ok: true, changed: before !== on };
+}
+
+/** Saves the TV delay, 0 to 900 seconds; the slideshow's cache drops, so the TV follows on its next poll. */
+export async function saveSlideshowDelayAction(seconds: number): Promise<DelayResult> {
+  await requireAdmin();
+  if (!isSlideshowDelay(seconds)) return { ok: false, error: NOT_A_DELAY };
+  await saveSlideshowDelaySeconds(seconds);
+  updateTag(ALBUM_SLIDES_TAG);
   refresh();
   return { ok: true };
 }
 
-/** Saves the TV delay, 0 to 900 seconds; the slideshow's cache drops, so the TV follows on its next poll. */
-export async function saveSlideshowDelayAction(seconds: number): Promise<SwitchResult> {
+/** "Use the default": forgets the saved TV delay, so SLIDESHOW_DELAY_SECONDS applies again; the slideshow's cache drops. */
+export async function resetSlideshowDelayAction(): Promise<DelayResult> {
   await requireAdmin();
-  if (!isSlideshowDelay(seconds)) return { ok: false, error: NOT_A_DELAY };
-  await saveSlideshowDelaySeconds(seconds);
+  await resetSlideshowDelay();
   updateTag(ALBUM_SLIDES_TAG);
   refresh();
   return { ok: true };

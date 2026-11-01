@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/client";
 import { media, wishes } from "@/lib/db/schema";
 import type { AdminWish, AdminWishPage } from "./admin-item";
 import { deletableFrom } from "./moderation";
+import { decodeTimeCursor, encodeTimeCursor, microsecondText, type TimeCursor } from "./time-cursor";
 
 /*
  * The admin's Wishes tab (Task 17): every wish but the deleted, hidden ones too, newest first, along
@@ -15,29 +16,13 @@ import { deletableFrom } from "./moderation";
 /** A page's size. */
 export const ADMIN_WISHES_PAGE_SIZE = 50;
 
-export type AdminWishCursor = { createdAt: string; id: string };
-
-const TIME_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
-
-export function encodeWishCursor(cursor: AdminWishCursor): string {
-  return Buffer.from(`${cursor.createdAt}~${cursor.id}`).toString("base64url");
-}
-
-/** The cursor a page sent, or null when it isn't one this server made. */
-export function decodeWishCursor(value: string | null | undefined): AdminWishCursor | null {
-  if (!value || value.length > 200) return null;
-  const [createdAt, id, ...rest] = Buffer.from(value, "base64url").toString("utf8").split("~");
-  if (rest.length > 0 || !createdAt || !id || !TIME_TEXT.test(createdAt) || !isUuid(id)) return null;
-  return { createdAt, id: id.toLowerCase() };
-}
-
 const wishColumns = {
   id: wishes.id,
   kind: wishes.kind,
   message: wishes.message,
   signedAs: wishes.signedAs,
   createdAt: wishes.createdAt,
-  createdAtText: sql<string>`to_char(${wishes.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+  createdAtText: microsecondText(wishes.createdAt),
   hiddenAt: wishes.hiddenAt,
   hiddenBy: wishes.hiddenBy,
   mediaId: wishes.mediaId,
@@ -64,7 +49,7 @@ type WishRow = {
 };
 
 /** A page of the admin's wishes along wishes_admin_idx. Exported so a test can check its plan. */
-export function adminWishesQuery(cursor: AdminWishCursor | null, limit: number) {
+export function adminWishesQuery(cursor: TimeCursor | null, limit: number) {
   return getDb()
     .select(wishColumns)
     .from(wishes)
@@ -72,7 +57,7 @@ export function adminWishesQuery(cursor: AdminWishCursor | null, limit: number) 
     .where(
       and(
         isNull(wishes.deletedAt),
-        cursor ? sql`(${wishes.createdAt}, ${wishes.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)` : undefined,
+        cursor ? sql`(${wishes.createdAt}, ${wishes.id}) < (${cursor.at}::timestamptz, ${cursor.id}::uuid)` : undefined,
       ),
     )
     .orderBy(desc(wishes.createdAt), desc(wishes.id))
@@ -107,12 +92,12 @@ function toAdminWish(row: WishRow): AdminWish {
 /** A page of the admin's wishes, newest first. A cursor this server didn't make reads as the first page. */
 export async function listAdminWishes(options: { cursor?: string | null; limit?: number }): Promise<AdminWishPage> {
   const limit = options.limit ?? ADMIN_WISHES_PAGE_SIZE;
-  const rows = (await adminWishesQuery(decodeWishCursor(options.cursor), limit + 1)) as WishRow[];
+  const rows = (await adminWishesQuery(decodeTimeCursor(options.cursor), limit + 1)) as WishRow[];
   const page = rows.slice(0, limit);
   const last = page.at(-1);
   return {
     wishes: page.map(toAdminWish),
-    nextCursor: rows.length > limit && last ? encodeWishCursor({ createdAt: last.createdAtText, id: last.id }) : null,
+    nextCursor: rows.length > limit && last ? encodeTimeCursor({ at: last.createdAtText, id: last.id }) : null,
   };
 }
 

@@ -113,6 +113,18 @@ describe("GET /admin/photos/original/[id]", () => {
     );
   });
 
+  it("downloads an original the worker refused, rather than opening it in the browser", async () => {
+    const mediaId = randomUUID();
+    await addAlbumItem({ id: mediaId, celebration: "more", status: "failed", failureReason: "unsupported-type", originalKey: `originals/${mediaId}.jpg` });
+    admin.allowed = true;
+    const response = await GET(request(mediaId), routeContext(mediaId));
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("Location")!);
+    expect(location.searchParams.get("response-content-disposition")).toMatch(
+      new RegExp(`^attachment; filename="NONA26-more-${mediaId.slice(0, 8)}\\.jpg"`),
+    );
+  });
+
   it("answers 404 for an id that isn't one, an item that isn't there, a tombstone, or an upload not finished", async () => {
     admin.allowed = true;
     const deleted = await addAlbumItem({ deletedAt: new Date() });

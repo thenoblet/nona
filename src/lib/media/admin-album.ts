@@ -1,6 +1,6 @@
 import "server-only";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { alias, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { alias } from "drizzle-orm/pg-core";
 import { isUuid } from "@/lib/data/ids";
 import { getDb } from "@/lib/db/client";
 import { adminScopeOf, adminStateOf, media, type AdminStateName } from "@/lib/db/schema";
@@ -15,6 +15,7 @@ import {
   type AdminPage,
 } from "./admin-item";
 import { deletableFrom } from "./moderation";
+import { decodeTimeCursor, encodeTimeCursor, microsecondText, type TimeCursor } from "./time-cursor";
 
 /*
  * The admin's album (Task 17, Ruling BW): every album item that finished uploading, hidden and
@@ -41,31 +42,6 @@ import { deletableFrom } from "./moderation";
 
 /** A page's size. */
 export const ADMIN_PAGE_SIZE = 30;
-
-/** Where a page ends: the last item's uploaded_at, to the microsecond, and its id. */
-export type AdminCursor = { uploadedAt: string; id: string };
-
-// uploaded_at to the microsecond, in UTC: a JavaScript Date keeps only milliseconds, which would
-// make a cursor fall between two items uploaded in the same millisecond.
-const TIME_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
-
-/** The cursor as the page carries it: opaque, URL-safe. */
-export function encodeAdminCursor(cursor: AdminCursor): string {
-  return Buffer.from(`${cursor.uploadedAt}~${cursor.id}`).toString("base64url");
-}
-
-/** The cursor a page sent, or null when it isn't one this server made. */
-export function decodeAdminCursor(value: string | null | undefined): AdminCursor | null {
-  if (!value || value.length > 200) return null;
-  const [uploadedAt, id, ...rest] = Buffer.from(value, "base64url").toString("utf8").split("~");
-  if (rest.length > 0 || !uploadedAt || !id || !TIME_TEXT.test(uploadedAt) || !isUuid(id)) return null;
-  return { uploadedAt, id: id.toLowerCase() };
-}
-
-/** A time column as the cursor carries it, to the microsecond, in UTC. */
-function microsecondText(column: AnyPgColumn): SQL<string> {
-  return sql<string>`to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-}
 
 /** A search as an ILIKE pattern: anywhere in the name, its % and _ (and \) meant literally. */
 function containsPattern(search: string): string {
@@ -156,7 +132,7 @@ type ItemColumnName = keyof typeof itemColumns;
  * table read whole, and the page sorted, as a generic plan can't know the page is short (it takes
  * a bound LIMIT for a tenth of the table). Exported so a test can check its plan.
  */
-export function adminPageQuery(filter: AdminFilter, cursor: AdminCursor | null, limit: number) {
+export function adminPageQuery(filter: AdminFilter, cursor: TimeCursor | null, limit: number) {
   const page = getDb()
     .select({ id: media.id, uploadedAt: media.uploadedAt })
     .from(media)
@@ -164,7 +140,7 @@ export function adminPageQuery(filter: AdminFilter, cursor: AdminCursor | null, 
       and(
         adminScopeOf(media),
         ...filterConditions(filter),
-        cursor ? sql`(${media.uploadedAt}, ${media.id}) < (${cursor.uploadedAt}::timestamptz, ${cursor.id}::uuid)` : undefined,
+        cursor ? sql`(${media.uploadedAt}, ${media.id}) < (${cursor.at}::timestamptz, ${cursor.id}::uuid)` : undefined,
       ),
     )
     .orderBy(desc(media.uploadedAt), desc(media.id))
@@ -267,14 +243,28 @@ export type ListAdminAlbumOptions = { filter: AdminFilter; cursor?: string | nul
 /** A page of the admin's album for the filter, newest upload first. A cursor this server didn't make reads as the first page. */
 export async function listAdminAlbum(options: ListAdminAlbumOptions): Promise<AdminPage> {
   const limit = options.limit ?? ADMIN_PAGE_SIZE;
-  const rows = (await adminPageQuery(options.filter, decodeAdminCursor(options.cursor), limit + 1)) as ItemRow[];
+  const rows = (await adminPageQuery(options.filter, decodeTimeCursor(options.cursor), limit + 1)) as ItemRow[];
   const page = rows.slice(0, limit);
   const uploads = await uploadsByGuest(page);
   const last = page.at(-1);
   return {
     items: page.map((row) => toAdminItem(row, uploads)),
-    nextCursor: rows.length > limit && last ? encodeAdminCursor({ uploadedAt: last.uploadedAtText, id: last.id }) : null,
+    nextCursor: rows.length > limit && last ? encodeTimeCursor({ at: last.uploadedAtText, id: last.id }) : null,
   };
+}
+
+/**
+ * Whether the id names an item of the admin's album: not a wish's recording, a site photo, a
+ * tombstone or an upload still under way. One read on the primary key, before an action changes it.
+ */
+export async function isAdminItem(mediaId: string): Promise<boolean> {
+  if (!isUuid(mediaId)) return false;
+  const [row] = await getDb()
+    .select({ id: media.id })
+    .from(media)
+    .where(and(eq(media.id, mediaId.toLowerCase()), adminScopeOf(media)))
+    .limit(1);
+  return row !== undefined;
 }
 
 /** One item of the admin's album, as an action leaves it; null when it isn't one (deleted, a wish, never uploaded). */

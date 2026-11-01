@@ -56,7 +56,8 @@ function Preview({ item }: { item: AdminItem }) {
       {/* A 15-minute link to the original, through the couple's own route (Ruling BV). */}
       <a className="admin-preview-open" href={`/admin/photos/original/${item.id}`} target="_blank" rel="noopener noreferrer">
         <AdminIcon name="open" size={14} />
-        {item.original.heic ? "Download original" : "Open original"}
+        {/* A HEIC, or a file the worker refused, downloads rather than opening (the route says so too). */}
+        {item.original.heic || item.failure?.during === "processing" ? "Download original" : "Open original"}
       </a>
     </div>
   );
@@ -145,9 +146,17 @@ export function ItemPanel({
   }
 
   function undo(previous: Undo) {
-    if (previous.kind === "unhide") run(() => unhideMediaAction(item.id), () => ({ text: "Undone. It's back in the album.", tone: "ok" }));
-    else if (previous.kind === "hide") run(() => hideMediaAction(item.id), () => ({ text: "Undone. It's hidden again.", tone: "ok" }));
-    else run(() => moveMediaAction(item.id, previous.celebration), () => ({ text: "Undone.", tone: "ok" }));
+    if (previous.kind === "unhide") {
+      // Undo is an unhide: its files are made again, so guests see it once they are.
+      run(
+        () => unhideMediaAction(item.id),
+        () => ({ text: "Undone. Back in the album: guests see it again once its thumbnail is made, in a moment.", tone: "ok" }),
+      );
+    } else if (previous.kind === "hide") {
+      run(() => hideMediaAction(item.id), () => ({ text: "Undone. It's hidden again.", tone: "ok" }));
+    } else {
+      run(() => moveMediaAction(item.id, previous.celebration), () => ({ text: "Undone.", tone: "ok" }));
+    }
   }
 
   function highlight() {

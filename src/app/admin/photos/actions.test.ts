@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { getSetting, setSetting } from "@/lib/data/settings";
 import { getDb } from "@/lib/db/client";
 import { media, settings, wishes } from "@/lib/db/schema";
+import { readSlideshowDelay } from "@/lib/media/slideshow-delay";
 import { deleteManifest } from "@/lib/storage/manifest";
 import { addAlbumItem } from "../../../../test/album";
 import { resetDb } from "../../../../test/db";
@@ -79,6 +80,7 @@ import {
   hideMediaAction,
   hideWishAction,
   moveMediaAction,
+  resetSlideshowDelayAction,
   retryProcessingAction,
   saveSlideshowDelayAction,
   setConvertBacklogAction,
@@ -155,6 +157,7 @@ function everyAction(mediaId: string, wishId: string): [string, () => Promise<un
     ["setUploadsOpenAction", () => setUploadsOpenAction(false)],
     ["setConvertBacklogAction", () => setConvertBacklogAction(false)],
     ["saveSlideshowDelayAction", () => saveSlideshowDelayAction(60)],
+    ["resetSlideshowDelayAction", () => resetSlideshowDelayAction()],
   ];
 }
 
@@ -177,6 +180,7 @@ describe("without the couple", () => {
     const mediaId = await photo({ status: "failed" });
     const wishId = await textWish();
     await setSetting("uploads_open", true);
+    await setSetting("slideshow_delay_seconds", 30);
     const before = { item: await readItem(mediaId), wish: await readWish(wishId), settings: await getDb().select().from(settings) };
 
     for (const [name, action] of everyAction(mediaId, wishId)) {
@@ -253,6 +257,32 @@ describe("with the couple", () => {
     expect(cache.refresh).not.toHaveBeenCalled();
   });
 
+  it("refuses, before calling anything, an id that isn't an album item's: a wish's recording is the Wishes tab's", async () => {
+    const recording = await photo({ purpose: "wish", kind: "audio", status: "failed" });
+    await textWish({ kind: "voice", message: null, mediaId: recording });
+    const before = await readItem(recording);
+    for (const result of [
+      await hideMediaAction(recording),
+      await unhideMediaAction(recording),
+      await moveMediaAction(recording, "more"),
+      await setHighlightAction(recording, true),
+      await retryProcessingAction(recording),
+      await deleteMediaAction(recording),
+    ]) {
+      expect(result).toEqual({ ok: false, error: expect.stringContaining("isn't in the album") });
+    }
+    for (const name of TASK_12_FUNCTIONS) expect(moderation[name], name).not.toHaveBeenCalled();
+    expect(await readItem(recording)).toEqual(before);
+    expect(cache.updateTag).not.toHaveBeenCalled();
+    expect(cache.refresh).not.toHaveBeenCalled();
+  });
+
+  it("answers a highlight that isn't true or false with a reload, not as if the item had gone", async () => {
+    const mediaId = await photo();
+    expect(await setHighlightAction(mediaId, "yes" as unknown as boolean)).toEqual({ ok: false, error: "Reload the page and try again." });
+    expect(moderation.setHighlight).not.toHaveBeenCalled();
+  });
+
   it("hides an item at once, drops the album's and slideshow's cache, and Unhide puts it back", async () => {
     const mediaId = await photo();
     const hidden = await hideMediaAction(mediaId);
@@ -314,17 +344,24 @@ describe("with the couple", () => {
     expect(cache.refresh).toHaveBeenCalledTimes(4);
   });
 
+  it("says so when a recorded wish's recording never finished uploading, rather than that the wish is gone", async () => {
+    const recording = await addAlbumItem({ purpose: "wish", kind: "audio", status: "uploading", uploadedAt: null });
+    const wishId = await textWish({ kind: "voice", message: null, mediaId: recording, createdAt: new Date(Date.now() - 40 * 24 * 3600 * 1000) });
+    expect(await deleteWishAction(wishId)).toEqual({ ok: false, error: expect.stringMatching(/^Its recording never finished uploading/) });
+    expect(await readWish(wishId)).toMatchObject({ deletedAt: null, signedAs: "Ama" });
+  });
+
   it("closes and opens uploads, and switches the backlog conversions, refusing anything but true or false", async () => {
     await setSetting("uploads_open", true);
-    expect(await setUploadsOpenAction(false)).toEqual({ ok: true });
+    expect(await setUploadsOpenAction(false)).toEqual({ ok: true, changed: true });
     expect(await getSetting("uploads_open", true)).toBe(false);
     expect(await getSetting("uploads_closed_at", null)).toEqual(expect.any(String));
-    expect(await setUploadsOpenAction(true)).toEqual({ ok: true });
+    expect(await setUploadsOpenAction(true)).toEqual({ ok: true, changed: true });
     expect(await getSetting("uploads_open", false)).toBe(true);
 
-    expect(await setConvertBacklogAction(false)).toEqual({ ok: true });
+    expect(await setConvertBacklogAction(false)).toEqual({ ok: true, changed: true });
     expect(await getSetting("convert_backlog", true)).toBe(false);
-    expect(await setConvertBacklogAction(true)).toEqual({ ok: true });
+    expect(await setConvertBacklogAction(true)).toEqual({ ok: true, changed: true });
     expect(await getSetting("convert_backlog", false)).toBe(true);
     expect(moderation.setUploadsOpen).toHaveBeenCalledWith(false, "couple@example.com");
     expect(moderation.setConvertBacklog).toHaveBeenCalledWith(false, "couple@example.com");
@@ -335,6 +372,37 @@ describe("with the couple", () => {
       expect(await setConvertBacklogAction(value as unknown as boolean)).toEqual({ ok: false, error: expect.any(String) });
     }
     expect(await getSetting("uploads_open", false)).toBe(true);
+  });
+
+  it("says when a switch already stood where a page that loaded earlier asks it to go", async () => {
+    // The other admin closed uploads and paused the backlog after this page loaded.
+    await setSetting("uploads_open", false);
+    await setSetting("convert_backlog", false);
+    expect(await setUploadsOpenAction(false)).toEqual({ ok: true, changed: false });
+    expect(await setConvertBacklogAction(false)).toEqual({ ok: true, changed: false });
+    expect(await getSetting("uploads_open", true)).toBe(false);
+    expect(await getSetting("convert_backlog", true)).toBe(false);
+    expect(cache.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("goes back to the default TV delay, which the slideshow's cache then drops, and logs each change without the admin's email", async () => {
+    vi.stubEnv("SLIDESHOW_DELAY_SECONDS", "240");
+    const logged = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await saveSlideshowDelayAction(60)).toEqual({ ok: true });
+    expect(await readSlideshowDelay()).toEqual({ seconds: 60, saved: true, defaultSeconds: 240 });
+    cache.updateTag.mockClear();
+    cache.refresh.mockClear();
+
+    expect(await resetSlideshowDelayAction()).toEqual({ ok: true });
+    expect(await getSetting("slideshow_delay_seconds", null)).toBeNull();
+    expect(await getDb().select().from(settings).where(eq(settings.key, "slideshow_delay_seconds"))).toEqual([]);
+    expect(await readSlideshowDelay()).toEqual({ seconds: 240, saved: false, defaultSeconds: 240 });
+    expect(cache.updateTag).toHaveBeenCalledWith("album-slides");
+    expect(cache.refresh).toHaveBeenCalledOnce();
+
+    const lines = logged.mock.calls.map((call) => call.join(" ")).filter((line) => line.includes("TV delay"));
+    expect(lines).toEqual(["[moderation] TV delay set to 60 s by an admin", "[moderation] TV delay reset to the default by an admin"]);
+    vi.unstubAllEnvs();
   });
 
   it("saves the TV delay from 0 to 900 seconds, which the slideshow's cache then drops, and refuses anything else", async () => {

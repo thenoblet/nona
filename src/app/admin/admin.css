@@ -397,7 +397,10 @@
 }
 .admin-toolbar select:focus, .admin-move select:focus, .admin-search input:focus { border-color: var(--admin-accent); }
 .admin-filter b { font-variant-numeric: tabular-nums; }
-.admin-searchnote { margin: -4px 0 12px; color: var(--admin-muted); font-size: 13.5px; }
+.admin-searchnote { margin: -4px 0 12px; color: var(--admin-muted); font-size: 13.5px; overflow-wrap: anywhere; }
+/* While a search is on, the chips' numbers aren't the search's: dimmed, and the note says so. */
+.admin-filters-searching .admin-filter b { opacity: 0.45; font-weight: 500; }
+.admin-filters-searching .admin-filter[aria-pressed="true"] b { opacity: 0.7; }
 .admin-mod { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
 .admin-mod[data-busy] .admin-mod-grid { opacity: 0.55; transition: opacity 120ms ease 150ms; }
 .admin-mod-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px 12px; }

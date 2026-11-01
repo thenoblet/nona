@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, useTransition, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { saveSlideshowDelayAction, setConvertBacklogAction, setUploadsOpenAction, type SwitchResult } from "@/app/admin/photos/actions";
+import { useRouter } from "next/navigation";
+import {
+  resetSlideshowDelayAction,
+  saveSlideshowDelayAction,
+  setConvertBacklogAction,
+  setUploadsOpenAction,
+  type DelayResult,
+  type SwitchResult,
+} from "@/app/admin/photos/actions";
 import { shortTimeWords } from "@/lib/media/admin-item";
 
 const NOT_SAVED = "That didn't save. Check the connection, reload the page and try again.";
@@ -20,6 +28,8 @@ type SwitchModel = {
   /** Asked before turning it on or off: [question, what it means, the yes button]. */
   confirm: Record<Side, [string, string, string]>;
   done: Record<Side, string>;
+  /** When it already stood there: the other admin, or another tab, flipped it since this page loaded. */
+  already: Record<Side, string>;
   flip: (on: boolean) => Promise<SwitchResult>;
 };
 
@@ -45,6 +55,7 @@ function uploadsModel(closedAt: string | null): SwitchModel {
       on: ["Open uploads again?", "Guests can share straight away.", "Open uploads"],
     },
     done: { on: "Uploads are open.", off: "Uploads are closed." },
+    already: { on: "Uploads were already open.", off: "Uploads were already closed." },
     flip: setUploadsOpenAction,
   };
 }
@@ -75,6 +86,7 @@ function backlogModel(waiting: number): SwitchModel {
       ],
     },
     done: { on: "Backlog conversion is on.", off: "Backlog conversion is off." },
+    already: { on: "Backlog conversion was already on.", off: "Backlog conversion was already off." },
     flip: setConvertBacklogAction,
   };
 }
@@ -82,13 +94,16 @@ function backlogModel(waiting: number): SwitchModel {
 /**
  * One switch (gate B): its state, what it means for guests, and a confirm before it moves. The
  * switch doesn't move until the confirm's yes; Cancel or Escape leaves it. Its state is always the
- * server's: the page re-renders after the change.
+ * server's, read again as the confirm opens and as it closes (the other admin may have flipped it
+ * since this page loaded, and the question follows), and after the change; a change to where it
+ * already stood says so.
  */
 function SwitchCard({ model, on, testId }: { model: SwitchModel; on: boolean; testId: string }) {
   const questionId = useId();
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [switching, startSwitching] = useTransition();
+  const router = useRouter();
   const switchButton = useRef<HTMLButtonElement>(null);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const focusSwitch = useRef(false);
@@ -103,27 +118,42 @@ function SwitchCard({ model, on, testId }: { model: SwitchModel; on: boolean; te
     focusSwitch.current = false;
   }, [confirming]);
 
+  function open() {
+    setConfirming(true);
+    // Re-read the switch as the confirm opens: the question follows what is true now.
+    router.refresh();
+  }
+
   function close() {
     focusSwitch.current = true;
     setConfirming(false);
   }
 
+  /** Cancel, or Escape: nothing changes here, but the page reads the switch again. */
+  function cancel() {
+    close();
+    router.refresh();
+  }
+
   function escape(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Escape" || switching) return;
     event.preventDefault();
-    close();
+    cancel();
   }
 
   function flip() {
+    const target = next;
     startSwitching(async () => {
       let result: SwitchResult;
       try {
-        result = await model.flip(!on);
+        result = await model.flip(target === "on");
       } catch {
         result = { ok: false, error: NOT_SAVED };
       }
       close();
-      setNotice(result.ok ? { text: model.done[next], tone: "ok" } : { text: result.error, tone: "bad" });
+      setNotice(
+        result.ok ? { text: result.changed ? model.done[target] : model.already[target], tone: "ok" } : { text: result.error, tone: "bad" },
+      );
     });
   }
 
@@ -138,8 +168,8 @@ function SwitchCard({ model, on, testId }: { model: SwitchModel; on: boolean; te
         aria-label={model.title}
         onClick={() => {
           setNotice(null);
-          if (confirming) close();
-          else setConfirming(true);
+          if (confirming) cancel();
+          else open();
         }}
       >
         <span className="admin-switch-label">
@@ -158,7 +188,7 @@ function SwitchCard({ model, on, testId }: { model: SwitchModel; on: boolean; te
             <button type="button" className="admin-btn admin-btn-small admin-btn-primary" disabled={switching} onClick={flip}>
               {switching ? "Saving…" : yes}
             </button>
-            <button ref={cancelButton} type="button" className="admin-btn admin-btn-small" disabled={switching} onClick={close}>
+            <button ref={cancelButton} type="button" className="admin-btn admin-btn-small" disabled={switching} onClick={cancel}>
               Cancel
             </button>
           </div>
@@ -193,19 +223,20 @@ function TvDelayCard({ seconds, saved, defaultSeconds }: { seconds: number; save
   const [draft, setDraft] = useState(String(seconds));
   const [notice, setNotice] = useState<Notice | null>(null);
   const [saving, startSaving] = useTransition();
+  const [resetting, startResetting] = useTransition();
   const typed = draft.trim();
   const value = /^\d{1,3}$/.test(typed) ? Number(typed) : Number.NaN;
   const valid = Number.isInteger(value) && value >= 0 && value <= DELAY_MAX_SECONDS;
 
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saving) return;
+    if (saving || resetting) return;
     if (!valid) {
       setNotice({ text: "Use a whole number of seconds from 0 to 900.", tone: "bad" });
       return;
     }
     startSaving(async () => {
-      let result: SwitchResult;
+      let result: DelayResult;
       try {
         result = await saveSlideshowDelayAction(value);
       } catch {
@@ -214,6 +245,25 @@ function TvDelayCard({ seconds, saved, defaultSeconds }: { seconds: number; save
       setNotice(
         result.ok
           ? { text: `Saved. New moments reach the TV ${value === 0 ? "at once" : `after ${delayWords(value)}`}.`, tone: "ok" }
+          : { text: result.error, tone: "bad" },
+      );
+    });
+  }
+
+  /** "Use the default": forgets the saved delay, so the environment's applies again. */
+  function returnToDefault() {
+    if (resetting || saving) return;
+    startResetting(async () => {
+      let result: DelayResult;
+      try {
+        result = await resetSlideshowDelayAction();
+      } catch {
+        result = { ok: false, error: NOT_SAVED };
+      }
+      if (result.ok) setDraft(String(defaultSeconds));
+      setNotice(
+        result.ok
+          ? { text: `Back to the default. New moments reach the TV ${defaultSeconds === 0 ? "at once" : `after ${delayWords(defaultSeconds)}`}.`, tone: "ok" }
           : { text: result.error, tone: "bad" },
       );
     });
@@ -249,9 +299,14 @@ function TvDelayCard({ seconds, saved, defaultSeconds }: { seconds: number; save
             }}
           />
         </div>
-        <button type="submit" className="admin-btn admin-btn-primary" aria-disabled={saving}>
+        <button type="submit" className="admin-btn admin-btn-primary" aria-disabled={saving || resetting}>
           {saving ? "Saving…" : "Save"}
         </button>
+        {saved ? (
+          <button type="button" className="admin-btn" aria-disabled={saving || resetting} onClick={returnToDefault}>
+            {resetting ? "Saving…" : "Use the default"}
+          </button>
+        ) : null}
         <span id={hintId} className="admin-field-hint">
           0 to 900 seconds (15 minutes).{" "}
           {saved ? `The default is ${delayWords(defaultSeconds)}.` : `Using the default, ${delayWords(defaultSeconds)}, until you save one.`}

@@ -24,9 +24,10 @@ function textResponse(status: number, text: string): Response {
  * "Open original" (Ruling BV): a hidden or removed item's public files are deleted by design, so
  * the couple judge it from its original, through a 15-minute presigned link to the private bucket.
  * Behind Cloudflare Access with the rest of /admin, and checked here first all the same. An
- * album item or a wish's recording that finished uploading; a HEIC downloads, named as the album
- * names it, since a browser can't show it; anything else opens in the browser. Nothing is ever
- * re-published to the public bucket, and the link is never logged.
+ * album item or a wish's recording that finished uploading. It downloads, named as the album names
+ * it, when it is a HEIC (a browser can't show it) or one the worker refused (failed: a file that
+ * couldn't be read is the one not to open in the browser); anything else opens in the browser.
+ * Nothing is ever re-published to the public bucket, and the link is never logged.
  */
 export async function GET(_request: Request, { params }: OriginalContext) {
   // Request time only: a build without the Access settings must never prerender the refusal.
@@ -41,7 +42,13 @@ export async function GET(_request: Request, { params }: OriginalContext) {
   if (!isUuid(id)) return textResponse(404, "Not found.");
   try {
     const [original] = await getDb()
-      .select({ originalKey: media.originalKey, contentType: media.contentType, kind: media.kind, celebration: media.celebration })
+      .select({
+        originalKey: media.originalKey,
+        contentType: media.contentType,
+        kind: media.kind,
+        celebration: media.celebration,
+        status: media.status,
+      })
       .from(media)
       .where(
         and(
@@ -54,11 +61,12 @@ export async function GET(_request: Request, { params }: OriginalContext) {
       .limit(1);
     if (!original) return textResponse(404, "Not found.");
     const heic = original.kind === "photo" && HEIC_TYPES.has(original.contentType);
-    const extension = original.originalKey.split(".").pop() ?? "heic";
+    const download = heic || original.status === "failed";
+    const extension = original.originalKey.split(".").pop() ?? "bin";
     // Presigning is local: no network call, so no timeout.
     const url = await presignGet(original.originalKey, {
       expiresInSeconds: ORIGINAL_LINK_SECONDS,
-      filename: heic ? downloadFilename(original.celebration as AlbumCelebration, id.toLowerCase(), extension) : undefined,
+      filename: download ? downloadFilename(original.celebration as AlbumCelebration, id.toLowerCase(), extension) : undefined,
     });
     return new Response(null, {
       status: 302,

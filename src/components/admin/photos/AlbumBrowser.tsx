@@ -71,6 +71,7 @@ export function AlbumBrowser({
   celebrations: CelebrationOption[];
 }) {
   const statusId = useId();
+  const searchNoteId = useId();
   const [filter, setFilter] = useState<AdminFilter>(initialFilter);
   const [searchText, setSearchText] = useState(initialFilter.search ?? "");
   const [items, setItems] = useState<AdminItem[]>(initialPage.items);
@@ -273,7 +274,12 @@ export function AlbumBrowser({
             <option value="video">Videos</option>
           </select>
         </div>
-        <div className="admin-filters" role="group" aria-label="Show">
+        <div
+          className={`admin-filters${filter.search ? " admin-filters-searching" : ""}`}
+          role="group"
+          aria-label="Show"
+          aria-describedby={filter.search ? searchNoteId : undefined}
+        >
           <button type="button" className="admin-filter" aria-pressed={!filter.chip} onClick={() => changeFilter({ chip: undefined })}>
             All <b className="admin-num">{counts.total}</b>
           </button>
@@ -290,6 +296,13 @@ export function AlbumBrowser({
           ))}
         </div>
       </div>
+      {filter.search ? (
+        // The counts are the celebration's and kind's, not the search's: counting each search would
+        // walk the index again for numbers the list below already shows.
+        <p className="admin-searchnote" id={searchNoteId}>
+          The numbers count everything shown without the search, not just “{filter.search}”.
+        </p>
+      ) : null}
       <p className="admin-sr-only" role="status" id={statusId}>
         {shownWords}
       </p>
