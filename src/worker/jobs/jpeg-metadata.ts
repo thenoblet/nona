@@ -94,8 +94,10 @@ export function keepOnlyCaptureTime(capturedAt: Date | null): Transform {
     let at = 2;
     let insertedAt: number | null = null;
     while (at < scanAt) {
-      // Fill bytes (0xFF) may come before a marker: they go.
+      // Fill bytes (0xFF) may come before a marker: they go. Past them may be the scan itself, which
+      // the stream passes on from scanAt.
       while (header[at + 1] === 0xff) at += 1;
+      if (at >= scanAt) break;
       const marker = header[at + 1];
       const length = header.readUInt16BE(at + 2);
       const segment = header.subarray(at, at + 2 + length);

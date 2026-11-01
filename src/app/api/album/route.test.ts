@@ -88,6 +88,20 @@ describe("GET /api/album", () => {
     expect(await newer.json()).toMatchObject({ items: [expect.objectContaining({ id: fresh })], complete: true, newestCursor: expect.any(String) });
   });
 
+  it("adds the album's counts when asked (the pill reads the first page again past 60 new moments)", async () => {
+    await listed(2);
+    await addAlbumItem({ kind: "video", celebration: "more" });
+    const withStats = (await page("?stats=1")) as PageBody & { stats?: unknown };
+    expect(withStats.stats).toEqual({
+      everyone: expect.arrayContaining([
+        { celebration: "reception", kind: "photo", count: 2 },
+        { celebration: "more", kind: "video", count: 1 },
+      ]),
+      mine: [],
+    });
+    expect(((await page()) as PageBody & { stats?: unknown }).stats).toBeUndefined();
+  });
+
   it("refuses a filter it doesn't know, and a newer cursor it didn't make, with 400", async () => {
     for (const query of ["?kind=audio", "?celebration=wedding", "?view=theirs", "?newer=nonsense"]) {
       const response = await GET(albumRequest(query));

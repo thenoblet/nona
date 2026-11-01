@@ -1,50 +1,61 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AlbumItem } from "@/lib/media/album-item";
-import { pollServerThumb } from "./server-thumb";
+import type { ItemWatch } from "../item-watch";
+import { followServerThumb, SERVER_THUMB_GIVE_UP_MILLISECONDS } from "./server-thumb";
 
 /*
- * Ruling BB: a file the phone can't draw (a HEIC on Android) shows an icon on its card; once it is
- * added, the card asks the album for the server's own thumbnail, briefly, and swaps it in.
+ * Ruling BB: a card whose file the phone can't draw (a HEIC on Android) shows an icon, then, once
+ * added, the server's own thumbnail. Fix round 1, Important #2: it asks through the album's shared
+ * check (one request a tick for every moment watched, every 5 s), never on its own.
  */
 
-const noWait = async () => {};
+beforeEach(() => {
+  vi.useFakeTimers();
+});
 
-function answers(...sequence: (Partial<AlbumItem> | null | Error)[]) {
-  const asked: string[] = [];
-  let at = 0;
-  return {
-    asked,
-    fetchItem: async (mediaId: string) => {
-      asked.push(mediaId);
-      const next = sequence[Math.min(at, sequence.length - 1)];
-      at += 1;
-      if (next instanceof Error) throw next;
-      return next === null ? null : ({ thumb: null, ...next } as AlbumItem);
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** A stand-in for the shared check: the test tells each watcher what the album says. */
+function fakeWatch() {
+  const watchers = new Map<string, (item: AlbumItem | null) => void>();
+  const watch: ItemWatch = {
+    watch(mediaId, onChange) {
+      watchers.set(mediaId, onChange);
+      return () => watchers.delete(mediaId);
     },
   };
+  return { watch, watchers };
 }
 
-describe("pollServerThumb", () => {
-  it("asks until the item has its thumbnail, then gives it", async () => {
-    const server = answers({ status: "uploaded" }, new Error("dropped"), { status: "ready", thumb: "https://media.example/thumb.webp" });
-    const thumb = await pollServerThumb("media-1", { fetchItem: server.fetchItem, wait: noWait, attempts: 10, signal: new AbortController().signal });
-    expect(thumb).toBe("https://media.example/thumb.webp");
-    expect(server.asked).toEqual(["media-1", "media-1", "media-1"]);
+describe("followServerThumb", () => {
+  it("watches the moment on the shared check and takes its thumbnail once there is one, then stops watching", () => {
+    const { watch, watchers } = fakeWatch();
+    const thumbs: string[] = [];
+    followServerThumb("media-1", { watch, onThumb: (url) => thumbs.push(url) });
+
+    watchers.get("media-1")?.({ id: "media-1", status: "uploaded", thumb: null } as AlbumItem);
+    expect(thumbs).toEqual([]);
+    watchers.get("media-1")?.({ id: "media-1", status: "ready", thumb: "https://media.example/thumb.webp" } as AlbumItem);
+    expect(thumbs).toEqual(["https://media.example/thumb.webp"]);
+    expect(watchers.size).toBe(0);
   });
 
-  it("gives up after its attempts, or at once when the item is gone, or when it is stopped", async () => {
-    const slow = answers({ status: "uploaded" });
-    expect(await pollServerThumb("media-1", { fetchItem: slow.fetchItem, wait: noWait, attempts: 4, signal: new AbortController().signal })).toBeNull();
-    expect(slow.asked).toHaveLength(4);
+  it("stops watching once the moment is gone, after its minute, or when the card goes", () => {
+    const gone = fakeWatch();
+    followServerThumb("media-1", { watch: gone.watch, onThumb: () => {} });
+    gone.watchers.get("media-1")?.(null);
+    expect(gone.watchers.size).toBe(0);
 
-    const gone = answers(null);
-    expect(await pollServerThumb("media-1", { fetchItem: gone.fetchItem, wait: noWait, attempts: 4, signal: new AbortController().signal })).toBeNull();
-    expect(gone.asked).toHaveLength(1);
+    const slow = fakeWatch();
+    followServerThumb("media-2", { watch: slow.watch, onThumb: () => {} });
+    vi.advanceTimersByTime(SERVER_THUMB_GIVE_UP_MILLISECONDS);
+    expect(slow.watchers.size).toBe(0);
 
-    const stopped = new AbortController();
-    stopped.abort();
-    const never = answers({ status: "ready", thumb: "https://media.example/thumb.webp" });
-    expect(await pollServerThumb("media-1", { fetchItem: never.fetchItem, wait: noWait, attempts: 4, signal: stopped.signal })).toBeNull();
-    expect(never.asked).toEqual([]);
+    const tidied = fakeWatch();
+    const stop = followServerThumb("media-3", { watch: tidied.watch, onThumb: () => {} });
+    stop();
+    expect(tidied.watchers.size).toBe(0);
   });
 });

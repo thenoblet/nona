@@ -1,6 +1,6 @@
 import { errorResponse, jsonResponse } from "@/lib/http/json";
 import { describeError } from "@/lib/log-error";
-import { listAlbum, listNewer } from "@/lib/media/album";
+import { albumStats, listAlbum, listNewer } from "@/lib/media/album";
 import { parseFilter } from "@/lib/media/album-item";
 import { unavailable, viewerGuests } from "../uploads/access";
 
@@ -9,9 +9,9 @@ import { unavailable, viewerGuests } from "../uploads/access";
  * moments listed since a page's newest (the pill), and the filters `celebration`, `kind`
  * (photo | video) and `view=mine`. Answers `{ items, nextCursor, newestCursor }`, or for `newer`
  * `{ items, complete, newestCursor }` (`complete: false` past 60: the phone reads its first page
- * again). The browser's own items read as its own, and only it sees those not ready. Anyone may
- * read it; a browser with a guest is limited by it (100, then 2 a second). Never cached: it names a
- * browser's own uploads.
+ * again); with `stats=1`, the album's counts as well. The browser's own items read as its own, and
+ * only it sees those not ready. Anyone may read it; a browser with a guest is limited by it (100,
+ * then 2 a second). Never cached: it names a browser's own uploads.
  */
 export async function GET(request: Request) {
   const query = new URL(request.url).searchParams;
@@ -27,7 +27,10 @@ export async function GET(request: Request) {
       if (!page) return errorResponse(400, "bad-request", "That isn't a place in the album.");
       return jsonResponse(page);
     }
-    return jsonResponse(await listAlbum({ ...filter, viewerGuestIds: viewer.guestIds, cursor: query.get("cursor") }));
+    const page = await listAlbum({ ...filter, viewerGuestIds: viewer.guestIds, cursor: query.get("cursor") });
+    // `stats=1`: the counts too, for a page that reads the first page again (the pill past 60 new).
+    if (query.get("stats") === "1") return jsonResponse({ ...page, stats: await albumStats(viewer.guestIds) });
+    return jsonResponse(page);
   } catch (error) {
     console.error("[album] could not read a page:", describeError(error));
     return unavailable();

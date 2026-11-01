@@ -220,8 +220,9 @@ export function guestQuery(guestId: string, filter: AlbumFilter, window: Window,
 }
 
 /**
- * One guest's own items not yet listed: uploaded (waiting for the worker) and failed, along
- * media_album_mine_idx. Exported so a test can check its plan.
+ * One guest's own items not yet listed: uploaded (waiting for the worker) and failed, the newest
+ * upload first, at most PENDING_LIMIT: read by index, then a sort of that guest's few such rows.
+ * Exported so a test can check its plan.
  */
 export function pendingQuery(guestId: string, filter: AlbumFilter, statuses: readonly ("uploaded" | "failed")[]) {
   return getDb()
@@ -235,6 +236,7 @@ export function pendingQuery(guestId: string, filter: AlbumFilter, statuses: rea
         ...filterConditions(filter),
       ),
     )
+    .orderBy(desc(media.uploadedAt), desc(media.id))
     .limit(PENDING_LIMIT);
 }
 
@@ -285,8 +287,8 @@ export async function listAlbum(options: ListAlbumOptions): Promise<AlbumPage> {
   const page = rows.slice(0, limit);
   const last = page.at(-1);
   const newest = cursor ? null : page[0];
-  // The browser's own items not listed yet lead, the newest upload first.
-  const waiting = pending.sort((first, second) => (second.uploadedAt?.getTime() ?? 0) - (first.uploadedAt?.getTime() ?? 0));
+  // The browser's own items not listed yet lead, the newest upload first (each guest's come so; several guests' are merged).
+  const waiting = pending.sort((first, second) => (second.uploadedAt?.getTime() ?? 0) - (first.uploadedAt?.getTime() ?? 0)).slice(0, PENDING_LIMIT);
   return {
     items: [...waiting, ...page].map((row) => toAlbumItem(row, guests)),
     nextCursor: rows.length > limit && last?.listedAt ? encodeCursor({ listedAt: last.listedAt, id: last.id }) : null,
@@ -450,6 +452,28 @@ export async function findAlbumItem(mediaId: string, viewerGuestIds: readonly st
   const own = row.guestId !== null && guests.includes(row.guestId);
   if (row.status !== "ready" && !own) return null;
   return toAlbumItem(row as ItemRow, guests);
+}
+
+/** The most moments one batched read names. */
+export const MAX_ITEMS_PER_READ = 50;
+
+/**
+ * Several moments at once, each as findAlbumItem would answer it (absent when it would be null), in
+ * one query on the primary key: the album's waiting tiles and the uploader's cards ask after all of
+ * theirs in one request (fix round 1, Important #2). At most MAX_ITEMS_PER_READ ids; any that aren't
+ * one are skipped.
+ */
+export async function findAlbumItems(mediaIds: readonly string[], viewerGuestIds: readonly string[]): Promise<AlbumItem[]> {
+  const ids = [...new Set(mediaIds.filter((id) => isUuid(id)).map((id) => id.toLowerCase()))].slice(0, MAX_ITEMS_PER_READ);
+  if (ids.length === 0) return [];
+  const guests = knownGuests(viewerGuestIds);
+  const rows = (await getDb()
+    .select(itemColumns)
+    .from(media)
+    .where(and(inArray(media.id, ids), visibleAlbumItems(), sql`${media.status} in ('ready', 'uploaded', 'failed')`))) as ItemRow[];
+  return rows
+    .filter((row) => row.status === "ready" || (row.guestId !== null && guests.includes(row.guestId)))
+    .map((row) => toAlbumItem(row, guests));
 }
 
 /** What the download route reads of an item: a ready, visible album item's files. */

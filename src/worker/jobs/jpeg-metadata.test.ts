@@ -89,6 +89,17 @@ describe("keepOnlyCaptureTime", () => {
     expect(await exifr.gps(clean).catch(() => undefined)).toBeUndefined();
   });
 
+  it("passes over fill bytes right before the scan, writing its start once (fix round 1, Minor #7)", async () => {
+    const original = await jpegWithEverything();
+    const scanAt = original.indexOf(Buffer.from([0xff, 0xda]));
+    const padded = Buffer.concat([original.subarray(0, scanAt), Buffer.from([0xff, 0xff]), original.subarray(scanAt)]);
+    const clean = await filtered(padded, new Date("2026-12-05T19:42:07Z"), 3);
+    expect(headerMarkers(clean).filter((marker) => marker === 0xda)).toHaveLength(1);
+    const scans = clean.toString("latin1").split(String.fromCharCode(0xff, 0xda)).length - 1;
+    expect(scans).toBe(original.toString("latin1").split(String.fromCharCode(0xff, 0xda)).length - 1);
+    expect(await sharp(clean).raw().toBuffer()).toEqual(await sharp(original).raw().toBuffer());
+  });
+
   it("refuses what isn't a JPEG, and a header past MAX_HEADER_BYTES, rather than pass it on", async () => {
     await expect(filtered(Buffer.from("not a jpeg at all"), null)).rejects.toThrow(/not a JPEG/);
     const endless = Buffer.concat([Buffer.from([0xff, 0xd8]), ...Array.from({ length: Math.ceil(MAX_HEADER_BYTES / 65_000) + 1 }, () => {

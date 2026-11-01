@@ -199,6 +199,21 @@ describe.runIf(heicTests)("a HEIC's full-size JPEG", () => {
     expect(await readManifest(mediaId)).toMatchObject({ celebration: "reception", hiddenAt: null });
   });
 
+  it("Ruling BN: makes the JPEG of a HEIC of more tiles than sharp's own libheif takes, through heif-dec", async () => {
+    const jpeg = await sharp({ create: { width: 320, height: 224, channels: 3, background: "#a07050", noise: { type: "gaussian", mean: 120, sigma: 30 } } })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+    const name = randomUUID();
+    await writeFile(join(folder, `${name}.jpg`), jpeg);
+    await runFile("heif-enc", ["--quality", "40", "--cut-tiles", "16", "--output", join(folder, `${name}.heic`), join(folder, `${name}.jpg`)], { timeout: 120_000 });
+    const mediaId = await readyHeic(await readFile(join(folder, `${name}.heic`)));
+
+    await makeFullSizeJpeg(jpegJob(mediaId), JPEG_OPTIONS);
+
+    const item = await readItem(mediaId);
+    expect(await sharp((await readPublic(item.derived.jpeg as string)).bytes).metadata()).toMatchObject({ width: 320, height: 224 });
+  });
+
   it("does nothing for a second delivery once the JPEG is made", async () => {
     const mediaId = await readyHeic(await heicFrom(await phonePhoto(300, 200).jpeg().toBuffer()));
     await makeFullSizeJpeg(jpegJob(mediaId), JPEG_OPTIONS);

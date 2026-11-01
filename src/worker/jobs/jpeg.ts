@@ -7,10 +7,9 @@ import { headOriginal, putPublicObject } from "@/lib/storage/objects";
 import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
 import { saveOriginal, withScratch } from "../scratch";
 import { keepOnlyCaptureTime } from "./jpeg-metadata";
-import { DECODED_JPEG_BYTES, decodeHeic, MAX_HEIF_PIXELS, readHead, type HeifContext, type PhotoOptions } from "./photo";
+import { DECODED_JPEG_BYTES, decodeHeic, heifCompression, readHead, type HeifContext, type PhotoOptions } from "./photo";
 import { photoTypeOf } from "./photo-type";
 import { contentHashOf, rewriteManifest, withdrawIfHidden } from "./publishing";
-import { decoder, decoding } from "./stills";
 
 /*
  * media.jpeg (Task 15): an iPhone photo's full-size JPEG, which opens on any phone, made on its first
@@ -65,9 +64,9 @@ async function makeIn(folder: string, job: MediaJob, photo: PhotoForJpeg, key: s
   if (!type.ok || type.format !== "heif") {
     throw new PermanentJobError("unsupported-type", `The original is ${type.ok ? `a ${type.format}` : type.found}, not a HEIC`);
   }
-  // An AVIF in a HEIF's clothes: phones open those, and libheif's heif-dec isn't what decodes it.
-  const header = await decoding("HEIF", () => decoder(original, MAX_HEIF_PIXELS).metadata());
-  if (header.compression === "av1") throw new PermanentJobError("unsupported-type", "The original is an AVIF, not a HEIC");
+  // An AVIF in a HEIF's clothes: phones open those, and libheif's heif-dec isn't what decodes it. A
+  // HEIC past sharp's own item limit (Ruling BN) is heif-dec's to judge, as the photo job's is.
+  if ((await heifCompression(original)) === "av1") throw new PermanentJobError("unsupported-type", "The original is an AVIF, not a HEIC");
 
   const decodeStartedAt = performance.now();
   const context: HeifContext = { ...options, folder, signal: job.signal };

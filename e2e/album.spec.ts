@@ -212,10 +212,13 @@ test.describe("the album", () => {
       await page.keyboard.press("ArrowRight");
       await expect(page).toHaveURL(new RegExp(`#m/${seeded[2].id}$`));
 
+      // A mark on this very page: a reload would lose it.
+      await page.evaluate(() => ((window as unknown as { samePage: boolean }).samePage = true));
       await page.goBack();
       await expect(viewer(page)).toBeHidden();
       await expect(page).toHaveURL(/\/album\?mode=before$/);
       // Still the same page: the album wasn't loaded again.
+      expect(await page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage)).toBe(true);
       await expect(tiles(page)).toHaveCount(4);
     } finally {
       await context.close();

@@ -13,6 +13,7 @@ import {
   everyoneQuery,
   everyoneStatsQuery,
   findAlbumItem,
+  findAlbumItems,
   findDownloadable,
   guestQuery,
   guestStatsQuery,
@@ -146,8 +147,8 @@ describe("listAlbum", () => {
     const own = await createGuest("Kofi Mensah");
     const stranger = await createGuest("Yaw Boateng");
     const listed = await listedPhotos(31, { guestId: own.id });
-    const waiting = await addAlbumItem({ guestId: own.id, status: "uploaded" });
-    const failed = await addAlbumItem({ guestId: own.id, status: "failed", failureReason: "too-large" });
+    const waiting = await addAlbumItem({ guestId: own.id, status: "uploaded", uploadedAt: new Date(Date.now() - 60_000) });
+    const failed = await addAlbumItem({ guestId: own.id, status: "failed", failureReason: "too-large", uploadedAt: new Date(Date.now() - 30_000) });
     await addAlbumItem({ guestId: stranger.id, status: "uploaded" });
     await addAlbumItem({ guestId: stranger.id, status: "failed", failureReason: "corrupt" });
     await addAlbumItem({ guestId: own.id, status: "uploading" });
@@ -157,7 +158,8 @@ describe("listAlbum", () => {
     expect(everyone.items[0]).toMatchObject({ status: "uploaded", mine: true, thumb: null });
 
     const mine = await listAlbum({ viewerGuestIds: [own.id], mine: true });
-    expect(mine.items.slice(0, 2).map((item) => item.id).sort()).toEqual([waiting, failed].sort());
+    // Newest upload first (fix round 1, Minor #5): the failed one was added after the waiting one.
+    expect(mine.items.slice(0, 2).map((item) => item.id)).toEqual([failed, waiting]);
     expect(mine.items.find((item) => item.id === failed)).toMatchObject({ status: "failed", failure: "too-large" });
     // Paged apart from the cursor: never on a later page, never counted in its 30.
     const later = await listAlbum({ viewerGuestIds: [own.id], mine: true, cursor: mine.nextCursor });
@@ -282,6 +284,17 @@ describe("findAlbumItem and findDownloadable", () => {
   });
 });
 
+describe("findAlbumItems", () => {
+  it("reads the named moments in one query on the primary key, as findAlbumItem would each", async () => {
+    const own = await createGuest("Kofi Mensah");
+    const ready = await addAlbumItem({});
+    const waiting = await addAlbumItem({ guestId: own.id, status: "uploaded" });
+    const theirs = await addAlbumItem({ status: "uploaded" });
+    const items = await findAlbumItems([ready, waiting, theirs, randomUUID(), "not-an-id"], [own.id]);
+    expect(items.map((item) => item.id).sort()).toEqual([ready, waiting].sort());
+  });
+});
+
 describe("the album's plans", () => {
   const client = postgres({ ...dbConfig(), max: 1, onnotice: () => {} });
   afterAll(() => client.end());
@@ -339,10 +352,12 @@ describe("the album's plans", () => {
       expect(plan).toContain("media_album_mine_idx");
       noSortNoSeqScan(plan);
     }
-    // No order asked of these (a handful, sorted by upload time on the server): any index will do.
+    // A guest's few items not listed yet, newest upload first: read by index, then a sort of those few
+    // rows only (fix round 1, Minor #5), never of the album.
     const pending = await genericPlan(pendingQuery(guest, {}, ["uploaded", "failed"]));
     expect(pending).toMatch(/Index/);
-    noSortNoSeqScan(pending);
+    expect(pending).not.toContain("Seq Scan");
+    expect(pending).toMatch(/Sort Key: uploaded_at DESC/);
   });
 
   it("counts the new moments in one query along the album's index (My uploads along the guest's), with no sort", async () => {

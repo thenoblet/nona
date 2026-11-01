@@ -279,6 +279,26 @@ async function heicFrom(...jpegs: Buffer[]): Promise<Buffer> {
   return readFile(output);
 }
 
+/** A small photo with detail, as a JPEG. */
+function noisyPhoto(width: number, height: number): Promise<Buffer> {
+  return sharp({ create: { width, height, channels: 3, background: "#a07050", noise: { type: "gaussian", mean: 120, sigma: 30 } } })
+    .jpeg({ quality: 80 })
+    .toBuffer();
+}
+
+/**
+ * A HEIC of the JPEG cut into `tile`-pixel tiles, as a phone stores a very large photo: small in
+ * bytes, but past sharp's own libheif's limit of 256 items in its index once there are enough tiles.
+ */
+async function tiledHeicFrom(jpeg: Buffer, tile: number): Promise<Buffer> {
+  const name = randomUUID();
+  const input = join(folder, `${name}.jpg`);
+  const output = join(folder, `${name}.heic`);
+  await writeFile(input, jpeg);
+  await runFile("heif-enc", ["--quality", "40", "--cut-tiles", String(tile), "--output", output, input], { timeout: 120_000 });
+  return readFile(output);
+}
+
 /**
  * The HEIC with one image's size, as its header (its `ispe` property) gives it, changed from `from`
  * to `to`: a file that claims what it doesn't hold, as a crafted one would.
@@ -661,6 +681,37 @@ describe("HEIC (Review Focus 2)", () => {
     for (const flag of ["--codec-threads", "--tile-threads"]) {
       expect(decode[decode.indexOf(flag) + 1], flag).toBe(String(PHOTO_OPTIONS.heifThreads));
     }
+  });
+
+  it.skipIf(!heicTests)(
+    "Ruling BN: decodes with heif-dec a HEIC of more tiles than sharp's own libheif takes (over 256 items), as a 200 MP phone photo is",
+    async () => {
+      const heic = await tiledHeicFrom(await noisyPhoto(320, 224), 16);
+      await expect(sharp(heic).metadata()).rejects.toThrow(/security limit/i);
+      const mediaId = await uploadedPhoto(heic, "heic");
+
+      const report = await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
+
+      expect(await readItem(mediaId)).toMatchObject({ status: "ready", width: 320, height: 224 });
+      expect(await sizeOf((await readPublic((await readItem(mediaId)).derived.thumb ?? "")).bytes)).toMatchObject({ width: 320, height: 224 });
+      expect(runsOf("heif-dec")).toHaveLength(1);
+      expect(report).toMatchObject({ kind: "photo/heic" });
+    },
+  );
+
+  it.skipIf(!heicTests)("Ruling BN: still fails as corrupt a HEIC of that many tiles whose pictures don't decode", async () => {
+    const heic = await tiledHeicFrom(await noisyPhoto(320, 224), 16);
+    // Its index (and so its tiles' count) whole, every byte of its pictures garbled: sharp refuses it
+    // on the item limit, and heif-dec, which judges it then, can't decode it.
+    const damaged = Buffer.from(heic);
+    for (let at = damaged.indexOf("mdat", 0, "latin1") + 4; at < damaged.length; at += 1) damaged[at] = (at * 7919) % 256;
+    await expect(sharp(damaged).metadata()).rejects.toThrow(/security limit/i);
+    const mediaId = await uploadedPhoto(damaged, "heic");
+
+    const failure = await processPhoto(photoJob(mediaId), PHOTO_OPTIONS).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(PermanentJobError);
+    expect((failure as PermanentJobError).reason).toBe("corrupt");
   });
 
   it.skipIf(!heicTests)("takes the primary image of a HEIC that holds several", async () => {

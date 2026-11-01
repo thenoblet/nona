@@ -2,6 +2,7 @@ import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { readSection } from "@/lib/content/store";
 import { assignCelebration } from "@/lib/media/celebration";
+import { errorMessage } from "@/lib/log-error";
 import { plausibleCaptureTime, readPhotoCaptureTime } from "@/lib/media/capture-time";
 import { findItemToProcess, markPhotoReady } from "@/lib/media/rows";
 import { derivedKey } from "@/lib/storage/keys";
@@ -12,7 +13,7 @@ import { saveOriginal, withScratch } from "../scratch";
 import { describeEnding, killedFromOutside, runCapped, toolDidNotRun } from "./capped-tools";
 import { PHOTO_TYPE_HEAD_BYTES, photoTypeOf, type PhotoFormat } from "./photo-type";
 import { contentHashOf, rewriteManifest, withdrawIfHidden, type JobQueue } from "./publishing";
-import { decoder, decoding, deriveStills, type Stills, type StillSource } from "./stills";
+import { decoder, deriveStills, sharpFailure, type Stills, type StillSource } from "./stills";
 
 /*
  * media.photo: an uploaded photo becomes what the album shows. In its job's scratch folder:
@@ -230,19 +231,36 @@ export async function decodeHeic(original: string, context: HeifContext): Promis
   throw new PermanentJobError("corrupt", "heif-dec decoded no primary image from the HEIC");
 }
 
+// sharp's own (bundled) libheif refuses a HEIF whose index names more than 256 items, as a very large
+// phone photo's does: a 200 MP one in 512 px tiles holds 768. The worker's heif-dec takes them.
+const PAST_SHARPS_ITEM_LIMIT = /security limit exceeded: iloc box contains \d+ items/i;
+
+/**
+ * A HEIF's compression ("hevc", "av1"…), from its header alone, which also refuses a primary image
+ * past the pixel limit before anything decodes. Ruling BN: null for a file whose index is past sharp's
+ * own libheif's item limit; heif-info and heif-dec judge it then (its images, its pixels, whether it
+ * decodes), so a damaged file still fails as `corrupt`. Any other refusal is sharpFailure's.
+ */
+export async function heifCompression(path: string): Promise<string | null> {
+  try {
+    return (await decoder(path, MAX_HEIF_PIXELS).metadata()).compression ?? null;
+  } catch (error) {
+    if (PAST_SHARPS_ITEM_LIMIT.test(errorMessage(error))) return null;
+    throw sharpFailure("HEIF", error);
+  }
+}
+
 /** The file to make the derived files from: the original, or for a HEIC its decoded JPEG. */
 async function decodable(original: string, format: PhotoFormat, context: HeifContext): Promise<Decodable> {
   if (format !== "heif") {
     const maxPixels = format === "jpeg" ? MAX_JPEG_PIXELS : MAX_OTHER_PIXELS;
     return { path: original, maxPixels, autoOrient: true, kind: format };
   }
-  // The header only: its codec, and the primary image's size (refused past the limit before
-  // anything decodes).
-  const header = await decoding("HEIF", () => decoder(original, MAX_HEIF_PIXELS).metadata());
+  const compression = await heifCompression(original);
   // libheif turns the pixels by the file's own rotation (irot) as it decodes, for heif-dec and sharp alike.
   // An AVIF gets no heif-info check (decided in Task 9's review): sharp decodes its primary image
   // alone, and limitInputPixels bounds that one, so nothing else in the file is ever decoded.
-  if (header.compression === "av1") {
+  if (compression === "av1") {
     return { path: original, maxPixels: MAX_OTHER_PIXELS, autoOrient: false, kind: "avif" };
   }
   // heif-dec writes a baseline JPEG, which sharp decodes at a fraction of its size like any other.

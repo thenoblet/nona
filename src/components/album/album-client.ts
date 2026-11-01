@@ -1,4 +1,4 @@
-import { filterQuery, type AlbumFilter, type AlbumItem, type AlbumPage } from "@/lib/media/album-item";
+import { filterQuery, type AlbumFilter, type AlbumItem, type AlbumPage, type AlbumStats } from "@/lib/media/album-item";
 import { createApiClient, type ApiClient } from "./uploader/api";
 
 /*
@@ -43,6 +43,15 @@ export async function fetchPage(filter: AlbumFilter, cursor: string | null, sign
   return body as AlbumPage;
 }
 
+/** The first page again, with the album's counts: the pill past 60 new moments reads both afresh. */
+export async function fetchFirstPageWithStats(filter: AlbumFilter, signal?: AbortSignal): Promise<AlbumPage & { stats: AlbumStats }> {
+  const query = filterQuery(filter);
+  query.set("stats", "1");
+  const { status, body } = await getJson(withQuery("/api/album", query), signal);
+  if (status !== 200) throw new AlbumUnavailable(`The album answered ${status}`);
+  return body as AlbumPage & { stats: AlbumStats };
+}
+
 export type NewerAnswer = { items: AlbumItem[]; complete: boolean; newestCursor: string | null };
 
 /** The moments listed since `since`, for the pill. */
@@ -70,6 +79,13 @@ export async function fetchItem(mediaId: string, signal?: AbortSignal): Promise<
   if (status === 404) return null;
   if (status !== 200) throw new AlbumUnavailable(`The moment answered ${status}`);
   return (body as { item: AlbumItem }).item;
+}
+
+/** Several moments as the album has them now, in one request (a missing one is gone). Throws when it couldn't ask. */
+export async function fetchItems(mediaIds: string[], signal?: AbortSignal): Promise<AlbumItem[]> {
+  const { status, body } = await getJson(`/api/media?ids=${mediaIds.map(encodeURIComponent).join(",")}`, signal);
+  if (status !== 200) throw new AlbumUnavailable(`The moments answered ${status}`);
+  return (body as { items: AlbumItem[] }).items;
 }
 
 let guestCall: Promise<boolean> | null = null;

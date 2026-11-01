@@ -14,12 +14,15 @@ import { createPortal } from "react-dom";
 import { useMusic } from "@/components/music/MusicProvider";
 import { Halo } from "@/components/ui/Halo";
 import { Icon, PlayGlyph } from "@/components/ui/Icon";
-import { detailWords, downloadFilename, sharedByWords, sizeWords, type AlbumItem } from "@/lib/media/album-item";
-import { askPlayable, downloadLink, fetchItem, removeMoment } from "../album-client";
+import { detailWords, sharedByWords, sizeWords, type AlbumItem } from "@/lib/media/album-item";
+import { fetchItem, removeMoment } from "../album-client";
 import { canShareFiles, copyText, inAppBrowser } from "./device";
-import { downloadChoices, savable, type DownloadChoice } from "./downloads";
+import { DownloadMenu } from "./DownloadMenu";
+import { downloadChoices, savable, startDownload, type DownloadChoice } from "./downloads";
 import { choosePlayback, type PlaybackChoice } from "./playback";
-import { downloadFile, fetchWhole, shareFile } from "./save";
+import { useJpegDownload } from "./use-jpeg-download";
+import { useSaveToPhotos } from "./use-save-to-photos";
+import { useVideoPreparation } from "./use-video-preparation";
 import "./viewer.css";
 
 /*
@@ -58,15 +61,6 @@ export type ViewerProps = {
 
 const SETTLE = "cubic-bezier(0.16, 1, 0.3, 1)";
 const EXIT = "cubic-bezier(0.4, 0, 1, 1)";
-/** How often a video being prepared asks after its phone version. */
-const PREPARING_CHECK_MILLISECONDS = 10_000;
-/** How long a video waits for a copy on its way before asking for a conversion instead. */
-const COPY_WAIT_MILLISECONDS = 60_000;
-/** A HEIC's JPEG: asked after every few seconds, for at most two minutes. */
-const JPEG_CHECK_MILLISECONDS = 3_000;
-const JPEG_CHECKS = 40;
-/** A save bigger than this says how much it costs on mobile data. */
-const SIZE_WORTH_SAYING = 5 * 1024 * 1024;
 
 function moves(): boolean {
   return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -77,17 +71,6 @@ function insetOf(element: HTMLElement): string {
   const box = element.getBoundingClientRect();
   return `inset(${box.top}px ${window.innerWidth - box.right}px ${window.innerHeight - box.bottom}px ${box.left}px round 3px)`;
 }
-
-const wait = (milliseconds: number, signal: AbortSignal) =>
-  new Promise<void>((resolve) => {
-    const timer = window.setTimeout(resolve, milliseconds);
-    signal.addEventListener("abort", () => {
-      window.clearTimeout(timer);
-      resolve();
-    }, { once: true });
-  });
-
-type SavePhase = { phase: "idle" } | { phase: "preparing"; percent: number | null } | { phase: "ready"; file: File } | { phase: "done" };
 
 export function Viewer(props: ViewerProps) {
   const { items, startId, total, closing, onMove, onNearEnd, onRequestClose, onExited, onChanged, onRemoved, tileOf } = props;
@@ -105,11 +88,8 @@ export function Viewer(props: ViewerProps) {
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [status, setStatus] = useState("");
-  const [save, setSave] = useState<SavePhase>({ phase: "idle" });
-  const [makingJpeg, setMakingJpeg] = useState(false);
   const [copied, setCopied] = useState(false);
   const [needsConversion, setNeedsConversion] = useState<ReadonlySet<string>>(() => new Set());
-  const [readyChip, setReadyChip] = useState<string | null>(null);
   const statusTimer = useRef<number | null>(null);
   /** The side the next moment comes in from, for its slide-in. */
   const entering = useRef<-1 | 0 | 1>(0);
@@ -135,6 +115,18 @@ export function Viewer(props: ViewerProps) {
     setStatus(text);
     if (lingerMilliseconds) statusTimer.current = window.setTimeout(() => setStatus(""), lingerMilliseconds);
   }, []);
+
+  // Save to Photos, "As JPEG", and a video's phone version on its way: each stops when the guest moves
+  // on or closes the viewer.
+  const saving = item ? savable(item, playback) : null;
+  const saveToPhotos = useSaveToPhotos({ item, saving, say, focusSave: () => saveButton.current?.focus({ preventScroll: true }) });
+  const jpeg = useJpegDownload(say);
+  const { readyChip } = useVideoPreparation({
+    item,
+    playback,
+    onChanged,
+    onGone: () => say("This moment isn't in the album any more.", 4_000),
+  });
 
   // ---------- Opening and closing ----------
 
@@ -225,9 +217,8 @@ export function Viewer(props: ViewerProps) {
     setCurrentId(mediaId);
     setMenuOpen(false);
     setConfirming(false);
-    setSave({ phase: "idle" });
-    setMakingJpeg(false);
-    setReadyChip(null);
+    saveToPhotos.reset();
+    jpeg.stop();
     onMove(mediaId);
   }
 
@@ -320,47 +311,7 @@ export function Viewer(props: ViewerProps) {
     }
   }
 
-  // ---------- A video's phone version ----------
-
-  useEffect(() => {
-    if (!item?.video || playback?.kind !== "preparing") return;
-    const controller = new AbortController();
-    const mediaId = item.id;
-    const startedAt = Date.now();
-    let asked = false;
-    /** A newer state of the moment: once it plays here, the chip says so. */
-    const learn = (fresh: AlbumItem) => {
-      onChanged(fresh);
-      const now = fresh.video ? choosePlayback(fresh.video, (type) => document.createElement("video").canPlayType(type)) : null;
-      if (now?.kind === "converted" || now?.kind === "copy") {
-        setReadyChip(mediaId);
-        window.setTimeout(() => setReadyChip((shown) => (shown === mediaId ? null : shown)), 2_600);
-      }
-    };
-    const ask = async () => {
-      asked = true;
-      const answer = await askPlayable(mediaId, controller.signal);
-      if (controller.signal.aborted || !answer || !item.video) return;
-      if (answer.status === "ready") learn({ ...item, video: { ...item.video, converted: answer.url, conversion: "done" } });
-      else if (answer.status === "failed") onChanged({ ...item, video: { ...item.video, conversion: "failed", conversionFailure: answer.reason } });
-    };
-    (async () => {
-      if (playback.ask) await ask();
-      while (!controller.signal.aborted) {
-        await wait(PREPARING_CHECK_MILLISECONDS, controller.signal);
-        if (controller.signal.aborted) return;
-        if (document.visibilityState !== "visible") continue;
-        const fresh = await fetchItem(mediaId, controller.signal).catch(() => undefined);
-        if (controller.signal.aborted) return;
-        if (fresh) learn(fresh);
-        // A copy that was on its way and hasn't come: the conversion, on demand, instead.
-        if (!asked && Date.now() - startedAt > COPY_WAIT_MILLISECONDS) await ask();
-      }
-    })();
-    return () => controller.abort();
-    // While this moment is being prepared.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.id, playback?.kind]);
+  // ---------- A video that won't play ----------
 
   /** A version that wouldn't play (a link gone stale, or a copy this phone can't play after all): asked after once, then converted. */
   const failedUrls = useRef(new Set<string>());
@@ -383,8 +334,6 @@ export function Viewer(props: ViewerProps) {
 
   // ---------- Download ----------
 
-  const choices = item ? downloadChoices(item) : [];
-
   function openMenu() {
     setMenuOpen(true);
     window.setTimeout(() => root.current?.querySelector<HTMLElement>(".viewer-choice:not(:disabled)")?.focus({ preventScroll: true }), 80);
@@ -394,21 +343,12 @@ export function Viewer(props: ViewerProps) {
     if (focus) downloadButton.current?.focus({ preventScroll: true });
   }
 
-  /** A download through the route, which redirects to its link: the page stays where it is. */
-  function startDownload(variant: string) {
-    if (!item) return;
-    const link = document.createElement("a");
-    link.href = `/api/media/${item.id}/download?variant=${variant}`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-  }
-
-  async function choose(choice: DownloadChoice) {
+  function choose(choice: DownloadChoice) {
     if (!item || choice.disabled) return;
+    const mediaId = item.id;
     if (choice.variant !== "jpeg") {
       closeMenu(true);
-      startDownload(choice.variant);
+      startDownload(mediaId, choice.variant);
       say(
         choice.variant === "original"
           ? `Downloading the original (${sizeWords(item.original.bytes)}). It'll be in your downloads.`
@@ -418,92 +358,11 @@ export function Viewer(props: ViewerProps) {
       return;
     }
     // The first request for a JPEG makes it: the row says so, and the menu waits.
-    setMakingJpeg(true);
-    const controller = new AbortController();
-    const mediaId = item.id;
-    for (let check = 0; check < JPEG_CHECKS; check += 1) {
-      const answer = await downloadLink(mediaId, "jpeg", controller.signal);
-      if (mediaId !== currentIdRef.current) return;
-      if (answer.status === "ready") {
-        setMakingJpeg(false);
-        closeMenu(true);
-        startDownload("jpeg");
-        say("Downloading the JPEG. It'll be in your downloads.", 5_000);
-        return;
-      }
-      if (answer.status !== "preparing") break;
-      await wait(JPEG_CHECK_MILLISECONDS, controller.signal);
-    }
-    setMakingJpeg(false);
-    say("We couldn't make the JPEG just now. Download the original instead.", 6_000);
-  }
-  const currentIdRef = useRef<string | null>(currentId);
-  useEffect(() => {
-    currentIdRef.current = item?.id ?? null;
-  });
-
-  // ---------- Save to Photos ----------
-
-  const saving = item ? savable(item, playback) : null;
-  const saveAbort = useRef<AbortController | null>(null);
-  useEffect(() => () => saveAbort.current?.abort(), [item?.id]);
-
-  async function onSave() {
-    if (!item || !saving) return;
-    if (save.phase === "ready") {
-      const outcome = await shareFile(save.file);
-      if (outcome === "shared") {
-        setSave({ phase: "done" });
-        say("");
-        window.setTimeout(() => setSave((current) => (current.phase === "done" ? { phase: "idle" } : current)), 2_400);
-      } else if (outcome === "dismissed") {
-        say("Still ready. Tap Save now to try again.");
-      } else {
-        downloadFile(save.file);
-        setSave({ phase: "idle" });
-        say("It's in your downloads.", 5_000);
-      }
-      return;
-    }
-    if (save.phase === "preparing") return;
-    const controller = new AbortController();
-    saveAbort.current = controller;
-    const mediaId = item.id;
-    const filename = downloadFilename(item.celebration, item.id, saving.extension);
-    setSave({ phase: "preparing", percent: null });
-    say("");
-    try {
-      let url: string;
-      if ("url" in saving) url = saving.url;
-      else {
-        let answer = await downloadLink(mediaId, saving.variant, controller.signal);
-        for (let check = 0; answer.status === "preparing" && check < JPEG_CHECKS; check += 1) {
-          await wait(JPEG_CHECK_MILLISECONDS, controller.signal);
-          answer = await downloadLink(mediaId, saving.variant, controller.signal);
-        }
-        if (answer.status !== "ready") throw new Error("No link");
-        url = answer.url;
-      }
-      const blob = await fetchWhole(url, {
-        signal: controller.signal,
-        onProgress: (fraction, totalBytes) => {
-          setSave({ phase: "preparing", percent: fraction === null ? null : Math.round(fraction * 100) });
-          if (totalBytes && totalBytes > SIZE_WORTH_SAYING) say(`${sizeWords(totalBytes)} on mobile data. Keep this open.`);
-        },
-      });
-      if (controller.signal.aborted) return;
-      setSave({ phase: "ready", file: new File([blob], filename, { type: saving.type }) });
-      say("Ready. Tap Save now, then choose where to keep it.");
-      saveButton.current?.focus({ preventScroll: true });
-    } catch {
-      if (controller.signal.aborted) return;
-      // The file couldn't be fetched into the page: it downloads instead.
-      setSave({ phase: "idle" });
-      if ("variant" in saving) {
-        startDownload(saving.variant);
-        say("Downloading it instead. It'll be in your downloads.", 5_000);
-      } else say("We couldn't get it ready. Try again in a moment.", 5_000);
-    }
+    void jpeg.start(mediaId, () => {
+      closeMenu(true);
+      startDownload(mediaId, "jpeg");
+      say("Downloading the JPEG. It'll be in your downloads.", 5_000);
+    });
   }
 
   // ---------- Remove my upload ----------
@@ -562,6 +421,7 @@ export function Viewer(props: ViewerProps) {
   const statusLine = status || waitingWords;
   const ratio = item.width && item.height ? item.width / item.height : 3 / 4;
   const waiting = item.kind === "video" && !saving;
+  const { save, onSave } = saveToPhotos;
   const showSave = environment.shareFiles && !environment.inApp;
   const downloadLeads = !showSave && !environment.inApp;
   const saveLabel = save.phase === "preparing" ? "Getting it ready" : save.phase === "ready" ? "Save now" : save.phase === "done" ? "Done" : "Save to Photos";
@@ -670,59 +530,16 @@ export function Viewer(props: ViewerProps) {
             </button>
           ) : null}
           <div className="viewer-secondary">
-            <div className="viewer-dl">
-              <button
-                ref={downloadButton}
-                type="button"
-                className={`viewer-download press${downloadLeads ? " is-primary" : ""}`}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                onClick={() => (menuOpen ? closeMenu(false) : openMenu())}
-              >
-                <Icon name="download" size={16} />
-                <span>Download</span>
-                <Icon name="chevron" size={14} className="viewer-chevron" />
-              </button>
-              <div
-                role="menu"
-                aria-label="Download"
-                className={`viewer-menu${menuOpen ? " is-open" : ""}`}
-                onKeyDown={(event) => {
-                  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-                  event.preventDefault();
-                  const entries = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(".viewer-choice:not(:disabled)"));
-                  const at = entries.indexOf(document.activeElement as HTMLElement);
-                  entries[(at + (event.key === "ArrowDown" ? 1 : -1) + entries.length) % entries.length]?.focus();
-                }}
-              >
-                <div className="viewer-menu-head">
-                  <p>Download</p>
-                  <button type="button" className="viewer-icon-button" aria-label="Close the menu" onClick={() => closeMenu(true)} tabIndex={menuOpen ? 0 : -1}>
-                    <Icon name="close" size={18} />
-                  </button>
-                </div>
-                {choices.map((choice) => {
-                  const busy = choice.prepare && makingJpeg;
-                  return (
-                    <button
-                      key={choice.variant}
-                      type="button"
-                      role="menuitem"
-                      className="viewer-choice"
-                      disabled={choice.disabled || busy}
-                      tabIndex={menuOpen ? 0 : -1}
-                      onClick={() => choose(choice)}
-                    >
-                      <span>
-                        <span className="viewer-choice-label">{choice.label}</span>
-                        <span className="viewer-choice-sub">{busy ? "Making the JPEG…" : choice.sub}</span>
-                      </span>
-                      {choice.disabled || busy ? <span className="viewer-spinner is-light" aria-hidden /> : <Icon name="download" size={18} />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <DownloadMenu
+              choices={downloadChoices(item)}
+              open={menuOpen}
+              primary={downloadLeads}
+              makingJpeg={jpeg.making === item.id}
+              buttonRef={downloadButton}
+              onToggle={() => (menuOpen ? closeMenu(false) : openMenu())}
+              onClose={() => closeMenu(true)}
+              onChoose={choose}
+            />
             {item.mine ? (
               <button ref={removeButton} type="button" className="viewer-remove" onClick={openConfirm}>
                 <span>Remove my upload</span>

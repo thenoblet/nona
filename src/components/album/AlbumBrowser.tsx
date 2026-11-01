@@ -17,9 +17,10 @@ import {
   type AlbumPage,
   type AlbumStats,
 } from "@/lib/media/album-item";
-import { fetchItem, fetchNewCount, fetchNewer, fetchPage, type NewCountAnswer } from "./album-client";
+import { fetchFirstPageWithStats, fetchItem, fetchNewCount, fetchNewer, fetchPage, type NewCountAnswer } from "./album-client";
 import { AlbumUploadsContext } from "./album-uploads";
 import { MediaTile } from "./MediaTile";
+import { useWaitingTiles } from "./use-waiting-tiles";
 import { usePersonalLink } from "./uploader/personal-link";
 import { loadViewer, prefetchViewerWhenIdle } from "./viewer/load";
 import type { ViewerProps } from "./viewer/Viewer";
@@ -59,9 +60,6 @@ function toFilter(filters: Filters): AlbumFilter {
 const NEW_CHECK_MILLISECONDS = 30_000;
 /** After a file of the guest's own is added, a sooner look, once the worker has had a moment. */
 const AFTER_UPLOAD_CHECK_MILLISECONDS = 5_000;
-/** How often a tile of the guest's own that is being made ready asks after itself, and for how long. */
-const WAITING_CHECK_MILLISECONDS = 5_000;
-const WAITING_CHECKS = 36;
 /** The tiles above a phone's fold, loaded at once; the rest lazily. */
 const EAGER_TILES = 9;
 /** How far below the screen the next page starts loading. */
@@ -245,8 +243,10 @@ export function AlbumBrowser({
     try {
       const answer = await fetchNewer(filter, since);
       if (!answer.complete) {
-        const page = await fetchPage(filter, null);
+        // Past 60 new: the first page again, and the counts with it.
+        const { stats: counts, ...page } = await fetchFirstPageWithStats(filter);
         setFresh(new Set(page.items.filter((item) => !present.has(item.id)).map((item) => item.id)));
+        setStats(counts);
         patchListing(key, () => ({ ...page, loading: false, failed: false }));
         return;
       }
@@ -264,28 +264,13 @@ export function AlbumBrowser({
     }
   }
 
-  // The guest's own moments being made ready ask after themselves, and turn ready in place.
-  const waitingIds = items.filter((item) => item.status === "uploaded").map((item) => item.id).join(",");
-  useEffect(() => {
-    if (!waitingIds) return;
-    const controller = new AbortController();
-    let checks = 0;
-    const timer = window.setInterval(async () => {
-      checks += 1;
-      if (checks > WAITING_CHECKS) window.clearInterval(timer);
-      if (document.visibilityState !== "visible") return;
-      for (const mediaId of waitingIds.split(",")) {
-        const item = await fetchItem(mediaId, controller.signal).catch(() => undefined);
-        if (controller.signal.aborted) return;
-        if (item === null) everyListing((moments) => moments.filter((moment) => moment.id !== mediaId));
-        else if (item && item.status !== "uploaded") everyListing((moments) => moments.map((moment) => (moment.id === mediaId ? item : moment)));
-      }
-    }, WAITING_CHECK_MILLISECONDS);
-    return () => {
-      controller.abort();
-      window.clearInterval(timer);
-    };
-  }, [waitingIds, everyListing]);
+  // The guest's own moments being made ready ask after themselves (one shared check for them all),
+  // and turn ready, or failed, in place; one that has gone leaves.
+  const waitingIds = useMemo(() => items.filter((item) => item.status === "uploaded").map((item) => item.id), [items]);
+  useWaitingTiles(waitingIds, (mediaId, item) => {
+    if (item === null) everyListing((moments) => moments.filter((moment) => moment.id !== mediaId));
+    else everyListing((moments) => moments.map((moment) => (moment.id === mediaId ? item : moment)));
+  });
 
   // The viewer, by the address: #m/<id> opens it (a moment's own link, or Back to it), anything else closes it.
   const openById = useCallback(
@@ -416,7 +401,7 @@ export function AlbumBrowser({
           {emptyWords(filters)}
         </p>
       ) : (
-        <ul aria-label="Moments" className={`album-grid${listing.loading && listing.items.length > 0 && !listing.nextCursor ? " opacity-60" : ""}`}>
+        <ul aria-label="Moments" className="album-grid">
           {items.map((item, index) => (
             <MediaTile
               key={item.id}

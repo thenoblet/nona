@@ -53,10 +53,12 @@ export function downloadChoices(item: AlbumItem): DownloadChoice[] {
   return [choice("original", "Original photo", `${type} · ${sizeWords(bytes)} · full size`)];
 }
 
-/** What Save to Photos fetches: through the download route (a photo), or a public URL (a video's version). */
-export type Savable =
-  | { variant: DownloadVariant; extension: string; type: string }
-  | { url: string; extension: string; type: string };
+/**
+ * What Save to Photos fetches: through the download route (a photo, a HEIC's JPEG), or straight
+ * from a public URL (a video's version); and, should it not fetch, the download it falls back to
+ * (Ruling BO).
+ */
+export type Savable = { variant: DownloadVariant; url?: string; extension: string; type: string };
 
 const PHOTO_TYPES: Record<string, string> = { jpeg: "image/jpeg", jpg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", avif: "image/avif" };
 
@@ -67,10 +69,19 @@ const PHOTO_TYPES: Record<string, string> = { jpeg: "image/jpeg", jpg: "image/jp
  */
 export function savable(item: AlbumItem, playback: PlaybackChoice | null): Savable | null {
   if (item.kind === "video") {
-    if (playback?.kind === "converted" || playback?.kind === "copy") return { url: playback.url, extension: "mp4", type: "video/mp4" };
+    if (playback?.kind === "converted" || playback?.kind === "copy") return { variant: "converted", url: playback.url, extension: "mp4", type: "video/mp4" };
     return null;
   }
   if (item.heic) return { variant: "jpeg", extension: "jpg", type: "image/jpeg" };
   const extension = item.original.type.toLowerCase() === "jpeg" ? "jpg" : item.original.type.toLowerCase();
   return { variant: "original", extension, type: PHOTO_TYPES[extension] ?? "image/jpeg" };
+}
+
+/** A download through the route, which redirects to its presigned link: the page stays where it is. */
+export function startDownload(mediaId: string, variant: DownloadVariant): void {
+  const link = document.createElement("a");
+  link.href = `/api/media/${encodeURIComponent(mediaId)}/download?variant=${variant}`;
+  document.body.append(link);
+  link.click();
+  link.remove();
 }

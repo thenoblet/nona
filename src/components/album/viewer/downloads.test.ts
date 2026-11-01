@@ -75,7 +75,9 @@ describe("savable", () => {
     expect(savable(item({}), null)).toEqual({ variant: "original", extension: "jpg", type: "image/jpeg" });
     expect(savable(item({ heic: true, original: { type: "HEIC", bytes: 1 } }), null)).toEqual({ variant: "jpeg", extension: "jpg", type: "image/jpeg" });
     expect(savable(item({ original: { type: "PNG", bytes: 1 } }), null)).toEqual({ variant: "original", extension: "png", type: "image/png" });
+    // A video's version carries its download too, for when its file won't fetch (Ruling BO).
     expect(savable(videoItem({}), { kind: "copy", url: "https://media.example/playable.mp4" })).toEqual({
+      variant: "converted",
       url: "https://media.example/playable.mp4",
       extension: "mp4",
       type: "video/mp4",
