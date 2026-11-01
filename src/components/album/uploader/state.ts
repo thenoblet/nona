@@ -1,4 +1,4 @@
-import { checkUpload } from "@/lib/media/limits";
+import { checkUpload, type GuestUploadPurpose } from "@/lib/media/limits";
 
 /*
  * What the album page shows of the guest's uploads, framework-free and small: it ships with the
@@ -47,7 +47,8 @@ export type UploadItem = {
   readonly source: UploadSource;
   /** The type the upload declares: the file's own, or one from its name when the phone gave none. */
   readonly contentType: string;
-  readonly kind: "photo" | "video";
+  /** A photo or a video for the album; a wish's voice note is audio (Task 16). */
+  readonly kind: "photo" | "video" | "audio";
   /** An object URL of the guest's own file for its thumbnail; null where none can be made. */
   readonly previewUrl: string | null;
   readonly status: UploadStatus;
@@ -117,6 +118,8 @@ export const UPLOAD_WORDS = {
   /** Ruling BA: a file the phone can no longer read, as it changed after the pick; the button opens the picker. */
   photoChanged: "This photo changed after you chose it",
   videoChanged: "This video changed after you chose it",
+  /** A wish's recording picked from the phone's own recorder that changed after it was chosen (Task 16). */
+  recordingChanged: "This recording changed after you chose it",
   chooseItAgain: "Choose it again.",
   /** Ruling BE: a big or slow upload, said calmly; a page can't send once it closes, so never promise that. */
   bigVideo: "This is a big video, so it may take a few minutes on mobile data.",
@@ -179,6 +182,16 @@ const TYPE_BY_EXTENSION: Record<string, string> = {
   webm: "video/webm",
   "3gp": "video/3gpp",
   mkv: "video/x-matroska",
+  // A wish's voice note from the phone's own recorder (Task 16).
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  mp3: "audio/mpeg",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/ogg",
+  wav: "audio/wav",
+  amr: "audio/amr",
+  weba: "audio/webm",
 };
 
 // Older names some phones still give the album's types.
@@ -205,13 +218,14 @@ export function declaredType(file: Pick<File, "name" | "type">): string {
 }
 
 /**
- * Whether the album takes the file, checked before any byte is sent (the upload API checks again):
- * null when it does, else why not. Over its limit, in gate A's words, with no Try again.
+ * Whether the album (or, for a wish, the guestbook) takes the file, checked before any byte is sent
+ * (the upload API checks again): null when it does, else why not. Over its limit, in gate A's
+ * words (a wish's, in the upload API's), with no Try again.
  */
-function refusal(file: File, contentType: string, kind: UploadItem["kind"]): UploadFailure | null {
-  const checked = checkUpload({ purpose: "album", filename: file.name, contentType, size: file.size });
+function refusal(file: File, contentType: string, kind: UploadItem["kind"], purpose: GuestUploadPurpose): UploadFailure | null {
+  const checked = checkUpload({ purpose, filename: file.name, contentType, size: file.size });
   if (checked.ok) return null;
-  if (checked.error === "too-large") {
+  if (checked.error === "too-large" && purpose === "album") {
     return kind === "video"
       ? { reason: UPLOAD_WORDS.overVideoLimit, hint: UPLOAD_WORDS.trimHint, canRetry: false }
       : { reason: UPLOAD_WORDS.overPhotoLimit, hint: null, canRetry: false };
@@ -258,7 +272,7 @@ function noticeOf(items: readonly UploadItem[], slow: boolean): string | null {
 }
 
 /** What a file's thumbnail shows (Ruling BB). */
-export type ThumbSource = { kind: "local" | "server"; url: string } | { kind: "icon"; icon: "image" | "video" };
+export type ThumbSource = { kind: "local" | "server"; url: string } | { kind: "icon"; icon: "image" | "video" | "mic" };
 
 /**
  * The guest's own picture while the phone can draw it; else the server's thumbnail once there is
@@ -267,7 +281,7 @@ export type ThumbSource = { kind: "local" | "server"; url: string } | { kind: "i
 export function thumbOf(item: Pick<UploadItem, "kind" | "previewUrl" | "serverThumbUrl">, localFailed: boolean): ThumbSource {
   if (item.previewUrl && !localFailed) return { kind: "local", url: item.previewUrl };
   if (item.serverThumbUrl) return { kind: "server", url: item.serverThumbUrl };
-  return { kind: "icon", icon: item.kind === "video" ? "video" : "image" };
+  return { kind: "icon", icon: item.kind === "video" ? "video" : item.kind === "audio" ? "mic" : "image" };
 }
 
 /**
@@ -328,9 +342,12 @@ export function createUploadStore(
     newId?: () => string;
     tidy?: Partial<TidyTimings>;
     reducedMotion?: () => boolean;
+    /** What the files are for: the album (its photos and videos), or a wish (a voice note or a video message). */
+    purpose?: GuestUploadPurpose;
   } = {},
 ): UploadStore {
   const previews = options.previews ?? browserPreviews;
+  const purpose = options.purpose ?? "album";
   const tidyTimings = { ...TIDY_TIMINGS, ...options.tidy };
   const reducedMotion = options.reducedMotion ?? prefersReducedMotion;
   let made = 0;
@@ -440,8 +457,8 @@ export function createUploadStore(
       }
       const added = files.map((file): UploadItem => {
         const contentType = declaredType(file);
-        const kind = contentType.startsWith("video/") ? "video" : "photo";
-        const failure = refusal(file, contentType, kind);
+        const kind = contentType.startsWith("video/") ? "video" : contentType.startsWith("audio/") ? "audio" : "photo";
+        const failure = refusal(file, contentType, kind, purpose);
         return {
           id: newId(),
           file,

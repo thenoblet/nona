@@ -19,6 +19,7 @@ import { deletableFrom } from "./moderation";
 import { decodeTimeCursor, encodeTimeCursor } from "./time-cursor";
 import { getDb } from "@/lib/db/client";
 import { wishes } from "@/lib/db/schema";
+import { publicUrl } from "@/lib/storage/keys";
 
 // Against the test database (docker compose up -d db). Each describe but the plans' starts every
 // test from an empty database; the plans' fill it once.
@@ -269,6 +270,36 @@ describe("the admin's wishes", () => {
     expect(await countAdminWishes()).toBe(3);
     expect(await findAdminWish(hidden[0].id)).toMatchObject({ id: hidden[0].id, hiddenAt: expect.any(String) });
     expect(await findAdminWish("not-an-id")).toBeNull();
+  });
+
+  it("plays a ready recording from the file the wall plays (and a video's poster); none while it is made, failed or hidden", async () => {
+    const insertWish = async (kind: "voice" | "video", mediaId: string) =>
+      (await getDb().insert(wishes).values({ signedAs: "Kwame", kind, mediaId }).returning())[0].id;
+    const voiceId = await addAlbumItem({ purpose: "wish", kind: "audio", derived: { audio: "derived/v/0123456789abcdef/audio.m4a" } });
+    const videoId = await addAlbumItem({
+      purpose: "wish",
+      kind: "video",
+      derived: { video: "derived/w/0123456789abcdef/video.mp4", "poster-view": "derived/w/0123456789abcdef/poster-view.webp" },
+    });
+    const processingId = await addAlbumItem({ purpose: "wish", kind: "audio", status: "uploaded" });
+    const hiddenId = await addAlbumItem({
+      purpose: "wish",
+      kind: "audio",
+      derived: { audio: "derived/h/0123456789abcdef/audio.m4a" },
+      hiddenAt: new Date(),
+      hiddenBy: "couple@example.com",
+    });
+    const voice = await insertWish("voice", voiceId);
+    const video = await insertWish("video", videoId);
+    const processing = await insertWish("voice", processingId);
+    const hidden = await insertWish("voice", hiddenId);
+
+    expect((await findAdminWish(voice))?.recording).toMatchObject({ url: publicUrl("derived/v/0123456789abcdef/audio.m4a"), poster: null });
+    expect((await findAdminWish(video))?.recording).toMatchObject({
+      url: publicUrl("derived/w/0123456789abcdef/video.mp4"),
+      poster: publicUrl("derived/w/0123456789abcdef/poster-view.webp"),
+    });
+    for (const id of [processing, hidden]) expect((await findAdminWish(id))?.recording).toMatchObject({ url: null, poster: null });
   });
 
   it("pages the wishes by a cursor", async () => {

@@ -3,32 +3,12 @@
 import { useEffect, useId, useRef, useState, useTransition, type KeyboardEvent } from "react";
 import { deleteWishAction, hideWishAction, unhideWishAction, type WishActionResult } from "@/app/admin/photos/actions";
 import { lockWords, longTimeWords, shortTimeWords, wishBadgeOf, type AdminWish, type AdminWishPage } from "@/lib/media/admin-item";
-import { clockTime } from "@/lib/media/album-item";
 import { AdminIcon } from "./AdminIcon";
+import { WishRecording } from "./WishRecording";
 
 const NOT_DONE = "That didn't work. Check the connection, reload the page and try again.";
 const LOAD_FAILED = "That didn't load. Check the connection and try again.";
 const LOAD_TIMEOUT_MILLISECONDS = 15_000;
-
-/**
- * A voice or video wish's recording, where Task 16 plays it: today its kind and length, and its
- * original through the couple's own 15-minute link.
- */
-function WishRecording({ wish }: { wish: AdminWish }) {
-  if (!wish.recording) return null;
-  const what = wish.kind === "video" ? "Video message" : "Voice note";
-  return (
-    <span className="admin-wish-recording">
-      <span className="admin-wish-body">
-        {what}
-        {wish.recording.seconds !== null ? ` · ${clockTime(wish.recording.seconds)}` : ""}
-      </span>
-      <a className="admin-linkbtn" href={`/admin/photos/original/${wish.recording.mediaId}`} target="_blank" rel="noopener noreferrer">
-        Open original
-      </a>
-    </span>
-  );
-}
 
 /** One wish's row: what it says, who sent it and when, its status, and Hide or Unhide and Delete permanently. */
 function WishRow({

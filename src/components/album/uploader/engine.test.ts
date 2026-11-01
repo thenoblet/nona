@@ -195,15 +195,21 @@ function memoryStorage(): StorageLike {
 
 class FakeNetwork implements EngineEnvironment {
   offline = false;
-  readonly #online: (() => void)[] = [];
-  readonly #pageHide: (() => void)[] = [];
+  readonly #online = new Set<() => void>();
+  readonly #pageHide = new Set<() => void>();
   onOnline(listener: () => void) {
-    this.#online.push(listener);
+    this.#online.add(listener);
+    return () => void this.#online.delete(listener);
   }
   // An arrow: the uploader hands it on unbound, as it does the browser's own.
   readonly onPageHide = (listener: () => void) => {
-    this.#pageHide.push(listener);
+    this.#pageHide.add(listener);
+    return () => void this.#pageHide.delete(listener);
   };
+  /** How many listeners the uploader has left on the page. */
+  get listening(): number {
+    return this.#online.size + this.#pageHide.size;
+  }
   /** The page goes: the events still waiting are sent. */
   pageHide() {
     for (const listener of this.#pageHide) listener();
@@ -219,15 +225,17 @@ class FakeNetwork implements EngineEnvironment {
 
 const engines: Engine[] = [];
 
-function setUp(options: { storage?: StorageLike; server?: FakeServer; timings?: Partial<UploadTimings> } = {}) {
+function setUp(
+  options: { storage?: StorageLike | null; server?: FakeServer; timings?: Partial<UploadTimings>; purpose?: "album" | "wish" } = {},
+) {
   const server = options.server ?? new FakeServer();
   const network = new FakeNetwork();
-  const storage = options.storage ?? memoryStorage();
-  const store = createUploadStore({ previews: { create: () => null, revoke: () => {} } });
+  const storage = options.storage === undefined ? memoryStorage() : options.storage;
+  const store = createUploadStore({ previews: { create: () => null, revoke: () => {} }, purpose: options.purpose });
   const guard = { updates: [] as boolean[], update: (busy: boolean) => guard.updates.push(busy) };
   const engine = startEngine(
     store,
-    { guestName: () => "Ama", onPersonalLink: () => {} },
+    { guestName: () => "Ama", onPersonalLink: () => {}, purpose: options.purpose },
     {
       api: createApiClient({ fetch: server.fetch, sleep: async () => {} }),
       putPart: server.putPart,
@@ -400,6 +408,89 @@ describe("the uploader", () => {
     expect(itemOf(store, item.id)?.failure).toEqual({ reason: "This file took too long to open", hint: null, canRetry: true });
     engine.retry(item.id);
     expect(itemOf(store, item.id)?.status).not.toBe("failed");
+  });
+});
+
+describe("a wish's recording (Task 16, Ruling BU: the same upload client)", () => {
+  it("goes up as purpose wish, a voice note as audio, through the same honest steps, and is added only on the complete's answer", async () => {
+    const { server, store, pick, guard } = setUp({ purpose: "wish", storage: null });
+    const voice = new File([new Uint8Array(3 * MEBIBYTE).fill(3)], "voice-wish.webm", { type: "audio/webm" });
+
+    const [item] = pick([voice], "video");
+    expect(item).toMatchObject({ kind: "audio", contentType: "audio/webm", status: "queued" });
+    await until(() => itemOf(store, item.id)?.status === "added");
+
+    const start = server.calls.find((call) => call.path === "/api/uploads");
+    expect(start?.body).toMatchObject({ purpose: "wish", filename: "voice-wish.webm", contentType: "audio/webm", size: 3 * MEBIBYTE });
+    expect(itemOf(store, item.id)?.mediaId).toBe("media-1");
+    // The page was guarded while it sent, and let go once it arrived.
+    expect(guard.updates).toEqual([true, false]);
+  });
+
+  it("lets go of everything once destroyed (the sending card has gone): the page guard, and no more sends", async () => {
+    const { server, network, store, pick, engine, guard } = setUp({ purpose: "wish", storage: null });
+    const [item] = pick([new File([new Uint8Array(MEBIBYTE).fill(4)], "voice-wish.webm", { type: "audio/webm" })], "video");
+    await until(() => itemOf(store, item.id)?.status === "added");
+    const callsBefore = server.calls.length;
+    expect(network.listening).toBeGreaterThan(0);
+
+    engine.destroy();
+    engine.destroy();
+    store.add([new File([new Uint8Array(MEBIBYTE).fill(5)], "another.webm", { type: "audio/webm" })], "video");
+    engine.pump();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(server.calls.length).toBe(callsBefore);
+    expect(guard.updates.at(-1)).toBe(false);
+    // Nothing on the page still holds it (fix round 2, N1): the uploader and its file can be collected.
+    expect(network.listening).toBe(0);
+  });
+
+  it("takes every listener it put on the browser's window off again when destroyed", () => {
+    const page = new EventTarget();
+    const added: string[] = [];
+    const removed: string[] = [];
+    const add = page.addEventListener.bind(page);
+    const remove = page.removeEventListener.bind(page);
+    page.addEventListener = (type: string, listener: EventListenerOrEventListenerObject | null) => {
+      added.push(type);
+      add(type, listener);
+    };
+    page.removeEventListener = (type: string, listener: EventListenerOrEventListenerObject | null) => {
+      removed.push(type);
+      remove(type, listener);
+    };
+    const realWindow = (globalThis as { window?: unknown }).window;
+    (globalThis as { window?: unknown }).window = page;
+    try {
+      const store = createUploadStore({ previews: { create: () => null, revoke: () => {} }, purpose: "wish" });
+      const engine = startEngine(
+        store,
+        { guestName: () => "Ama", onPersonalLink: () => {}, purpose: "wish" },
+        { api: createApiClient({ fetch: new FakeServer().fetch, sleep: async () => {} }), storage: null, pageGuard: { update: () => {} } },
+      );
+      // Its own (back online; the page going, for itself and its event reporter) and Uppy's.
+      expect(added.filter((type) => type === "pagehide")).toHaveLength(2);
+      expect(added.filter((type) => type === "online").length).toBeGreaterThanOrEqual(1);
+
+      engine.destroy();
+
+      expect(removed.sort()).toEqual(added.sort());
+    } finally {
+      (globalThis as { window?: unknown }).window = realWindow;
+    }
+  });
+
+  it("sends a video message as purpose wish too, and the album's own as album", async () => {
+    const wish = setUp({ purpose: "wish", storage: null });
+    wish.pick([video(MEBIBYTE, "video-wish.webm")], "video");
+    await until(() => wish.server.calls.some((call) => call.path === "/api/uploads"));
+    expect(wish.server.calls.find((call) => call.path === "/api/uploads")?.body).toMatchObject({ purpose: "wish" });
+
+    const album = setUp();
+    album.pick([video(MEBIBYTE)]);
+    await until(() => album.server.calls.some((call) => call.path === "/api/uploads"));
+    expect(album.server.calls.find((call) => call.path === "/api/uploads")?.body).toMatchObject({ purpose: "album" });
   });
 });
 

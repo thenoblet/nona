@@ -60,6 +60,19 @@ const paths = {
       <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
     </>
   ),
+  "mic-off": (
+    <>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3M3 3l18 18" />
+    </>
+  ),
+  "camera-off": (
+    <>
+      <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
+      <circle cx="12" cy="13" r="3.5" />
+      <path d="M3 3l18 18" />
+    </>
+  ),
   playlist: (
     <>
       <path d="M4 6h11M4 12h11M4 18h7" />

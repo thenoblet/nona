@@ -843,10 +843,21 @@ describe("the manifest, written from the database's current state (manifest writ
 });
 
 describe("wishes", () => {
+  /** A ready voice wish, as media.wish leaves its recording: its M4A named, sent by a guest of its own. */
   async function voiceWish(mediaValues: Partial<typeof media.$inferInsert> = {}) {
-    const mediaId = await addItem({ purpose: "wish", kind: "audio", ...mediaValues });
-    const wish = await addWish({ kind: "voice", mediaId, signedAs: "Ama" });
-    return { wishId: wish.id, mediaId };
+    const guestId = await addGuest();
+    const id = randomUUID();
+    const mediaId = await addItem({
+      id,
+      purpose: "wish",
+      kind: "audio",
+      guestId,
+      derived: { audio: derivedKey(id, "0123456789abcdef", "audio", "m4a") },
+      ...mediaValues,
+    });
+    const wish = await addWish({ kind: "voice", mediaId, signedAs: "Ama", guestIds: [guestId] }, { defer: () => {} });
+    if (!wish) throw new Error("addWish refused the recording");
+    return { wishId: wish.id, mediaId, guestId };
   }
 
   it("hideWish takes a text wish off the wall", async () => {
@@ -860,16 +871,21 @@ describe("wishes", () => {
   });
 
   it("hideWish and unhideWish act on a voice wish's recording too", async () => {
-    const { wishId, mediaId } = await voiceWish();
+    const { wishId, mediaId, guestId } = await voiceWish();
+    expect((await listWishes()).map((wish) => wish.id)).toEqual([wishId]);
 
     await hideWish(wishId, ADMIN);
     expect(await isVisible(mediaId)).toBe(false);
     expect(await jobsOf(MEDIA_QUEUES.visibility, mediaId)).toHaveLength(1);
+    expect(await listWishes([guestId])).toEqual([]);
 
     expect(await unhideWish(wishId, ADMIN)).toEqual({ ok: true });
     expect(await isVisible(mediaId)).toBe(true);
-    expect((await listWishes()).map((wish) => wish.id)).toEqual([wishId]);
+    // Its files were withdrawn, so it is made again (media.wish): until then, only its sender sees
+    // it, being made ready (Ruling BR).
     expect(await jobsOf(MEDIA_QUEUES.wish, mediaId)).toHaveLength(1);
+    expect(await listWishes()).toEqual([]);
+    expect(await listWishes([guestId])).toMatchObject([{ id: wishId, pending: { mediaId, state: "processing" } }]);
   });
 
   it("deleteWishPermanently removes a text wish's words and signature at once, leaving a tombstone (Ruling AU)", async () => {

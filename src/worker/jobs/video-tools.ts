@@ -37,14 +37,19 @@ export class ToolTimeoutError extends Error {
 export type ReadingArgs = string[];
 
 /**
- * As one of the two video demuxers only (MOV/MP4/3GP and Matroska/WebM), probing no more than
- * ffmpeg's defaults: what every read of an original adds to how it reaches it.
+ * As one of `demuxers` only (-format_whitelist), probing no more than ffmpeg's defaults: what every
+ * read of an original adds to how it reaches it.
  */
-export const VIDEO_READING_LIMITS = [
-  ...["-format_whitelist", VIDEO_DEMUXERS],
-  ...["-probesize", String(PROBE_BYTES)],
-  ...["-analyzeduration", String(PROBE_MICROSECONDS)],
-];
+export function readingLimits(demuxers: string): string[] {
+  return [
+    ...["-format_whitelist", demuxers],
+    ...["-probesize", String(PROBE_BYTES)],
+    ...["-analyzeduration", String(PROBE_MICROSECONDS)],
+  ];
+}
+
+/** As one of the two video demuxers only (MOV/MP4/3GP and Matroska/WebM): every read of a video's original. */
+export const VIDEO_READING_LIMITS = readingLimits(VIDEO_DEMUXERS);
 
 /**
  * How ffprobe and ffmpeg open an original in the job's scratch folder: as a file and nothing else,
@@ -86,9 +91,12 @@ export type VideoToolRun = {
   source: "link" | "scratch";
   /** A presigned link among the arguments, kept out of what the tool prints. */
   redact?: RedactedLink;
+  /** What the file is called in a failure's message: "the video" unless a job says otherwise ("the recording"). */
+  subject?: string;
 };
 
-type FailureContext = Pick<VideoToolRun, "memoryBytes" | "retryCount"> & Partial<Pick<VideoToolRun, "source" | "cpuSeconds">>;
+type FailureContext = Pick<VideoToolRun, "memoryBytes" | "retryCount"> &
+  Partial<Pick<VideoToolRun, "source" | "cpuSeconds" | "subject">>;
 
 // Something between the tool and R2 failed, not the file: a protocol layer complained (ffmpeg
 // names it in its log line), R2 answered with an HTTP error, or the connection was refused, reset,
@@ -159,6 +167,7 @@ export function blameFileFromThirdAttempt(message: string, retryCount: number, s
  */
 export function videoToolFailure(tool: "ffprobe" | "ffmpeg", error: unknown, context: FailureContext): Error {
   const source = context.source ?? "link";
+  const subject = context.subject ?? "the video";
   if (!(error instanceof ProcessError)) {
     const code = (error as { code?: unknown } | null)?.code;
     const name = error instanceof Error ? error.name : "an unknown error";
@@ -167,10 +176,10 @@ export function videoToolFailure(tool: "ffprobe" | "ffmpeg", error: unknown, con
   const lastLine = lastLineOf(error.stderrTail);
   const ending = describeEnding(error);
   if (error.ending === "too-much-output") {
-    return blameFileFromThirdAttempt(`${tool} printed far too much reading the video: ${ending}`, context.retryCount, source);
+    return blameFileFromThirdAttempt(`${tool} printed far too much reading ${subject}: ${ending}`, context.retryCount, source);
   }
-  if (error.ending === "timeout") return new ToolTimeoutError(`${tool} didn't finish with the video: ${ending}`);
-  if (error.ending !== "exit") return new Error(`${tool} didn't finish with the video: ${ending}`);
+  if (error.ending === "timeout") return new ToolTimeoutError(`${tool} didn't finish with ${subject}: ${ending}`);
+  if (error.ending !== "exit") return new Error(`${tool} didn't finish with ${subject}: ${ending}`);
   if (toolDidNotRun(error)) return new Error(`${tool} couldn't run: ${ending}: ${lastLine}`);
   if (UNKNOWN_OPTION.test(error.stderrTail)) {
     return new Error(`${tool} doesn't know an option the worker gave it (is it ffmpeg 7.1?): ${ending}: ${lastLine}`);
@@ -179,14 +188,14 @@ export function videoToolFailure(tool: "ffprobe" | "ffmpeg", error: unknown, con
   if (context.cpuSeconds !== undefined && (error.exitSignal === "SIGXCPU" || CPU_TIME_USED_UP.test(error.stderrTail))) {
     // Waiting for a CPU doesn't count, so a busy box can't do this: the file made it work this hard.
     return blameFileFromThirdAttempt(
-      `${tool} used up its ${context.cpuSeconds} s of CPU time on the video: ${ending}: ${lastLine}`,
+      `${tool} used up its ${context.cpuSeconds} s of CPU time on ${subject}: ${ending}: ${lastLine}`,
       context.retryCount,
       source,
     );
   }
   if (error.exitCode !== null && NOT_ALLOWED_FORMAT.test(error.stderrTail)) {
     const refusal = error.stderrTail.split("\n").find((line) => NOT_ALLOWED_FORMAT.test(line)) ?? lastLine;
-    return new PermanentJobError("unsupported-type", `The original isn't a video the album takes: ${refusal.trim()}`);
+    return new PermanentJobError("unsupported-type", `The original isn't in a format ${subject} may be in: ${refusal.trim()}`);
   }
   if (error.exitCode !== null && NETWORK_TROUBLE.test(error.stderrTail)) {
     const what = source === "link" ? "read the original from R2" : "read or write its files on the scratch disk";
@@ -197,7 +206,7 @@ export function videoToolFailure(tool: "ffprobe" | "ffmpeg", error: unknown, con
     return new Error(`${tool} couldn't start its threads, under a ${context.memoryBytes}-byte cap: ${ending}: ${lastLine}`);
   }
   return blameFileFromThirdAttempt(
-    `${tool} couldn't read the video, under a ${context.memoryBytes}-byte cap: ${ending}: ${lastLine}`,
+    `${tool} couldn't read ${subject}, under a ${context.memoryBytes}-byte cap: ${ending}: ${lastLine}`,
     context.retryCount,
     source,
   );

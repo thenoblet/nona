@@ -22,8 +22,11 @@ export const SIZE_LIMITS = {
   photo: 50 * MEBIBYTE,
   video: 2 * 1024 * MEBIBYTE,
   voiceWish: 20 * MEBIBYTE,
-  videoWish: 200 * MEBIBYTE,
+  // Ruling CD: an iPhone filming 4K60 HDR passes 200 MB in about 25 s; the worker trims to 30 s anyway.
+  videoWish: 400 * MEBIBYTE,
 } as const;
+
+export { WISH_SECONDS } from "./wish-seconds";
 
 /** A file under 256 MiB goes up in parts of 8 MiB, the last one smaller. */
 export const PART_SIZE_BYTES = 8 * MEBIBYTE;
@@ -133,7 +136,7 @@ const ACCEPTED: Record<GuestUploadPurpose, Record<string, Accepted>> = {
   },
   wish: {
     ...accepting(VOICE_TYPES, "audio", SIZE_LIMITS.voiceWish, "This voice message is over 20 MB, the most a wish takes."),
-    ...accepting(VIDEO_TYPES, "video", SIZE_LIMITS.videoWish, "This video message is over 200 MB, the most a wish takes."),
+    ...accepting(VIDEO_TYPES, "video", SIZE_LIMITS.videoWish, "This video message is over 400 MB, the most a wish takes."),
   },
 };
 

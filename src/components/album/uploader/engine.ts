@@ -1,4 +1,5 @@
 import AwsS3, { type AwsS3Part, type AwsS3UploadParameters } from "@uppy/aws-s3";
+import type { GuestUploadPurpose } from "@/lib/media/limits";
 import Uppy, { type UppyFile } from "@uppy/core";
 import { createApiClient, type ApiAnswer, type ApiClient } from "./api";
 import { EventReporter } from "./events";
@@ -104,16 +105,26 @@ type FileMeta = { itemId: string; relativePath: string };
 type FileBody = Record<string, never>;
 type EngineFile = UppyFile<FileMeta, FileBody>;
 
-/** Where the uploader hears that the phone is back online or the page is going. */
+/**
+ * Where the uploader hears that the phone is back online or the page is going. Each returns what
+ * stops it hearing, which destroy() calls: a listener left on `window` would keep a destroyed
+ * uploader, and the file it held, from ever being let go.
+ */
 export type EngineEnvironment = {
-  onOnline(listener: () => void): void;
-  onPageHide(listener: () => void): void;
+  onOnline(listener: () => void): () => void;
+  onPageHide(listener: () => void): () => void;
   isOffline(): boolean;
 };
 
+/** Listens on `window` for `type`; returns what stops it. */
+function listenOnWindow(type: "online" | "pagehide", listener: () => void): () => void {
+  window.addEventListener(type, listener);
+  return () => window.removeEventListener(type, listener);
+}
+
 const browserEnvironment: EngineEnvironment = {
-  onOnline: (listener) => window.addEventListener("online", listener),
-  onPageHide: (listener) => window.addEventListener("pagehide", listener),
+  onOnline: (listener) => listenOnWindow("online", listener),
+  onPageHide: (listener) => listenOnWindow("pagehide", listener),
   isOffline: () => typeof navigator !== "undefined" && navigator.onLine === false,
 };
 
@@ -178,6 +189,11 @@ function handOver(): Run["handedOver"] {
 type CancelResult = "done" | "refused" | "unanswered";
 
 export type EngineOptions = {
+  /**
+   * What the files are for (POST /api/uploads's purpose): the album's, unless a wish's recording
+   * is sending (Task 16, Ruling BU: one upload client for both).
+   */
+  purpose?: GuestUploadPurpose;
   /** The guest's name on this phone, sent with their guest and each upload. */
   guestName: () => string | null;
   /** Called with the guest's personal link once POST /api/guest answers. */
@@ -195,6 +211,12 @@ export type Engine = {
   dismiss(itemId: string): void;
   /** Sends again the Cancels an earlier visit couldn't get answered. */
   replayPendingCancels(): Promise<void>;
+  /**
+   * Lets the uploader go once its card has gone (a wish's sending card, Task 16): its timers, its
+   * store subscription, its listeners on the page, the page guard and Uppy, so it and the file it
+   * held can be collected. Events still waiting are sent first; nothing else is sent after this.
+   */
+  destroy(): void;
 };
 
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -239,6 +261,10 @@ class UploadEngine implements Engine {
   #guarding = false;
   /** When this page last told other tabs it is still sending. */
   #lastSaidSendingAt = 0;
+  /** Lets go of the store's updates and the page's events (destroy). */
+  #unsubscribe: () => void = () => {};
+  readonly #stopHearing: (() => void)[] = [];
+  #destroyed = false;
 
   constructor(store: UploadStore, options: EngineOptions, dependencies: EngineDependencies) {
     this.#store = store;
@@ -290,13 +316,15 @@ class UploadEngine implements Engine {
     });
     this.#uppy.on("upload-success", (file) => this.#settled(file, null));
     this.#uppy.on("upload-error", (file, error) => this.#settled(file, error ?? new Error("The upload failed")));
-    this.#environment.onOnline(() => {
-      for (const waiter of this.#onlineWaiters.splice(0)) waiter();
-      this.pump();
-    });
-    this.#store.subscribe(() => this.#watchSending());
+    this.#stopHearing.push(
+      this.#environment.onOnline(() => {
+        for (const waiter of this.#onlineWaiters.splice(0)) waiter();
+        this.pump();
+      }),
+    );
+    this.#unsubscribe = this.#store.subscribe(() => this.#watchSending());
     this.#watchSending();
-    this.#environment.onPageHide(() => stopSayingSending(this.#storage));
+    this.#stopHearing.push(this.#environment.onPageHide(() => stopSayingSending(this.#storage)));
   }
 
   // ---------- While files send (Ruling BE) ----------
@@ -369,7 +397,7 @@ class UploadEngine implements Engine {
 
   pump(): void {
     clearTimeout(this.#pumpTimer);
-    if (this.#environment.isOffline()) return;
+    if (this.#destroyed || this.#environment.isOffline()) return;
     const now = Date.now();
     let wakeAt = Number.POSITIVE_INFINITY;
     // Smallest first: a photo picked with a big video is Added in moments, not after the video.
@@ -444,6 +472,24 @@ class UploadEngine implements Engine {
     // Gone for good, even while a start is still on its way: #run holds its own run to finish with,
     // and a Cancel still owed is sent again then (or on the next visit), with nothing on the card.
     this.#runs.delete(itemId);
+  }
+
+  destroy(): void {
+    if (this.#destroyed) return;
+    this.#destroyed = true;
+    clearTimeout(this.#pumpTimer);
+    clearInterval(this.#timeLeftTimer);
+    this.#timeLeftTimer = undefined;
+    this.#unsubscribe();
+    // Off the page's events, so nothing on `window` holds this uploader, its store or its file.
+    for (const stop of this.#stopHearing.splice(0)) stop();
+    this.#events.dispose();
+    if (this.#guarding) {
+      this.#guarding = false;
+      this.#pageGuard.update(false);
+    }
+    stopSayingSending(this.#storage);
+    this.#uppy.destroy();
   }
 
   async replayPendingCancels(): Promise<void> {
@@ -682,7 +728,7 @@ class UploadEngine implements Engine {
     const answer = await this.#api.request("/api/uploads", {
       method: "POST",
       body: {
-        purpose: "album",
+        purpose: this.#options.purpose ?? "album",
         filename: run.file.name,
         size: run.file.size,
         contentType: item.contentType,
@@ -720,7 +766,7 @@ class UploadEngine implements Engine {
     run.session = session;
     run.startParts = session.uploadedParts;
     run.partUrls = this.#partUrlsFor(run, session.uploadedParts.map((part) => part.partNumber));
-    this.#startedFiles.record(run.file.size, run.fingerprint as string, session.mediaId, { kind: item.kind });
+    if (item.kind !== "audio") this.#startedFiles.record(run.file.size, run.fingerprint as string, session.mediaId, { kind: item.kind });
     if (run.cancelled) void this.#cancelOnServer(run, session.mediaId);
   }
 

@@ -34,11 +34,18 @@ export class EventReporter {
   readonly #api: ApiClient;
   readonly #waiting: UploadEvent[] = [];
   #timer: ReturnType<typeof setTimeout> | undefined;
+  readonly #stopHearingPageHide: () => void;
 
-  /** `onPageHide` registers what runs as the page goes, to send what is left. */
-  constructor(api: ApiClient, onPageHide: (listener: () => void) => void) {
+  /** `onPageHide` registers what runs as the page goes, to send what is left, and returns what stops it. */
+  constructor(api: ApiClient, onPageHide: (listener: () => void) => () => void) {
     this.#api = api;
-    onPageHide(() => this.#send(true));
+    this.#stopHearingPageHide = onPageHide(() => this.#send(true));
+  }
+
+  /** Sends what is waiting now, and stops listening for the page going (its uploader has gone). */
+  dispose(): void {
+    this.#send(false);
+    this.#stopHearingPageHide();
   }
 
   report(event: UploadEvent): void {

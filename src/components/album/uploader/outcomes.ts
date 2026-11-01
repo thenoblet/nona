@@ -184,14 +184,14 @@ function scrubbedMessage(message: string, fileName: string): string {
  * API asks. Reading the same File again can't help; picking it again does, so the failure offers
  * Choose again rather than Try again.
  */
-function fileChangedOutcome(error: unknown, file: { kind: "photo" | "video"; name: string } | undefined): Outcome {
+function fileChangedOutcome(error: unknown, file: { kind: "photo" | "video" | "audio"; name: string } | undefined): Outcome {
   const original = error as { name?: unknown; message?: unknown; read?: unknown } | null;
   const read = original?.read === "head" || original?.read === "tail" ? original.read : undefined;
   return {
     kind: "failed",
     code: "file-changed",
     failure: {
-      reason: file?.kind === "video" ? UPLOAD_WORDS.videoChanged : UPLOAD_WORDS.photoChanged,
+      reason: file?.kind === "video" ? UPLOAD_WORDS.videoChanged : file?.kind === "audio" ? UPLOAD_WORDS.recordingChanged : UPLOAD_WORDS.photoChanged,
       hint: UPLOAD_WORDS.chooseItAgain,
       canRetry: false,
       chooseAgain: true,
@@ -216,7 +216,7 @@ export function isUnreadable(error: unknown): boolean {
  * longer read (it changed after it was picked), which only choosing it again can help. `file` says
  * which file, for the words and to keep its name out of what is reported.
  */
-export function errorOutcome(error: unknown, file?: { kind: "photo" | "video"; name: string }): Outcome | { kind: "cancelled" } {
+export function errorOutcome(error: unknown, file?: { kind: "photo" | "video" | "audio"; name: string }): Outcome | { kind: "cancelled" } {
   if (error instanceof OutcomeError) return error.outcome;
   if (error instanceof ApiError) return { kind: "retry", code: error.kind === "timeout" ? "timeout" : "network-error" };
   const name = (error as { name?: unknown } | null)?.name;
