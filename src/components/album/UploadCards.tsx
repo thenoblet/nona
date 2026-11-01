@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "@/components/ui/Icon";
-import { isBusy, thumbOf, UPLOAD_WORDS, type UploadItem, type UploadStatus, type UploadView } from "./uploader/state";
+import { cameraCaption, isBusy, thumbOf, UPLOAD_WORDS, type UploadItem, type UploadStatus, type UploadView } from "./uploader/state";
 
 /*
  * The cards under the album's header while a guest shares (gate A): the camera card for one shot,
@@ -15,14 +15,6 @@ import { isBusy, thumbOf, UPLOAD_WORDS, type UploadItem, type UploadStatus, type
  * Dismiss once it has failed. Each carries data-item-action, and Try again data-item-retry, so the
  * album can move focus to the next sensible place once one of them takes a row away.
  */
-
-const CAMERA_CAPTIONS: Partial<Record<UploadStatus, string>> = {
-  queued: "Keep this page open for a moment",
-  sending: "Keep this page open for a moment",
-  retrying: UPLOAD_WORDS.retrying,
-  confirming: "Checking it arrived safely",
-  added: "Everyone will see it shortly",
-};
 
 const ROW_WORDS: Record<Exclude<UploadStatus, "failed" | "cancelling">, string> = {
   queued: UPLOAD_WORDS.waiting,
@@ -252,11 +244,6 @@ function SlowNotice({ notice, className = "" }: { notice: string; className?: st
   );
 }
 
-/** "about 2 minutes left", as the first words of a line. */
-function capitalised(words: string): string {
-  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
-}
-
 export type ItemActions = {
   onRetry: (itemId: string) => void;
   onCancel: (itemId: string) => void;
@@ -289,20 +276,24 @@ export function CameraCard({
   const added = status === "added";
   const busy = isBusy(item);
   // A big or slow upload: the time left takes the place of "for a moment", and the notice says the rest.
-  const caption = failure ? failure.hint : notice ? (timeLeft ? capitalised(timeLeft) : null) : CAMERA_CAPTIONS[status];
+  const caption = cameraCaption(item, notice, timeLeft);
   const noun = nounOf(item);
+  const error = isError(failure);
   return (
     <Fold open={!item.leaving} className="upload-card-fold">
       <section
         aria-label={`Your ${noun}`}
         data-upload-card
+        data-error={error ? "" : undefined}
         tabIndex={-1}
-        className="relative flex animate-rise flex-col gap-3 rounded-[var(--radius-paper)] bg-white p-3 shadow-[var(--shadow-paper)] outline-none"
+        className={`relative flex animate-rise flex-col gap-3 rounded-[var(--radius-paper)] p-3 shadow-[var(--shadow-paper)] outline-none ${
+          error ? "border-l-4 border-alert bg-alert-tint" : "bg-white"
+        }`}
       >
         <div className={`flex items-center gap-2 ${busy && onMinimise ? "pr-[84px]" : busy || failure ? "pr-9" : ""}`}>
           <Thumb item={item} variant="camera" />
           <div className="flex min-w-0 flex-col gap-0.5" aria-live="polite">
-            <p className="m-0 font-serif text-xl leading-[1.2] italic">
+            <p className={`m-0 font-serif text-xl leading-[1.2] italic ${error ? "text-alert" : ""}`}>
               {failure ? (
                 failure.reason
               ) : (
@@ -359,17 +350,34 @@ export function CameraCard({
   );
 }
 
+/**
+ * A failure that is the guest's to see to looks like an error notice (Ruling BK): the soft red tint,
+ * a red left edge, the red alert badge on the thumbnail and the reason in red. Sharing having
+ * closed is no error: it keeps the calm look.
+ */
+function isError(failure: UploadItem["failure"]): boolean {
+  return failure !== null && !failure.closed;
+}
+
 function BatchRow({ item, position, onRetry, onCancel, onDismiss, onChooseAgain }: { item: UploadItem; position: number } & ItemActions) {
   const { status, failure, percent } = item;
   const label = failure ? failure.reason : ROW_WORDS[status as keyof typeof ROW_WORDS];
   const sending = status === "sending" || status === "confirming";
-  const labelColour = failure ? "text-ember-ink" : status === "queued" || status === "retrying" ? "text-mocha" : "text-cocoa";
+  const error = isError(failure);
+  const labelColour = error ? "font-medium text-alert" : failure ? "text-ember-ink" : status === "queued" || status === "retrying" ? "text-mocha" : "text-cocoa";
   const noun = nounOf(item, position);
+  // The row's action stays prominent on the tint: filled white, its ember edge kept.
+  const actionButton = `${outlineButton} mt-1.5 self-start ${error ? "bg-white" : ""}`;
   return (
     <li aria-label={`${noun.charAt(0).toUpperCase()}${noun.slice(1)}`}>
       {/* Added and tidied away, it fades and folds (Ruling BC). */}
       <Fold open={!item.leaving}>
-        <div className="grid grid-cols-[49px_minmax(0,1fr)_auto] items-center gap-x-3 border-t border-hairline py-2.5">
+        <div
+          data-error={error ? "" : undefined}
+          className={`grid grid-cols-[49px_minmax(0,1fr)_auto] items-center gap-x-3 py-2.5 ${
+            error ? "my-1.5 rounded-[3px] border-l-[3px] border-alert bg-alert-tint pl-2.5" : "border-t border-hairline"
+          }`}
+        >
           <Thumb item={item} variant="row" />
           <div className="flex min-w-0 flex-col">
             <p className="m-0 flex items-baseline gap-2">
@@ -381,11 +389,11 @@ function BatchRow({ item, position, onRetry, onCancel, onDismiss, onChooseAgain 
             </Fold>
             {failure?.hint ? <p className="m-0 mt-0.5 text-xs leading-[1.45] text-mocha">{failure.hint}</p> : null}
             {failure?.chooseAgain ? (
-              <button type="button" onClick={() => onChooseAgain(item.id)} data-item-retry={item.id} className={`${outlineButton} mt-1.5 self-start`}>
+              <button type="button" onClick={() => onChooseAgain(item.id)} data-item-retry={item.id} className={actionButton}>
                 Choose again
               </button>
             ) : failure?.canRetry ? (
-              <button type="button" onClick={() => onRetry(item.id)} data-item-retry={item.id} className={`${outlineButton} mt-1.5 self-start`}>
+              <button type="button" onClick={() => onRetry(item.id)} data-item-retry={item.id} className={actionButton}>
                 Try again
               </button>
             ) : null}

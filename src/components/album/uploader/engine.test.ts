@@ -50,6 +50,8 @@ class FakeServer {
   guestGate: Promise<void> | null = null;
   /** Answers a complete in the server's place (a probe the server can't answer, say). */
   answerComplete: ((mediaId: string) => Answer) | null = null;
+  /** Holds the start of a file of this size until the promise settles (a slower answer on a real network). */
+  startDelayFor: ((size: number) => Promise<void> | null) | null = null;
   #made = 0;
 
   count(method: string, pattern: RegExp): number {
@@ -78,6 +80,7 @@ class FakeServer {
     if (path === "/api/upload-events") return { status: 200, body: { stored: 1 } };
     if (path === "/api/uploads" && method === "POST") {
       await this.startGate;
+      await this.startDelayFor?.((body as { size: number }).size);
       if (this.answerStart) return this.answerStart();
       return this.#start(body as { size: number; fingerprint: string });
     }
@@ -770,6 +773,34 @@ describe("Noblet: more parts at once", () => {
     release();
     await until(() => items.every((item) => itemOf(store, item.id)?.status === "added"), 10_000);
     expect(server.mostPutsInFlight).toBe(6);
+  });
+
+  it("sends the smallest file first: a photo picked with a big video gets a part's place, not held at 0% behind it", async () => {
+    const { server, store, pick } = setUp();
+    server.partSize = 5 * MEBIBYTE;
+    // The photo's start answers after the video's, as it can on a real network.
+    let releasePhotoStart: () => void = () => {};
+    const photoStart = new Promise<void>((resolve) => {
+      releasePhotoStart = resolve;
+    });
+    server.startDelayFor = (size) => (size < 5 * MEBIBYTE ? photoStart : null);
+    let releasePuts: () => void = () => {};
+    server.holdPuts = new Promise((resolve) => {
+      releasePuts = resolve;
+    });
+    const photo = new File([new Uint8Array(MEBIBYTE).fill(2)], "toast.jpg", { type: "image/jpeg" });
+
+    const [bigVideo, smallPhoto] = pick([video(40 * MEBIBYTE, "speeches.mp4", 1), photo]);
+    await until(() => server.count("POST", /^\/api\/uploads$/) === 2);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The video waits for the smaller photo to be handed over before its parts take every place.
+    expect(server.puts).toHaveLength(0);
+    releasePhotoStart();
+    await until(() => server.puts.length >= PARTS_IN_FLIGHT);
+    const photoMedia = itemOf(store, smallPhoto.id)?.mediaId;
+    expect(server.puts.slice(0, PARTS_IN_FLIGHT).map((put) => put.mediaId)).toContain(photoMedia);
+    releasePuts();
+    await until(() => itemOf(store, smallPhoto.id)?.status === "added" && itemOf(store, bigVideo.id)?.status === "added", 10_000);
   });
 
   it("Ruling AY: asks the server to sign only the parts it sends at once to begin with, then the rest in bigger batches", async () => {

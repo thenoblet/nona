@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { circleOf } from "./UploadCircle";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { circleOf, milestoneOf } from "./UploadCircle";
 import { createUploadStore, UPLOAD_WORDS } from "./uploader/state";
 
 /*
@@ -21,28 +21,76 @@ function pick(store: ReturnType<typeof createUploadStore>, source: "photo" | "vi
   return store.add(files, source);
 }
 
+const connectionDropped = { reason: UPLOAD_WORDS.connectionDropped, hint: null, canRetry: true };
+
 describe("the floating progress circle", () => {
-  it("shows a single file's percentage, and for several the number still to send", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows a single file's percentage, and for several only how many are still sending", () => {
     const { store } = storeWithPreviews();
     const [shot] = pick(store, "photo", picked("a.jpg", "image/jpeg", 1_000_000));
     store.update(shot.id, { status: "sending", percent: 42 });
-    expect(circleOf(store.getSnapshot())).toEqual({ percent: 42, centre: "42%", failed: false, done: false, label: "Show uploads, 42% sent" });
+    expect(circleOf(store.getSnapshot())).toEqual({
+      percent: 42,
+      centre: "42%",
+      failedCount: 0,
+      sending: true,
+      done: false,
+      label: "Show uploads, 42% sent",
+    });
 
-    const [second, third] = pick(store, "gallery", picked("b.jpg", "image/jpeg", 1_000_000), picked("c.jpg", "image/jpeg", 2_000_000));
+    const [second, third, fourth] = pick(
+      store,
+      "gallery",
+      picked("b.jpg", "image/jpeg", 1_000_000),
+      picked("c.jpg", "image/jpeg", 2_000_000),
+      picked("d.jpg", "image/jpeg", 1_000_000),
+    );
     store.update(second.id, { status: "added", percent: 100 });
     store.update(third.id, { status: "sending", percent: 25 });
-    expect(circleOf(store.getSnapshot())).toMatchObject({ percent: 48, centre: "2", failed: false, done: false, label: "Show uploads, 48% sent" });
+    store.update(fourth.id, { status: "failed", failure: connectionDropped });
+    // Two still sending (the photo and c.jpg); the failure is the error state's to say, not the count's.
+    expect(circleOf(store.getSnapshot())).toMatchObject({
+      percent: 48,
+      centre: "2",
+      failedCount: 1,
+      sending: true,
+      label: "Show uploads, 48% sent, 1 didn't send",
+    });
   });
 
-  it("turns to done once everything has sent, and shows a failure until the card is opened", () => {
+  it("turns to done once everything has sent, and with only a failure left says so without a percentage", () => {
     const { store } = storeWithPreviews();
     const [first, second] = pick(store, "gallery", picked("a.jpg", "image/jpeg"), picked("b.jpg", "image/jpeg"));
     store.update(first.id, { status: "added", percent: 100 });
-    store.update(second.id, { status: "failed", failure: { reason: UPLOAD_WORDS.connectionDropped, hint: null, canRetry: true } });
-    expect(circleOf(store.getSnapshot())).toMatchObject({ centre: "1", failed: true, done: false, label: "Show uploads, 1 didn't send" });
+    store.update(second.id, { status: "failed", failure: connectionDropped });
+    const failedCircle = circleOf(store.getSnapshot());
+    expect(failedCircle).toMatchObject({ centre: "", failedCount: 1, sending: false, done: false, label: "Show uploads, 1 didn't send" });
+    expect(milestoneOf(failedCircle!)).toBe("1 didn't send; open your uploads to see.");
 
     store.update(second.id, { status: "added", percent: 100, failure: null });
-    expect(circleOf(store.getSnapshot())).toMatchObject({ percent: 100, failed: false, done: true, label: "Show uploads, all sent" });
+    const doneCircle = circleOf(store.getSnapshot());
+    expect(doneCircle).toMatchObject({ percent: 100, failedCount: 0, done: true, label: "Show uploads, all sent" });
+    expect(milestoneOf(doneCircle!)).toBe("All your files have arrived.");
+  });
+
+  it("keeps counting the files that arrived once they tidy away, so a failure left behind never drops the ring to 0%", () => {
+    vi.useFakeTimers();
+    const store = createUploadStore({ previews: { create: () => null, revoke: () => {} }, tidy: { batchMs: 5_000, fadeMs: 400 }, reducedMotion: () => false });
+    const [arrived, failed] = pick(store, "gallery", picked("a.jpg", "image/jpeg", 1_000_000), picked("b.jpg", "image/jpeg", 2_000_000));
+    store.update(arrived.id, { status: "added", percent: 100 });
+    store.update(failed.id, { status: "failed", failure: connectionDropped });
+    expect(circleOf(store.getSnapshot())?.percent).toBe(100);
+
+    vi.advanceTimersByTime(5_400);
+    expect(store.getSnapshot().items.map((item) => item.file.name)).toEqual(["b.jpg"]);
+    expect(circleOf(store.getSnapshot())).toMatchObject({ percent: 100, failedCount: 1, sending: false });
+
+    // Tried again, halfway: a.jpg's 1 MB and half of b.jpg's 2 MB of 3 MB.
+    store.update(failed.id, { status: "sending", percent: 50, failure: null });
+    expect(circleOf(store.getSnapshot())).toMatchObject({ percent: 67, centre: "1", failedCount: 0, sending: true });
+    expect(milestoneOf(circleOf(store.getSnapshot())!)).toBe("Uploads: 50% sent.");
   });
 });
-

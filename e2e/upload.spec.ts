@@ -790,6 +790,34 @@ test.describe("what a real phone taught the uploader (Task 14b)", () => {
       await context.close();
     }
   });
+
+  test("Not now sets the notice on return aside, for good, without forgetting the upload", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      const video = await bytesOnDisk("IMG_0611.MOV", 20 * MEBIBYTE);
+      let reloaded = false;
+      const puts = await watchPartPuts(page, (partNumber) => (reloaded || partNumber === 1 ? "send" : "hold"));
+      await picker(page, "Record video").setInputFiles(video);
+      await expect.poll(() => puts.finished, { timeout: 30_000 }).toEqual([1]);
+
+      reloaded = true;
+      await page.reload();
+      await Promise.all(puts.held.splice(0).map((route) => route.abort().catch(() => {})));
+      const notice = inMain(page).getByText("Your video didn't finish sending. Choose it again and it'll carry on from where it stopped.");
+      await expect(notice).toBeVisible();
+      await inMain(page).getByRole("button", { name: "Not now" }).click();
+      await expect(notice).toHaveCount(0);
+      await reloadAlbum(page);
+      await page.waitForTimeout(500);
+      await expect(notice).toHaveCount(0);
+      // The upload is still remembered: the album, once closed, still offers to finish it.
+      expect(await page.evaluate(() => Object.keys(JSON.parse(window.localStorage.getItem("nona:started-files") ?? "{}")).length)).toBe(1);
+    } finally {
+      await context.close();
+    }
+  });
 });
 
 test.describe("when sharing isn't open", () => {

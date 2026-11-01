@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SIZE_LIMITS } from "@/lib/media/limits";
 import {
   BIG_FILE_BYTES,
+  cameraCaption,
   createUploadStore,
   returnNoticeWords,
   thumbOf,
@@ -387,6 +388,25 @@ describe("Ruling BE: minimising, and the notice for a big or slow upload", () =>
     store.update(only.id, { status: "added", percent: 100 });
     expect(store.getSnapshot().notice).toBeNull();
     expect(store.getSnapshot().timeLeft).toBeNull();
+  });
+});
+
+describe("the camera card's caption beside a big or slow upload's notice", () => {
+  const notice = "This is a big video, so it may take a few minutes on mobile data. You can minimise this and keep looking through the album; just keep this page open.";
+
+  it("keeps gate A's words for retrying and checking, and gives the time left only while it waits or sends", () => {
+    const item = (status: "queued" | "sending" | "retrying" | "confirming" | "added") => ({ status, failure: null });
+    expect(cameraCaption(item("queued"), notice, "about 2 minutes left")).toBe("About 2 minutes left");
+    expect(cameraCaption(item("sending"), notice, "this may take a while")).toBe("This may take a while");
+    // Not measured yet (or stalled): no time, and not "for a moment" either, which the notice would contradict.
+    expect(cameraCaption(item("sending"), notice, null)).toBeNull();
+    expect(cameraCaption(item("retrying"), notice, "about 2 minutes left")).toBe("Retrying, keep this page open");
+    expect(cameraCaption(item("confirming"), notice, "less than a minute left")).toBe("Checking it arrived safely");
+    expect(cameraCaption(item("added"), null, null)).toBe("Everyone will see it shortly");
+    expect(cameraCaption(item("sending"), null, null)).toBe("Keep this page open for a moment");
+    expect(
+      cameraCaption({ status: "failed", failure: { reason: "This video changed after you chose it", hint: "Choose it again.", canRetry: false } }, notice, null),
+    ).toBe("Choose it again.");
   });
 });
 

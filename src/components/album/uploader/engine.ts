@@ -7,6 +7,9 @@ import {
   browserStorage,
   createPendingCancels,
   createStartedFiles,
+  setSendingHere,
+  stillSending,
+  stopSayingSending,
   type PendingCancels,
   type StartedFiles,
   type StorageLike,
@@ -158,7 +161,18 @@ type Run = {
   probing: boolean;
   /** Checking whether a part that failed did so because the file changed on the phone. */
   checkingReadable: boolean;
+  /** Settles once this attempt has handed the file to Uppy, or ended: a bigger file waits for it. */
+  handedOver: { promise: Promise<void>; settle: () => void };
 };
+
+/** A promise and what settles it. */
+function handOver(): Run["handedOver"] {
+  let settle: () => void = () => {};
+  const promise = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  return { promise, settle };
+}
 
 /** What a Cancel's request came to: done; refused (403: the upload isn't this browser's guest's any more); or no answer. */
 type CancelResult = "done" | "refused" | "unanswered";
@@ -206,6 +220,7 @@ class UploadEngine implements Engine {
   readonly #sentFiles: SentFiles;
   readonly #startedFiles: StartedFiles;
   readonly #pendingCancels: PendingCancels;
+  readonly #storage: StorageLike | null;
   readonly #pageGuard: PageGuard;
   readonly #timeLeft = new TimeLeft();
   readonly #uppy: Uppy<FileMeta, FileBody>;
@@ -218,10 +233,12 @@ class UploadEngine implements Engine {
   /** Every byte sent from this page, across files (it only grows): what the time left is measured from. */
   #sentBytes = 0;
   #timeLeftTimer: ReturnType<typeof setInterval> | undefined;
-  /** What the card was last told of the time left. */
-  #toldTimeLeft: { words: string; slow: boolean } | null = null;
+  /** What the card was last told of the time left (no words while there is no time to give). */
+  #toldTimeLeft: { words: string | null; slow: boolean } | null = null;
   /** Whether the page guard was last told files are sending. */
   #guarding = false;
+  /** When this page last told other tabs it is still sending. */
+  #lastSaidSendingAt = 0;
 
   constructor(store: UploadStore, options: EngineOptions, dependencies: EngineDependencies) {
     this.#store = store;
@@ -234,6 +251,7 @@ class UploadEngine implements Engine {
     this.#sentFiles = createSentFiles(storage);
     this.#startedFiles = createStartedFiles(storage);
     this.#pendingCancels = createPendingCancels(storage);
+    this.#storage = storage;
     this.#pageGuard = dependencies.pageGuard ?? browserPageGuard();
     this.#events = new EventReporter(this.#api, this.#environment.onPageHide);
     this.#uppy = new Uppy<FileMeta, FileBody>({ id: "nona-album", autoProceed: false, allowMultipleUploadBatches: true });
@@ -278,6 +296,7 @@ class UploadEngine implements Engine {
     });
     this.#store.subscribe(() => this.#watchSending());
     this.#watchSending();
+    this.#environment.onPageHide(() => stopSayingSending(this.#storage));
   }
 
   // ---------- While files send (Ruling BE) ----------
@@ -287,13 +306,21 @@ class UploadEngine implements Engine {
     return this.#store.getSnapshot().items.some((item) => item.status !== "cancelling" && isBusy(item));
   }
 
-  /** Guards the page while files send, and measures the time left; lets both go once none does. */
+  /**
+   * Guards the page while files send, and measures the time left; lets both go once none does.
+   * Says which uploads it has on their way, so the notice on return (in this page, or another tab)
+   * never calls one of them unfinished.
+   */
   #watchSending(): void {
     const sending = this.#sending();
     if (sending !== this.#guarding) {
       this.#guarding = sending;
       this.#pageGuard.update(sending);
     }
+    const onTheirWay = this.#store
+      .getSnapshot()
+      .items.flatMap((item) => (item.mediaId && item.status !== "cancelling" && isBusy(item) ? [item.mediaId] : []));
+    setSendingHere(this, onTheirWay, this.#storage);
     if (sending && this.#timeLeftTimer === undefined) {
       this.#timeLeftTimer = setInterval(() => this.#measureTimeLeft(), this.#timings.timeLeftSampleMs);
       this.#measureTimeLeft();
@@ -307,22 +334,35 @@ class UploadEngine implements Engine {
 
   /**
    * Measures the bytes going out against those still to send, and tells the card the time left
-   * when its words change, or once it first passes a minute (the card's slow notice).
+   * when its words change, or once it first passes a minute (the card's slow notice). While nothing
+   * can move (a part retrying, the phone offline, no byte out for a few seconds) and once nothing is
+   * left to send, the card is told there is no time to give, rather than a guess drawn out of a
+   * stall; only an estimate made while bytes move can call the upload slow.
    */
   #measureTimeLeft(): void {
     const now = Date.now();
-    const remaining = this.#store
-      .getSnapshot()
-      .items.filter((item) => item.status !== "cancelling" && isBusy(item))
-      .reduce((total, item) => total + item.file.size * (1 - item.percent / 100), 0);
-    this.#timeLeft.sample(now, this.#sentBytes, remaining);
-    const seconds = this.#timeLeft.seconds();
-    const words = this.#timeLeft.words(now);
-    if (seconds === null || words === null) return;
-    const slow = seconds > SLOW_SECONDS || (this.#toldTimeLeft?.slow ?? false);
-    if (this.#toldTimeLeft?.words === words && this.#toldTimeLeft.slow === slow) return;
-    this.#toldTimeLeft = { words, slow };
-    this.#store.setTimeLeft({ seconds, words });
+    const onTheirWay = this.#store.getSnapshot().items.filter((item) => item.status !== "cancelling" && isBusy(item));
+    const estimate = this.#timeLeft.read(now, {
+      sentBytes: this.#sentBytes,
+      remainingBytes: onTheirWay.reduce((total, item) => total + item.file.size * (1 - item.percent / 100), 0),
+      held: this.#environment.isOffline() || onTheirWay.some((item) => item.status === "retrying"),
+    });
+    if (now - this.#lastSaidSendingAt >= 5_000) {
+      this.#lastSaidSendingAt = now;
+      stillSending(this.#storage, now);
+    }
+    const told = this.#toldTimeLeft;
+    if (!estimate) {
+      if (told?.words) {
+        this.#toldTimeLeft = { words: null, slow: told.slow };
+        this.#store.setTimeLeft(null);
+      }
+      return;
+    }
+    const slow = estimate.seconds > SLOW_SECONDS || (told?.slow ?? false);
+    if (told?.words === estimate.words && told.slow === slow) return;
+    this.#toldTimeLeft = { words: estimate.words, slow };
+    this.#store.setTimeLeft(estimate);
   }
 
   // ---------- The queue ----------
@@ -332,7 +372,9 @@ class UploadEngine implements Engine {
     if (this.#environment.isOffline()) return;
     const now = Date.now();
     let wakeAt = Number.POSITIVE_INFINITY;
-    for (const item of this.#store.getSnapshot().items) {
+    // Smallest first: a photo picked with a big video is Added in moments, not after the video.
+    const waiting = [...this.#store.getSnapshot().items].sort((first, second) => first.file.size - second.file.size);
+    for (const item of waiting) {
       if (this.#active.size >= FILES_IN_FLIGHT) break;
       if (this.#active.has(item.id) || (item.status !== "queued" && item.status !== "retrying")) continue;
       const run = this.#runs.get(item.id);
@@ -443,6 +485,7 @@ class UploadEngine implements Engine {
         cancelSent: false,
         probing: false,
         checkingReadable: false,
+        handedOver: handOver(),
       };
       this.#runs.set(itemId, run);
     }
@@ -469,6 +512,7 @@ class UploadEngine implements Engine {
     const run = this.#runOf(itemId, item.file);
     run.retryAt = 0;
     run.partOfUrl.clear();
+    run.handedOver = handOver();
     this.#store.update(itemId, { status: "sending", failure: null });
     try {
       // Read alongside the guest call, not after it: the sooner, the smaller the window for the
@@ -490,6 +534,8 @@ class UploadEngine implements Engine {
       if (run.cancelled) return;
       await this.#start(run);
       if (run.cancelled) return;
+      await this.#smallerFilesHandedOver(run);
+      if (run.cancelled) return;
       await this.#send(run);
       if (run.cancelled) return;
       this.#added(run);
@@ -501,6 +547,7 @@ class UploadEngine implements Engine {
       else if (outcome.kind === "failed") this.#failed(run, outcome);
       else this.#retryLater(run, outcome);
     } finally {
+      run.handedOver.settle();
       this.#active.delete(itemId);
       // Cancelled before the server knew of it, and no Cancel sent: nothing to show. A Cancel that
       // was sent decides for itself, its failure staying on the card.
@@ -510,6 +557,18 @@ class UploadEngine implements Engine {
       }
       this.pump();
     }
+  }
+
+  /**
+   * Waits until every smaller file on its way has been handed to Uppy (or has ended). Uppy serves
+   * the parts of the file it was given first, so a big video handed over first would hold a photo
+   * started beside it at 0% until most of the video had gone; a smaller file never waits on a bigger.
+   */
+  async #smallerFilesHandedOver(run: Run): Promise<void> {
+    const smaller = [...this.#runs.values()].filter(
+      (other) => other !== run && this.#active.has(other.itemId) && other.file.size < run.file.size && other.uppyFileId === null,
+    );
+    await Promise.all(smaller.map((other) => other.handedOver.promise));
   }
 
   /** Awaits POST /api/guest once for the page, before any start, so a first batch makes one guest. */
@@ -715,6 +774,7 @@ class UploadEngine implements Engine {
       this.#uppy.setFileState(fileId, { s3Multipart: { uploadId: session.uploadId, key: session.key } } as Partial<EngineFile>);
       // Only the file just added is waiting, so this upload() takes it alone.
       this.#uppy.upload().catch(() => {});
+      run.handedOver.settle();
     });
   }
 

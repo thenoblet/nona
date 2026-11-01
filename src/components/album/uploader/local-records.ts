@@ -14,6 +14,12 @@ export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 const STARTED_KEY = "nona:started-files";
 const PENDING_CANCELS_KEY = "nona:pending-cancels";
+/** The notices on return the guest set aside ("Not now"), by upload. */
+const NOTICE_DISMISSED_KEY = "nona:return-notice-dismissed";
+/** The uploads an album tab is sending right now, by upload, with when it last said so. */
+const SENDING_KEY = "nona:sending-now";
+/** A tab that hasn't said it is still sending for this long has stopped (closed, or gone to sleep). */
+const SENDING_FRESH_FOR_MILLISECONDS = 15_000;
 const MAX_ENTRIES = 400;
 /** R2 drops an unfinished multipart upload after seven days: nothing older can be finished. */
 const UNFINISHED_FOR_MILLISECONDS = 7 * 24 * 60 * 60 * 1000;
@@ -45,19 +51,24 @@ function writeRecord<TEntry>(storage: StorageLike | null, key: string, entries: 
   } catch {
     // Full or blocked: not remembered.
   }
-  if (key === STARTED_KEY) for (const listener of [...startedListeners]) listener();
+  if (key === STARTED_KEY || key === NOTICE_DISMISSED_KEY) tellStartedListeners();
 }
 
 const startedListeners = new Set<() => void>();
 
+function tellStartedListeners(): void {
+  for (const listener of [...startedListeners]) listener();
+}
+
 /**
- * Hears each change this page makes to the uploads it started (one starting, finishing, cancelled),
- * and those another tab of the album makes; returns what stops it.
+ * Hears each change to the uploads this phone started (one starting, finishing, cancelled), to the
+ * notices set aside and to what this page is sending, here and in another tab of the album; returns
+ * what stops it.
  */
 export function subscribeToStartedFiles(listener: () => void): () => void {
   startedListeners.add(listener);
   const fromAnotherTab = (event: StorageEvent) => {
-    if (event.key === STARTED_KEY || event.key === null) listener();
+    if (event.key === STARTED_KEY || event.key === NOTICE_DISMISSED_KEY || event.key === SENDING_KEY || event.key === null) listener();
   };
   if (typeof window !== "undefined") window.addEventListener("storage", fromAnotherTab);
   return () => {
@@ -117,6 +128,107 @@ export function createStartedFiles(storage: StorageLike | null): StartedFiles {
     hasUnfinished(now = Date.now()) {
       return unfinished(now).length > 0;
     },
+  };
+}
+
+/*
+ * What is being sent right now, so the notice on return never says "didn't finish" of an upload
+ * still on its way: from an uploader of this page left running behind a page React set aside, or
+ * from another tab of the album. Each uploader says which uploads it has on their way (its
+ * `owner` keys its share); the page writes them, with a heartbeat, for other tabs to read.
+ */
+const sendingHere = new Map<object, ReadonlySet<string>>();
+let sendingHereVersion = 0;
+
+function sendingHereNow(): Set<string> {
+  return new Set([...sendingHere.values()].flatMap((mediaIds) => [...mediaIds]));
+}
+
+function writeSending(storage: StorageLike | null, now: number): void {
+  const entries = Object.fromEntries([...sendingHereNow()].map((mediaId) => [mediaId, now]));
+  writeRecord(storage, SENDING_KEY, entries);
+}
+
+/** An uploader's uploads on their way now (replacing what it said before); tells the page when that changes. */
+export function setSendingHere(owner: object, mediaIds: Iterable<string>, storage: StorageLike | null, now = Date.now()): void {
+  const next = new Set(mediaIds);
+  const before = sendingHere.get(owner) ?? new Set<string>();
+  if (next.size === before.size && [...next].every((mediaId) => before.has(mediaId))) return;
+  if (next.size === 0) sendingHere.delete(owner);
+  else sendingHere.set(owner, next);
+  sendingHereVersion += 1;
+  writeSending(storage, now);
+  tellStartedListeners();
+}
+
+/** Says again, for other tabs, that this page's uploads are still on their way. */
+export function stillSending(storage: StorageLike | null, now = Date.now()): void {
+  if (sendingHere.size > 0) writeSending(storage, now);
+}
+
+/**
+ * The page is going (a reload, a link, closing the tab): it stops saying it sends, so the page that
+ * comes next (this one reloaded, or another tab) offers to carry the upload on at once, rather than
+ * taking it for one still sending elsewhere. Kept in memory, should the page come back from the
+ * back-forward cache: the next heartbeat says so again.
+ */
+export function stopSayingSending(storage: StorageLike | null): void {
+  const here = sendingHereNow();
+  if (here.size === 0) return;
+  const entries = readRecord<number>(storage, SENDING_KEY);
+  for (const mediaId of here) delete entries[mediaId];
+  writeRecord(storage, SENDING_KEY, entries);
+}
+
+/** Sets the notice on return aside ("Not now") for these uploads; another upload left unfinished brings it back. */
+export function dismissReturnNotice(mediaIds: Iterable<string>, storage: StorageLike | null, now = Date.now()): void {
+  const entries = readRecord<number>(storage, NOTICE_DISMISSED_KEY);
+  for (const mediaId of mediaIds) entries[mediaId] = now;
+  // A week on, R2 has let the upload go: nothing left to set aside.
+  const kept = Object.fromEntries(Object.entries(entries).filter(([, at]) => typeof at === "number" && now - at < UNFINISHED_FOR_MILLISECONDS));
+  writeRecord(storage, NOTICE_DISMISSED_KEY, kept);
+}
+
+/**
+ * The uploads the notice on return speaks of: started here within the week and unfinished, not set
+ * aside, and not on their way in this page or another tab.
+ */
+export function returnNoticeUploads(storage: StorageLike | null, now = Date.now()): UnfinishedUpload[] {
+  const dismissed = readRecord<number>(storage, NOTICE_DISMISSED_KEY);
+  const sendingElsewhere = readRecord<number>(storage, SENDING_KEY);
+  const here = sendingHereNow();
+  return createStartedFiles(storage)
+    .unfinished(now)
+    .filter(({ mediaId }) => {
+      if (here.has(mediaId) || typeof dismissed[mediaId] === "number") return false;
+      const beat = sendingElsewhere[mediaId];
+      return !(typeof beat === "number" && now - beat < SENDING_FRESH_FOR_MILLISECONDS);
+    });
+}
+
+/**
+ * Reads the notice on return through `describe`, again only when what it rests on has changed (the
+ * stored records, as written, and what this page is sending), not on every render while files
+ * send; a heartbeat going stale is noticed within its own fifteen seconds.
+ */
+export function createReturnNoticeReader<TValue>(
+  storage: StorageLike | null,
+  describe: (uploads: UnfinishedUpload[]) => TValue,
+  clock: () => number = Date.now,
+): () => TValue {
+  let cached: { key: string; value: TValue } | null = null;
+  const raw = (key: string) => {
+    try {
+      return storage?.getItem(key) ?? "";
+    } catch {
+      return "";
+    }
+  };
+  return () => {
+    const now = clock();
+    const key = [raw(STARTED_KEY), raw(NOTICE_DISMISSED_KEY), raw(SENDING_KEY), sendingHereVersion, Math.floor(now / SENDING_FRESH_FOR_MILLISECONDS)].join("\n");
+    if (cached?.key !== key) cached = { key, value: describe(returnNoticeUploads(storage, now)) };
+    return cached.value;
   };
 }
 

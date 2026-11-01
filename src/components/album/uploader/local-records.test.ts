@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { createPendingCancels, createStartedFiles, subscribeToStartedFiles, type StorageLike } from "./local-records";
+import {
+  createPendingCancels,
+  createReturnNoticeReader,
+  createStartedFiles,
+  dismissReturnNotice,
+  returnNoticeUploads,
+  setSendingHere,
+  stillSending,
+  stopSayingSending,
+  subscribeToStartedFiles,
+  type StorageLike,
+} from "./local-records";
 import { createSentFiles, forgetMedia } from "./resume";
 
 function memoryStorage(): StorageLike & { values: Map<string, string> } {
@@ -93,6 +104,105 @@ describe("the uploads this phone started, for the notice on return", () => {
     started.record(6000, "f2", "media-2");
 
     expect(changes).toEqual([0, 1]);
+  });
+});
+
+describe("what the notice on return speaks of", () => {
+  function twoUnfinished() {
+    const storage = memoryStorage();
+    const started = createStartedFiles(storage);
+    started.record(5000, "f1", "media-1", { now: 0, kind: "video" });
+    started.record(6000, "f2", "media-2", { now: 0, kind: "photo" });
+    return storage;
+  }
+
+  it("leaves out what the guest set aside (Not now), keeping the records for the grace after a close", () => {
+    const storage = twoUnfinished();
+    dismissReturnNotice(["media-1", "media-2"], storage, 10);
+    expect(returnNoticeUploads(storage, 20)).toEqual([]);
+    // The records themselves stay: the closed album's "Finish sending what you started" still reads them.
+    expect(createStartedFiles(storage).hasUnfinished(20)).toBe(true);
+
+    // Another upload left unfinished brings the notice back, for that one.
+    createStartedFiles(storage).record(7000, "f3", "media-3", { now: 30, kind: "video" });
+    expect(returnNoticeUploads(storage, 40).map((upload) => upload.mediaId)).toEqual(["media-3"]);
+  });
+
+  it("leaves out an upload this page is still sending, from an uploader left running behind the page", () => {
+    const storage = twoUnfinished();
+    const olderUploader = {};
+    setSendingHere(olderUploader, ["media-1"], storage, 10);
+    expect(returnNoticeUploads(storage, 20).map((upload) => upload.mediaId)).toEqual(["media-2"]);
+    setSendingHere(olderUploader, [], storage, 30);
+    expect(returnNoticeUploads(storage, 40).map((upload) => upload.mediaId)).toEqual(["media-1", "media-2"]);
+  });
+
+  it("leaves out an upload another tab is still sending, until that tab has been quiet for 15 s", () => {
+    const storage = twoUnfinished();
+    // Another tab's record of what it sends, as its uploader wrote it.
+    storage.values.set("nona:sending-now", JSON.stringify({ "media-2": 1_000 }));
+    expect(returnNoticeUploads(storage, 10_000).map((upload) => upload.mediaId)).toEqual(["media-1"]);
+    expect(returnNoticeUploads(storage, 16_001).map((upload) => upload.mediaId)).toEqual(["media-1", "media-2"]);
+  });
+
+  it("writes what this page sends for other tabs, saying so again while it still is", () => {
+    const storage = memoryStorage();
+    const uploader = {};
+    setSendingHere(uploader, ["media-9"], storage, 1_000);
+    expect(JSON.parse(storage.values.get("nona:sending-now") ?? "{}")).toEqual({ "media-9": 1_000 });
+    stillSending(storage, 6_000);
+    expect(JSON.parse(storage.values.get("nona:sending-now") ?? "{}")).toEqual({ "media-9": 6_000 });
+    setSendingHere(uploader, [], storage, 7_000);
+    expect(storage.values.has("nona:sending-now")).toBe(false);
+  });
+
+  it("stops saying it sends as the page goes, so the page reloaded offers to carry the upload on at once", () => {
+    const storage = twoUnfinished();
+    const uploader = {};
+    setSendingHere(uploader, ["media-1"], storage, 1_000);
+    stopSayingSending(storage);
+    // What the reloaded page reads: nothing sending in another tab.
+    expect(storage.values.has("nona:sending-now")).toBe(false);
+    setSendingHere(uploader, [], storage);
+  });
+
+  it("is read again only when its records change, not on every render while files send", () => {
+    const storage = twoUnfinished();
+    let reads = 0;
+    let now = 1_000;
+    const read = createReturnNoticeReader(
+      storage,
+      (uploads) => {
+        reads += 1;
+        return uploads.map((upload) => upload.mediaId);
+      },
+      () => now,
+    );
+    const first = read();
+    for (let tick = 0; tick < 50; tick += 1) {
+      now += 100;
+      expect(read()).toBe(first);
+    }
+    expect(reads).toBe(1);
+    createStartedFiles(storage).finish(5000, "f1");
+    expect(read()).toEqual(["media-2"]);
+    expect(reads).toBe(2);
+  });
+
+  it("tells the page when the notice's uploads change: set aside, or sending here", () => {
+    const storage = twoUnfinished();
+    let told = 0;
+    const unsubscribe = subscribeToStartedFiles(() => {
+      told += 1;
+    });
+    const uploader = {};
+    dismissReturnNotice(["media-1"], storage);
+    setSendingHere(uploader, ["media-2"], storage);
+    // The same again changes nothing, and says nothing.
+    setSendingHere(uploader, ["media-2"], storage);
+    setSendingHere(uploader, [], storage);
+    unsubscribe();
+    expect(told).toBe(3);
   });
 });
 

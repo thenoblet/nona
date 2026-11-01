@@ -14,6 +14,7 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { DockItem } from "@/components/music/Dock";
 import { Halo } from "@/components/ui/Halo";
 import { Icon, type IconName } from "@/components/ui/Icon";
@@ -24,7 +25,13 @@ import { BatchCard, CameraCard, emberButton } from "./UploadCards";
 import type { Engine } from "./uploader/engine";
 import { readOnPick } from "./uploader/fingerprint";
 import { loadEngine, loadEngineForPick, prefetchEngineWhenIdle } from "./uploader/load";
-import { browserStorage, createPendingCancels, createStartedFiles, subscribeToStartedFiles } from "./uploader/local-records";
+import {
+  browserStorage,
+  createPendingCancels,
+  createReturnNoticeReader,
+  dismissReturnNotice,
+  subscribeToStartedFiles,
+} from "./uploader/local-records";
 import { setPersonalLink, useLinkOfferAllowed, usePersonalLink } from "./uploader/personal-link";
 import {
   createUploadStore,
@@ -353,24 +360,114 @@ function firstVisiblePicker(): HTMLElement | null {
   return null;
 }
 
+/** What the notice on return says, and of which uploads; null for nothing to say. */
+type ReturnNoticeState = { words: string; mediaIds: string[] } | null;
+
+let readReturnNotice: (() => ReturnNoticeState) | null = null;
+
+/**
+ * The notice on return, read again only when its records change (not on every render while files
+ * send), as one unchanged value for React to compare.
+ */
+function returnNoticeSnapshot(): ReturnNoticeState {
+  readReturnNotice ??= createReturnNoticeReader(browserStorage(), (uploads) => {
+    const words = returnNoticeWords(uploads);
+    return words ? { words, mediaIds: uploads.map((upload) => upload.mediaId) } : null;
+  });
+  return readReturnNotice();
+}
+
 /**
  * Back on the album with uploads this phone started and didn't finish (Ruling BE): what didn't
  * finish, and a Choose button; the same file chosen again carries on, skipping the parts sent. It
- * goes once those uploads finish (or are a week old, when R2 has let them go).
+ * goes once those uploads finish (or are a week old, when R2 has let them go), or when the guest
+ * sets it aside ("Not now"); another upload left unfinished brings it back.
  */
-function ReturnNotice({ words, onChoose }: { words: string; onChoose: () => void }) {
+function ReturnNotice({ notice, onChoose }: { notice: NonNullable<ReturnNoticeState>; onChoose: () => void }) {
   return (
     <section
       aria-label="Didn't finish sending"
       data-return-notice
-      className="flex animate-rise flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius-paper)] bg-white py-3 pr-3 pl-4 shadow-[var(--shadow-paper)]"
+      className="flex animate-rise flex-wrap items-center gap-x-2 gap-y-1 rounded-[var(--radius-paper)] bg-white py-3 pr-1.5 pl-4 shadow-[var(--shadow-paper)]"
     >
-      <p className="m-0 min-w-[12rem] flex-1 text-[13px] leading-[1.45] text-cocoa">{words}</p>
-      <button type="button" onClick={onChoose} className={`${emberButton} ml-auto`}>
-        Choose
-      </button>
+      <p className="m-0 min-w-[12rem] flex-1 pr-1 text-[13px] leading-[1.45] text-cocoa">{notice.words}</p>
+      {/* Together, beside the words or on a line of their own on a narrow phone. */}
+      <div className="ml-auto flex items-center">
+        <button type="button" onClick={onChoose} className={emberButton}>
+          Choose
+        </button>
+        <button
+          type="button"
+          onClick={() => dismissReturnNotice(notice.mediaIds, browserStorage())}
+          aria-label="Not now"
+          className="grid size-11 shrink-0 cursor-pointer place-items-center rounded-full border-0 bg-transparent p-0 text-mocha"
+        >
+          <Icon name="close" size={16} />
+        </button>
+      </div>
     </section>
   );
+}
+
+/** The card and the floating circle share this name while one morphs into the other (Ruling BI). */
+const MORPH_NAME = "upload-morph";
+const MORPH_MILLISECONDS = 400;
+const MORPH_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+
+type ViewTransitionLike = { ready: Promise<void>; finished: Promise<void> };
+
+/**
+ * Ruling BI (Noblet: "the card turn into a circle smoothly and smoothly move to the bottom"): makes
+ * `change` (minimising, or opening the card again) a shared-element morph between the element at
+ * `fromSelector` and the one at `toSelector`, through the browser's view transitions. The change
+ * runs in flushSync, so the new snapshot is the new state; the white shape glides and rounds
+ * between `radii` while the contents cross-fade (globals.css). Where the browser has no view
+ * transitions, or the guest asked for less motion, the change simply happens.
+ */
+function morph(change: () => void, fromSelector: string, toSelector: string, radii: [string, string]): void {
+  const start = (document as unknown as { startViewTransition?: (update: () => void) => ViewTransitionLike }).startViewTransition;
+  const from = document.querySelector<HTMLElement>(fromSelector);
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  if (typeof start !== "function" || reduced || !from) {
+    change();
+    return;
+  }
+  const root = document.documentElement;
+  let to: HTMLElement | null = null;
+  let rounding: Animation | null = null;
+  const tidyUp = () => {
+    from.style.viewTransitionName = "";
+    if (to) to.style.viewTransitionName = "";
+    delete root.dataset.uploadMorph;
+    // Held at its end until now; left, it would cling to the next morph's shape of the same name.
+    rounding?.cancel();
+  };
+  from.style.viewTransitionName = MORPH_NAME;
+  // The page beneath changes at once; only the card and the circle move.
+  root.dataset.uploadMorph = "";
+  try {
+    const transition = start.call(document, () => {
+      from.style.viewTransitionName = "";
+      flushSync(change);
+      to = document.querySelector<HTMLElement>(toSelector);
+      if (!to) return;
+      to.style.viewTransitionName = MORPH_NAME;
+      // It arrives by the morph: its own entrance (the card's rise, the circle's pop) is over already.
+      for (const animation of to.getAnimations()) animation.finish();
+    });
+    transition.ready
+      .then(() => {
+        rounding = root.animate(
+          { borderRadius: radii },
+          { duration: MORPH_MILLISECONDS, easing: MORPH_EASING, fill: "forwards", pseudoElement: `::view-transition-group(${MORPH_NAME})` },
+        );
+      })
+      .catch(() => {});
+    transition.finished.then(tidyUp, tidyUp);
+  } catch {
+    tidyUp();
+    change();
+  }
 }
 
 /**
@@ -405,13 +502,9 @@ export function UploadProgress() {
   const { view, showLinkOffer, notice, timeLeft } = snapshot;
   const minimised = snapshot.minimised && Circle !== null;
   const offer = showLinkOffer && link !== null && offerAllowed;
-  const unfinishedWords = useSyncExternalStore(
-    subscribeToStartedFiles,
-    () => returnNoticeWords(createStartedFiles(browserStorage()).unfinished()),
-    () => null,
-  );
+  const unfinished = useSyncExternalStore(subscribeToStartedFiles, returnNoticeSnapshot, () => null);
   // Only while sharing is open (closed, the grace's own button offers to finish), and with no card up.
-  const returnNotice = sharingOpen && view.kind === "none" ? unfinishedWords : null;
+  const returnNotice = sharingOpen && view.kind === "none" ? unfinished : null;
 
   useEffect(() => {
     const remember = (event: FocusEvent) => {
@@ -494,7 +587,7 @@ export function UploadProgress() {
     onMinimise: Circle
       ? () => {
           focusRequest.current = { kind: "circle" };
-          setMinimised(true);
+          morph(() => setMinimised(true), "[data-upload-card]", "[data-upload-circle]", ["3px", "28px"]);
         }
       : null,
     notice,
@@ -521,7 +614,7 @@ export function UploadProgress() {
           snapshot={snapshot}
           onOpen={() => {
             focusRequest.current = { kind: "card" };
-            setMinimised(false);
+            morph(() => setMinimised(false), "[data-upload-circle]", "[data-upload-card]", ["28px", "3px"]);
           }}
           onGone={(hadFocus) => {
             if (hadFocus) focusSomewhereSensible();
@@ -534,7 +627,7 @@ export function UploadProgress() {
   return (
     <>
       <div ref={container} className="flex flex-col gap-3">
-        {returnNotice ? <ReturnNotice words={returnNotice} onChoose={chooseFiles} /> : null}
+        {returnNotice ? <ReturnNotice notice={returnNotice} onChoose={chooseFiles} /> : null}
         {card}
         {offer ? (
           <Suspense fallback={null}>

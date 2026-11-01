@@ -126,6 +126,28 @@ export const UPLOAD_WORDS = {
   keepLooking: "You can minimise this and keep looking through the album; just keep this page open.",
 } as const;
 
+/** Gate A's captions under the camera card's title, by state. */
+const CAMERA_CAPTIONS: Partial<Record<UploadStatus, string>> = {
+  queued: "Keep this page open for a moment",
+  sending: "Keep this page open for a moment",
+  retrying: UPLOAD_WORDS.retrying,
+  confirming: "Checking it arrived safely",
+  added: "Everyone will see it shortly",
+};
+
+/**
+ * The camera card's caption: a failure's hint; gate A's words for retrying, checking and added; and
+ * while a big or slow upload waits or sends, its time left (once measured) in place of "for a
+ * moment", which its notice would contradict.
+ */
+export function cameraCaption(item: Pick<UploadItem, "status" | "failure">, notice: string | null, timeLeft: string | null): string | null {
+  if (item.failure) return item.failure.hint;
+  if (notice && (item.status === "queued" || item.status === "sending")) {
+    return timeLeft ? `${timeLeft.charAt(0).toUpperCase()}${timeLeft.slice(1)}` : null;
+  }
+  return CAMERA_CAPTIONS[item.status] ?? null;
+}
+
 /** A file over this (about 100 MB) is big: the card says it may take a few minutes, whatever the time left. */
 export const BIG_FILE_BYTES = 100 * 1024 * 1024;
 /** Past this many seconds left, measured, the card says so too. */
@@ -197,21 +219,25 @@ function refusal(file: File, contentType: string, kind: UploadItem["kind"]): Upl
   return { reason: checked.message, hint: null, canRetry: false };
 }
 
-function viewOf(allItems: readonly UploadItem[], tidied: number): UploadView {
+/** Added files of the card that have tidied away: still counted in its "N of M sent" and its bar. */
+type Tidied = { files: number; bytes: number };
+
+function viewOf(allItems: readonly UploadItem[], tidied: Tidied): UploadView {
   // A file being cancelled has left the card already.
   const items = allItems.filter((item) => item.status !== "cancelling");
   if (items.length === 0) return { kind: "none" };
-  if (items.length === 1 && items[0].source !== "gallery" && tidied === 0) return { kind: "camera", item: items[0] };
+  if (items.length === 1 && items[0].source !== "gallery" && tidied.files === 0) return { kind: "camera", item: items[0] };
   // The overall bar counts only what is still to arrive: a failed file (over its limit, or waiting
   // for Try again) would hold it short of the end for ever. "N of M sent" still counts every file.
+  // Files that arrived and tidied away still count as sent, so the bar never drops back.
   const sending = items.filter((item) => item.status !== "failed");
-  const totalBytes = sending.reduce((total, item) => total + item.file.size, 0);
-  const sentBytes = sending.reduce((total, item) => total + (item.file.size * item.percent) / 100, 0);
+  const totalBytes = sending.reduce((total, item) => total + item.file.size, tidied.bytes);
+  const sentBytes = sending.reduce((total, item) => total + (item.file.size * item.percent) / 100, tidied.bytes);
   return {
     kind: "batch",
     items,
-    sent: items.filter((item) => item.status === "added").length + tidied,
-    total: items.length + tidied,
+    sent: items.filter((item) => item.status === "added").length + tidied.files,
+    total: items.length + tidied.files,
     busy: items.some(isBusy),
     percent: totalBytes === 0 ? 0 : Math.round((sentBytes / totalBytes) * 100),
   };
@@ -312,8 +338,8 @@ export function createUploadStore(
   const listeners = new Set<() => void>();
   let items: readonly UploadItem[] = [];
   let showLinkOffer = false;
-  /** Added files of this batch that have tidied away, still counted in its "N of M sent". */
-  let tidied = 0;
+  /** Added files of this batch that have tidied away, still counted in its "N of M sent" and its bar. */
+  let tidied: Tidied = { files: 0, bytes: 0 };
   let minimised = false;
   let timeLeft: { seconds: number; words: string } | null = null;
   /** The measured time left has passed SLOW_SECONDS while these files send. */
@@ -339,7 +365,7 @@ export function createUploadStore(
     const onCard = items.filter((item) => item.status !== "cancelling");
     if (onCard.length === 0) {
       // The card has gone: the next one starts its own count, open.
-      tidied = 0;
+      tidied = { files: 0, bytes: 0 };
       minimised = false;
     }
     if (!onCard.some(isBusy)) {
@@ -385,7 +411,10 @@ export function createUploadStore(
     const going = items.filter((item) => ids.includes(item.id) && item.status === "added");
     if (going.length === 0) return;
     going.forEach(forget);
-    tidied += going.length;
+    tidied = {
+      files: tidied.files + going.length,
+      bytes: tidied.bytes + going.reduce((total, item) => total + item.file.size, 0),
+    };
     commit(items.filter((item) => !going.includes(item)));
   }
 
@@ -407,7 +436,7 @@ export function createUploadStore(
         );
         leaving.forEach(forget);
         kept = kept.filter((item) => !leaving.includes(item));
-        tidied = 0;
+        tidied = { files: 0, bytes: 0 };
       }
       const added = files.map((file): UploadItem => {
         const contentType = declaredType(file);
