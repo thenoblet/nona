@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, use, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { lazy, Suspense, use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { Icon, PlayGlyph } from "@/components/ui/Icon";
 import { Segmented } from "@/components/ui/Segmented";
 import {
@@ -22,7 +22,7 @@ import { AlbumUploadsContext } from "./album-uploads";
 import { MediaTile } from "./MediaTile";
 import { useWaitingTiles } from "./use-waiting-tiles";
 import { useFreshGuestOnReturn } from "./use-fresh-guest";
-import { usePersonalLink } from "./uploader/personal-link";
+import { setPersonalLink, usePersonalLink } from "./uploader/personal-link";
 import { loadViewer, prefetchViewerWhenIdle } from "./viewer/load";
 import type { ViewerProps } from "./viewer/Viewer";
 
@@ -121,7 +121,11 @@ export function AlbumBrowser({
   const [opened, setOpened] = useState<Opened | null>(null);
   const [news, setNews] = useState<(NewCountAnswer & { key: string }) | null>(null);
   const clientLink = usePersonalLink();
-  // The link this page learned last: the server's, until the uploader or a return to the page asks again.
+  // The link learned last wins: the server's joins the page's store as it arrives (a fresh render,
+  // after a navigation too), and a later answer from the uploader or a return to view replaces it.
+  useLayoutEffect(() => {
+    if (serverLink) setPersonalLink(serverLink);
+  }, [serverLink]);
   const personalLink = clientLink ?? serverLink;
   useFreshGuestOnReturn(personalLink !== null);
   const uploads = use(AlbumUploadsContext);

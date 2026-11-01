@@ -364,12 +364,12 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.html).not.toContain("<img src=x");
   });
 
-  it.each(["Ama Owusu", "Akosua Ɔfori", "J. Doe", "Kwame Mensah Jr."])(
+  it.each(["Ama Owusu", "Akosua Ɔfori", "J. Doe", "Kwame Mensah Jr.", "Mr & Mrs Mensah", "Mensah, Kofi"])(
     "greets %s by name",
     async (name) => {
       const mail = await render(record({ [first.id]: "yes" }, name));
       expect(mail.text).toContain(`Dear ${name},`);
-      expect(mail.html).toContain(`Dear ${name},`);
+      expect(mail.html).toContain(`Dear ${asHtml(name)},`);
     },
   );
 
@@ -381,6 +381,9 @@ describe("renderRsvpConfirmation", () => {
     "evil.com",
     "a.b.c",
     "пример.рф",
+    "bit.ly/x",
+    "a&b.com",
+    "Call 024 000 0000",
     "A".repeat(61),
   ])("greets a guest whose name is %s as a guest", async (name) => {
     const mail = await render(record({ [first.id]: "yes" }, name));
@@ -388,6 +391,7 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.html).toContain("Dear guest,");
     expect(mail.text).not.toContain(name);
     expect(mail.html).not.toContain(name);
+    expect(mail.html).not.toContain(asHtml(name));
   });
 });
 

@@ -337,10 +337,13 @@ describe("renameOwnGuest (Change)", () => {
     expect(browserCookies.sets).toHaveLength(0);
   });
 
-  it("leaves the name for a blank one", async () => {
+  it("leaves the name for one that cleans to nothing: blank, or only control characters", async () => {
     const own = await createGuest("Kofi");
     sendCookie([own.id]);
-    expect((await renameOwnGuest("   "))?.displayName).toBe("Kofi");
+    for (const name of ["   ", "\u0001\u0002", " \u0007 "]) {
+      expect((await renameOwnGuest(name))?.displayName).toBe("Kofi");
+    }
+    expect((await findGuestById(own.id))?.displayName).toBe("Kofi");
   });
 
   it("makes no guest and sets no cookie for a browser without one", async () => {

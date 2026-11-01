@@ -94,11 +94,12 @@ export type GuestAnswer = { guestId: string; link: string; displayName: string |
 /**
  * Asks which guest this browser is now (POST /api/guest with no name, which renames none), for a
  * page that comes back into view after a personal link may have taken the phone over (Ruling CG).
- * Only for a browser known to have a guest: one without would get one made. Null when it fails.
+ * Only for a browser known to have a guest: one without would get one made. Null when it fails or
+ * `signal` ends it.
  */
-export async function currentGuest(): Promise<GuestAnswer | null> {
+export async function currentGuest(signal?: AbortSignal): Promise<GuestAnswer | null> {
   try {
-    const answer = await api().request("/api/guest", { method: "POST", body: {}, timeoutMs: TIMEOUT_MILLISECONDS });
+    const answer = await api().request("/api/guest", { method: "POST", body: {}, timeoutMs: TIMEOUT_MILLISECONDS, signal });
     return answer.status === 200 ? (answer.body as GuestAnswer) : null;
   } catch {
     return null;

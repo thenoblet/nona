@@ -3,9 +3,11 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * The guest's display name, remembered on this phone so the album and the
- * guestbook can greet them. It leaves the phone only with the guest's own
- * uploads: as their guest's name, and the name shown with each one.
+ * The guest's display name, remembered on this phone so the album and the guestbook can greet
+ * them. It leaves the phone with the guest's own uploads and wishes (the name shown with each, and
+ * their guest's name while it has none), and when they tap Change (PATCH /api/guest, which renames
+ * their guest). After a personal link takes the phone over, the phone takes that guest's name
+ * (Ruling CG).
  */
 const KEY = "nona:guest-name";
 /** The guest the saved name was last taken from or typed for (Ruling CG). */

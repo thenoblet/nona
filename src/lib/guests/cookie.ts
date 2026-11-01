@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { createGuest, findGuestById, nameGuestIfUnnamed, setGuestName } from "@/lib/data/guests";
 import { isUuid } from "@/lib/data/ids";
+import { cleanName } from "@/lib/data/text";
 import type { Guest } from "@/lib/data/types";
 import { guestCookieSecret } from "@/lib/env";
 
@@ -150,12 +151,13 @@ export async function ensureOwnGuest(displayName?: string | null): Promise<Guest
 
 /**
  * Renames the browser's own guest, as the guest asks by tapping Change beside "Sharing as": the
- * only way a guest's name is replaced (Ruling CG). A blank name leaves it. Null when the browser
- * has no guest yet: the name then goes with its first upload. Never makes a guest or sets the cookie.
+ * only way a guest's name is replaced (Ruling CG). A name that cleans to nothing (only spaces or
+ * control characters) leaves it. Null when the browser has no guest yet: the name then goes with
+ * its first upload. Never makes a guest or sets the cookie.
  */
 export async function renameOwnGuest(displayName: string): Promise<Guest | null> {
   const ownId = await ownGuestId();
   if (!ownId) return null;
-  const name = displayName.trim();
+  const name = cleanName(displayName);
   return name ? setGuestName(ownId, name) : findGuestById(ownId);
 }
