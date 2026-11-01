@@ -10,6 +10,7 @@ import { browserCookies } from "../../../test/next-cookies";
 vi.mock("next/headers", () => import("../../../test/next-cookies"));
 
 import {
+  adoptGuest,
   ensureOwnGuest,
   guestCookieName,
   ownGuestId,
@@ -187,6 +188,51 @@ describe("rememberGuest", () => {
     sendCookie([own]);
     await expect(rememberGuest("guest-1")).rejects.toThrow();
     await expect(rememberGuest(`${randomUUID()},${randomUUID()}`)).rejects.toThrow();
+    expect(browserCookies.sets).toHaveLength(0);
+    expect(await readGuestIds()).toEqual([own]);
+  });
+});
+
+describe("adoptGuest (Ruling CG)", () => {
+  it("makes the linked guest the browser's own when it has none", async () => {
+    const linked = randomUUID();
+    expect(await adoptGuest(linked)).toEqual([linked]);
+    expect(await readGuestIds()).toEqual([linked]);
+  });
+
+  it("makes the linked guest the browser's own over another, which becomes the first remembered", async () => {
+    const [own, remembered, linked] = [randomUUID(), randomUUID(), randomUUID()];
+    sendCookie([own, remembered]);
+    await adoptGuest(linked);
+    expect(await readGuestIds()).toEqual([linked, own, remembered]);
+  });
+
+  it("moves a linked guest the browser already remembered to its own, with no repeats", async () => {
+    const [own, first, linked] = [randomUUID(), randomUUID(), randomUUID()];
+    sendCookie([own, linked, first]);
+    await adoptGuest(linked);
+    expect(await readGuestIds()).toEqual([linked, own, first]);
+  });
+
+  it("changes nothing when the linked guest is already the browser's own", async () => {
+    const [own, remembered] = [randomUUID(), randomUUID()];
+    sendCookie([own, remembered]);
+    await adoptGuest(own);
+    expect(await readGuestIds()).toEqual([own, remembered]);
+  });
+
+  it("keeps at most ten, dropping the oldest remembered", async () => {
+    const ids = Array.from({ length: 10 }, () => randomUUID());
+    sendCookie(ids);
+    const linked = randomUUID();
+    await adoptGuest(linked);
+    expect(await readGuestIds()).toEqual([linked, ...ids.slice(0, 9)]);
+  });
+
+  it("refuses something that isn't a guest id, leaving the cookie alone", async () => {
+    const own = randomUUID();
+    sendCookie([own]);
+    await expect(adoptGuest("guest-1")).rejects.toThrow();
     expect(browserCookies.sets).toHaveLength(0);
     expect(await readGuestIds()).toEqual([own]);
   });

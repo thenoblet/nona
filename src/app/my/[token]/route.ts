@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { findGuestByToken } from "@/lib/data/guests";
 import type { Guest } from "@/lib/data/types";
-import { ensureOwnGuest, ownGuestId, rememberGuest } from "@/lib/guests/cookie";
+import { adoptGuest, ensureOwnGuest, ownGuestId, rememberGuest } from "@/lib/guests/cookie";
 import { rateLimitedResponse, takeToken } from "@/lib/guests/rate-limit";
 import { readBodyText } from "@/lib/http/read-body";
 import { describeError } from "@/lib/log-error";
@@ -70,13 +70,13 @@ function postedFromThisSite(request: Request): boolean {
 }
 
 /**
- * A guest's personal link.
- * - A browser that has its own guest remembers the linked one beside it, silently, and opens
- *   "My uploads".
- * - A browser without a guest is asked first, on /my/<token>/confirm: a link shared in a group chat
- *   must not make everyone who taps it that guest. (A route handler can't render the site's pages,
- *   and this one must stay a route handler to set the cookie above, so the question is a page of
- *   its own.)
+ * A guest's personal link. Opening it never changes the cookie.
+ * - A browser whose own guest is the linked one opens "My uploads".
+ * - Any other browser is asked first, on /my/<token>/confirm: one without a guest, since a link
+ *   shared in a group chat must not make everyone who taps it that guest (Ruling S), and one with
+ *   its own guest, since "Yes" now makes the link its own from then on (Ruling CG). (A route
+ *   handler can't render the site's pages, and this one must stay a route handler to set the
+ *   cookie in POST, so the question is a page of its own.)
  * - An unknown or malformed token opens the album and changes nothing.
  * Limited per browser by its own guest (20, then 1 a second), never by IP; a browser without a
  * guest has nothing to key on and isn't limited, as the token is the secret.
@@ -93,18 +93,18 @@ export async function GET(_request: Request, { params }: LinkContext) {
   const guest = await linkedGuest(token);
   if (guest === undefined) return unavailable();
   if (!guest) return redirectTo("/album");
-  if (!ownId) return redirectTo(`/my/${guest.linkToken}/confirm`);
-
-  await rememberGuest(guest.id);
-  return redirectTo("/album?view=mine");
+  if (ownId === guest.id) return redirectTo("/album?view=mine");
+  return redirectTo(`/my/${guest.linkToken}/confirm`);
 }
 
 /**
  * The confirm page's answer, `choice=yes` or `choice=no`, posted from this site only (403 otherwise,
  * changing nothing).
- * - "Yes, that's me": the linked guest becomes this browser's own (or, if it already has one,
- *   is remembered beside it).
- * - "No, I'm someone else": the browser gets its own new guest, with the linked one remembered.
+ * - "Yes, that's me": the linked guest becomes this browser's own from now on, so what it shares
+ *   goes with the link; a guest it had before is remembered first, its uploads still in "My
+ *   uploads" (Ruling CG).
+ * - "No, I'm someone else": the browser keeps its own guest (or gets a new one), with the linked one
+ *   remembered beside it.
  * Both then open "My uploads".
  */
 export async function POST(request: Request, { params }: LinkContext) {
@@ -123,13 +123,15 @@ export async function POST(request: Request, { params }: LinkContext) {
   if (guest === undefined) return unavailable();
   if (!guest) return redirectTo("/album", 303);
 
-  if (choice === "no") {
-    try {
-      await ensureOwnGuest(null);
-    } catch (error) {
-      console.error("[my] could not make the browser's own guest:", describeError(error));
-      return unavailable();
-    }
+  if (choice === "yes") {
+    await adoptGuest(guest.id);
+    return redirectTo("/album?view=mine", 303);
+  }
+  try {
+    await ensureOwnGuest(null);
+  } catch (error) {
+    console.error("[my] could not make the browser's own guest:", describeError(error));
+    return unavailable();
   }
   await rememberGuest(guest.id);
   return redirectTo("/album?view=mine", 303);

@@ -32,7 +32,7 @@ const render = (reply: RsvpRecord, content: SiteContent = contentDefaults) =>
 
 /** A guest's personal link, as the confirmation job reads it from the database. */
 const PERSONAL_LINK = `${SITE_URL}/my/made-up-token-for-the-confirmation-tests-0001`;
-const ON_THE_DAY = "Use this link on the day to keep your photos together.";
+const BEFORE_SHARING = "Open this link on your phone before you share your first photo, and your photos stay together on any phone.";
 
 const renderWithLink = (reply: RsvpRecord, link: string | null = PERSONAL_LINK) =>
   renderRsvpConfirmation(reply, contentDefaults, SITE_URL, link);
@@ -400,11 +400,11 @@ describe("the personal link, only in the email of a guest who is coming (Ruling 
       expect(mail.html).toContain(`href="${PERSONAL_LINK}"`);
       expect(mail.text).toContain(PERSONAL_LINK);
       for (const body of [mail.html, mail.text]) expect(body).toContain(`/my/${token}`);
-      expect(withoutTags(mail.html)).toContain(asHtml(ON_THE_DAY));
-      expect(mail.text).toContain(ON_THE_DAY);
+      expect(withoutTags(mail.html)).toContain(asHtml(BEFORE_SHARING));
+      expect(mail.text).toContain(BEFORE_SHARING);
       // Said once, with the link beside it.
-      expect(mail.text.split(ON_THE_DAY)).toHaveLength(2);
-      expect(mail.text.indexOf(PERSONAL_LINK)).toBeGreaterThan(mail.text.indexOf(ON_THE_DAY));
+      expect(mail.text.split(BEFORE_SHARING)).toHaveLength(2);
+      expect(mail.text.indexOf(PERSONAL_LINK)).toBeGreaterThan(mail.text.indexOf(BEFORE_SHARING));
     }
   });
 
@@ -424,7 +424,7 @@ describe("the personal link, only in the email of a guest who is coming (Ruling 
     expect(withLink).toEqual(await render(declined));
     for (const body of [withLink.html, withLink.text]) {
       expect(body).not.toContain("/my/");
-      expect(body).not.toContain("on the day");
+      expect(body).not.toContain("before you share");
     }
   });
 
@@ -435,7 +435,7 @@ describe("the personal link, only in the email of a guest who is coming (Ruling 
       expect(withoutLink).toEqual(await render(reply));
       for (const body of [withoutLink.html, withoutLink.text]) {
         expect(body).not.toContain("/my/");
-        expect(body).not.toContain("on the day");
+        expect(body).not.toContain("before you share");
         expect(body).not.toContain("personal link");
       }
     }

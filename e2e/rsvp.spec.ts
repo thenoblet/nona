@@ -18,6 +18,41 @@ async function ownGuestOf(phone: BrowserContext): Promise<string> {
 
 const moments = (page: Page) => page.getByRole("main").getByRole("list", { name: "Moments" });
 
+/** The guest ids in the phone's cookie, its own first. */
+async function cookieIds(phone: BrowserContext): Promise<string[]> {
+  const [cookie] = (await phone.cookies()).filter((stored) => stored.name === GUEST_COOKIE);
+  return decodeURIComponent(cookie.value).split(".")[0].split(",");
+}
+
+/** Picks a new photo in the album page's uploader, as the phone's camera would hand it over. */
+async function pickPhoto(page: Page, filename: string): Promise<void> {
+  const photo = await sharp(randomBytes(900 * 600 * 3), { raw: { width: 900, height: 600, channels: 3 } }).jpeg({ quality: 80 }).toBuffer();
+  await page.getByRole("main").getByLabel("Take a photo").setInputFiles({ name: filename, mimeType: "image/jpeg", buffer: photo });
+}
+
+/** Opens the album, shares a new photo through its uploader and waits until the album says it was added. */
+async function sharePhoto(page: Page, filename: string): Promise<void> {
+  await page.goto("/album?mode=before");
+  await expect(page.getByRole("main").getByText("Choose photos & videos")).toBeVisible();
+  await pickPhoto(page, filename);
+  await expect(page.getByRole("region", { name: "Your photo" }).getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
+}
+
+/** Sends a reply that accepts the white wedding, from a phone of its own, and returns its guest's id and link token. */
+async function replyWithLink(phone: BrowserContext, sql: ReturnType<typeof testDb>, fullName: string, phoneNumber: string, email: string) {
+  const page = await phone.newPage();
+  await page.goto("/rsvp");
+  await page.getByLabel("Your full name").fill(fullName);
+  await page.getByLabel("Phone or WhatsApp").fill(phoneNumber);
+  await page.getByLabel("Email").fill(email);
+  await page.getByRole("radiogroup", { name: /white wedding/i }).getByText("Joyfully accept").click();
+  await page.getByRole("button", { name: "Send my reply" }).click();
+  await expect(page.getByRole("heading", { name: "Thank you" })).toBeVisible();
+  const [reply] = await sql<{ guest_id: string; link_token: string }[]>`
+    SELECT rsvps.guest_id, guests.link_token FROM rsvps JOIN guests ON guests.id = rsvps.guest_id WHERE rsvps.email = ${email}`;
+  return { guestId: reply.guest_id, token: reply.link_token };
+}
+
 function testDb() {
   return postgres({
     host: TEST_DB_ENV.POSTGRES_HOST,
@@ -172,6 +207,67 @@ test("a reply under a name that isn't a plain name gets an unnamed guest: its li
     await sql.end();
     await sender.close();
     await recipient.close();
+  }
+});
+
+test("a phone that shared before opening its emailed link lets the link take it over: what it shares next goes with the link, and what it shared before stays in its My uploads (Ruling CG)", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const phone = () => browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const [sharedFirst, sender, otherPhone] = [await phone(), await phone(), await phone()];
+  const sql = testDb();
+  const guestIds: string[] = [];
+  try {
+    // The phone shares first, as a guest of its own, and leaves the album open in its tab.
+    const albumTab = await sharedFirst.newPage();
+    await sharePhoto(albumTab, "before-the-link.jpg");
+    const [earlierGuest] = await cookieIds(sharedFirst);
+    guestIds.push(earlierGuest);
+    const [{ id: earlierPhoto }] = await sql`SELECT id FROM media WHERE guest_id = ${earlierGuest}`;
+
+    // Then it opens the link a reply's email carries, in another tab: it is asked, told what Yes does, and says yes.
+    const reply = await replyWithLink(sender, sql, "Kojo Shared-First", "0244000777", "e2e-shared-first@example.com");
+    guestIds.push(reply.guestId);
+    const linkTab = await sharedFirst.newPage();
+    await linkTab.goto(`/my/${reply.token}`);
+    await expect(linkTab).toHaveURL(new RegExp(`/my/${reply.token}/confirm$`));
+    await expect(linkTab.getByRole("heading", { name: "Is this you, Kojo Shared-First?" })).toBeVisible();
+    await expect(
+      linkTab.getByText("From now on, what you share here goes with this link. What you shared before stays in My uploads on this phone."),
+    ).toBeVisible();
+    await linkTab.getByRole("button", { name: "Yes, that's me" }).click();
+    await expect(linkTab).toHaveURL(/\/album\?view=mine$/);
+    expect(await cookieIds(sharedFirst)).toEqual([reply.guestId, earlierGuest]);
+
+    // The album tab left open from before, not reloaded, sends its next photo with the link: an
+    // upload's guest is read from the cookie at each start, never kept by the page.
+    await pickPhoto(albumTab, "after-the-link.jpg");
+    await expect.poll(async () => (await sql`SELECT id FROM media WHERE guest_id = ${reply.guestId}`).length, { timeout: 60_000 }).toBe(1);
+    const [{ id: laterPhoto }] = await sql`SELECT id FROM media WHERE guest_id = ${reply.guestId}`;
+    expect(await sql`SELECT id FROM media WHERE guest_id = ${earlierGuest}`).toHaveLength(1);
+    for (const mediaId of [earlierPhoto, laterPhoto]) {
+      await expect.poll(async () => (await sql`SELECT status FROM media WHERE id = ${mediaId}`)[0].status, { timeout: 60_000 }).toBe("ready");
+    }
+
+    // This phone's My uploads still shows what it shared before, beside the new photo.
+    await linkTab.goto("/album?mode=before&view=mine");
+    await expect(moments(linkTab).locator(`[data-moment="${earlierPhoto}"]`)).toBeVisible();
+    await expect(moments(linkTab).locator(`[data-moment="${laterPhoto}"]`)).toBeVisible();
+
+    // The link on another phone brings the new photo; the earlier one stays with the first phone's own guest.
+    const other = await otherPhone.newPage();
+    await other.goto(`/my/${reply.token}`);
+    await other.getByRole("button", { name: "Yes, that's me" }).click();
+    await expect(other).toHaveURL(/\/album\?view=mine$/);
+    await expect(moments(other).locator(`[data-moment="${laterPhoto}"]`).getByRole("img", { name: "Your upload" })).toBeVisible();
+    await expect(moments(other).locator(`[data-moment="${earlierPhoto}"]`)).toHaveCount(0);
+  } finally {
+    // Later specs count the album's photos.
+    if (guestIds.length > 0) await sql`DELETE FROM media WHERE guest_id IN ${sql(guestIds)}`;
+    await sql.end();
+    for (const context of [sharedFirst, sender, otherPhone]) await context.close();
   }
 });
 

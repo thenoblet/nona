@@ -87,10 +87,34 @@ function withRemembered(ids: readonly string[], guestId: string): string[] {
 }
 
 /**
+ * The ids after taking a guest as the browser's own: it first, the previous own id next (now the
+ * newest remembered), then the rest; no repeats, at most ten, dropping the oldest remembered.
+ */
+function withOwn(ids: readonly string[], guestId: string): string[] {
+  return [guestId, ...ids.filter((id) => id !== guestId)].slice(0, MAX_GUEST_IDS);
+}
+
+/**
+ * Makes a guest opened through a personal link this browser's own from now on (Ruling CG): its
+ * uploads go with the link, while its earlier own guest is remembered first, so "My uploads" still
+ * shows what it shared before. Nobody's uploads move and no guest is merged. Changes nothing when
+ * the guest is already the browser's own. Only the confirm page's "Yes, that's me" may ask for it:
+ * GET /my/[token] never adopts a guest (Ruling S). Route handlers and server actions only, since it
+ * sets the cookie.
+ */
+export async function adoptGuest(guestId: string): Promise<string[]> {
+  if (!isUuid(guestId)) throw new Error("adoptGuest needs a guest id");
+  const known = await readGuestIds();
+  if (known[0] === guestId) return known;
+  const ids = withOwn(known, guestId);
+  await writeGuestIds(ids);
+  return ids;
+}
+
+/**
  * Adds a guest opened through a personal link to this browser's list, so "My uploads" shows theirs
- * too. It never replaces the browser's own id; a browser without one takes this guest as its own,
- * which only the confirm page's "Yes, that's me" should ask for (GET /my/[token] never adopts a
- * guest silently). Route handlers and server actions only, since it sets the cookie.
+ * too ("No, I'm someone else"). It never replaces the browser's own id; a browser without one takes
+ * this guest as its own. Route handlers and server actions only, since it sets the cookie.
  */
 export async function rememberGuest(guestId: string): Promise<string[]> {
   if (!isUuid(guestId)) throw new Error("rememberGuest needs a guest id");

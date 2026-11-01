@@ -118,20 +118,66 @@ test("\"No, I'm someone else\" gives the phone its own guest and keeps the link'
   }
 });
 
-test("a phone that has its own guest goes straight to its uploads, keeping its own guest first", async ({ browser, baseURL }) => {
+const TAKE_OVER = "From now on, what you share here goes with this link. What you shared before stays in My uploads on this phone.";
+
+test("a phone that has its own guest is asked too, and told what Yes does: the link becomes its own, its earlier guest remembered (Ruling CG)", async ({
+  browser,
+  baseURL,
+}) => {
   const ownerPhone = await browser.newContext({ baseURL });
   const otherPhone = await browser.newContext({ baseURL });
   try {
     const owner = await makeGuest(ownerPhone.request, "E2E Second Owner");
     const other = await makeGuest(otherPhone.request, "E2E Other Guest");
 
+    // Opening the link changes nothing by itself (Ruling S).
     const response = await otherPhone.request.get(`/my/${owner.token}`, { maxRedirects: 0 });
     expect(response.status()).toBe(302);
-    expect(response.headers()["location"]).toBe("/album?view=mine");
+    expect(response.headers()["location"]).toBe(`/my/${owner.token}/confirm`);
+    expect(response.headers()["set-cookie"]).toBeUndefined();
+    expect(await cookieIds(otherPhone)).toEqual([other.guestId]);
+
+    const page = await otherPhone.newPage();
+    await page.goto(`/my/${owner.token}`);
+    await expect(page.getByRole("heading", { name: "Is this you, E2E Second Owner?" })).toBeVisible();
+    await expect(page.getByText(TAKE_OVER)).toBeVisible();
+    await page.getByRole("button", { name: "Yes, that's me" }).click();
+    await expect(page).toHaveURL(/\/album\?view=mine$/);
+    expect(await cookieIds(otherPhone)).toEqual([owner.guestId, other.guestId]);
+  } finally {
+    await ownerPhone.close();
+    await otherPhone.close();
+  }
+});
+
+test("\"No, I'm someone else\" on a phone with its own guest keeps it, and remembers the link's guest beside it", async ({ browser, baseURL }) => {
+  const ownerPhone = await browser.newContext({ baseURL });
+  const otherPhone = await browser.newContext({ baseURL });
+  try {
+    const owner = await makeGuest(ownerPhone.request, "E2E Third Owner");
+    const other = await makeGuest(otherPhone.request, "E2E Another Guest");
+    const page = await otherPhone.newPage();
+    await page.goto(`/my/${owner.token}`);
+    await page.getByRole("button", { name: "No, I'm someone else" }).click();
+    await expect(page).toHaveURL(/\/album\?view=mine$/);
     expect(await cookieIds(otherPhone)).toEqual([other.guestId, owner.guestId]);
   } finally {
     await ownerPhone.close();
     await otherPhone.close();
+  }
+});
+
+test("a phone whose own guest is the link's goes straight to its uploads", async ({ browser, baseURL }) => {
+  const phone = await browser.newContext({ baseURL });
+  try {
+    const own = await makeGuest(phone.request, "E2E Own Link");
+    const response = await phone.request.get(`/my/${own.token}`, { maxRedirects: 0 });
+    expect(response.status()).toBe(302);
+    expect(response.headers()["location"]).toBe("/album?view=mine");
+    expect(response.headers()["set-cookie"]).toBeUndefined();
+    expect(await cookieIds(phone)).toEqual([own.guestId]);
+  } finally {
+    await phone.close();
   }
 });
 

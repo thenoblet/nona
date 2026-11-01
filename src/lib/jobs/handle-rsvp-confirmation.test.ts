@@ -100,7 +100,7 @@ describe("handleRsvpConfirmation", () => {
     const link = `https://wedding.example.com/my/${guest.linkToken}`;
     expect(message.html).toContain(`href="${link}"`);
     expect(message.text).toContain(link);
-    expect(message.text).toContain("Use this link on the day to keep your photos together.");
+    expect(message.text).toContain("Open this link on your phone before you share your first photo, and your photos stay together on any phone.");
   });
 
   it("sends the same email on every attempt: the link comes from the guest's saved token", async () => {
