@@ -219,15 +219,17 @@ class FakeNetwork implements EngineEnvironment {
 
 const engines: Engine[] = [];
 
-function setUp(options: { storage?: StorageLike; server?: FakeServer; timings?: Partial<UploadTimings> } = {}) {
+function setUp(
+  options: { storage?: StorageLike | null; server?: FakeServer; timings?: Partial<UploadTimings>; purpose?: "album" | "wish" } = {},
+) {
   const server = options.server ?? new FakeServer();
   const network = new FakeNetwork();
-  const storage = options.storage ?? memoryStorage();
-  const store = createUploadStore({ previews: { create: () => null, revoke: () => {} } });
+  const storage = options.storage === undefined ? memoryStorage() : options.storage;
+  const store = createUploadStore({ previews: { create: () => null, revoke: () => {} }, purpose: options.purpose });
   const guard = { updates: [] as boolean[], update: (busy: boolean) => guard.updates.push(busy) };
   const engine = startEngine(
     store,
-    { guestName: () => "Ama", onPersonalLink: () => {} },
+    { guestName: () => "Ama", onPersonalLink: () => {}, purpose: options.purpose },
     {
       api: createApiClient({ fetch: server.fetch, sleep: async () => {} }),
       putPart: server.putPart,
@@ -400,6 +402,35 @@ describe("the uploader", () => {
     expect(itemOf(store, item.id)?.failure).toEqual({ reason: "This file took too long to open", hint: null, canRetry: true });
     engine.retry(item.id);
     expect(itemOf(store, item.id)?.status).not.toBe("failed");
+  });
+});
+
+describe("a wish's recording (Task 16, Ruling BU: the same upload client)", () => {
+  it("goes up as purpose wish, a voice note as audio, through the same honest steps, and is added only on the complete's answer", async () => {
+    const { server, store, pick, guard } = setUp({ purpose: "wish", storage: null });
+    const voice = new File([new Uint8Array(3 * MEBIBYTE).fill(3)], "voice-wish.webm", { type: "audio/webm" });
+
+    const [item] = pick([voice], "video");
+    expect(item).toMatchObject({ kind: "audio", contentType: "audio/webm", status: "queued" });
+    await until(() => itemOf(store, item.id)?.status === "added");
+
+    const start = server.calls.find((call) => call.path === "/api/uploads");
+    expect(start?.body).toMatchObject({ purpose: "wish", filename: "voice-wish.webm", contentType: "audio/webm", size: 3 * MEBIBYTE });
+    expect(itemOf(store, item.id)?.mediaId).toBe("media-1");
+    // The page was guarded while it sent, and let go once it arrived.
+    expect(guard.updates).toEqual([true, false]);
+  });
+
+  it("sends a video message as purpose wish too, and the album's own as album", async () => {
+    const wish = setUp({ purpose: "wish", storage: null });
+    wish.pick([video(MEBIBYTE, "video-wish.webm")], "video");
+    await until(() => wish.server.calls.some((call) => call.path === "/api/uploads"));
+    expect(wish.server.calls.find((call) => call.path === "/api/uploads")?.body).toMatchObject({ purpose: "wish" });
+
+    const album = setUp();
+    album.pick([video(MEBIBYTE)]);
+    await until(() => album.server.calls.some((call) => call.path === "/api/uploads"));
+    expect(album.server.calls.find((call) => call.path === "/api/uploads")?.body).toMatchObject({ purpose: "album" });
   });
 });
 

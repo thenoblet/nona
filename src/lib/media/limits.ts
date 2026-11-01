@@ -25,6 +25,12 @@ export const SIZE_LIMITS = {
   videoWish: 200 * MEBIBYTE,
 } as const;
 
+/**
+ * The longest a recorded wish plays, in seconds: the phone's recorder stops itself there, and the
+ * worker trims anything longer (a recording from the phone's own camera or recorder) to it.
+ */
+export const WISH_SECONDS = { voice: 60, video: 30 } as const;
+
 /** A file under 256 MiB goes up in parts of 8 MiB, the last one smaller. */
 export const PART_SIZE_BYTES = 8 * MEBIBYTE;
 

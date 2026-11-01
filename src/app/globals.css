@@ -327,6 +327,27 @@
   [data-status="retrying"] > .upload-badge .upload-retry { animation: upload-spin 2400ms linear infinite; }
 
   /*
+   * The wish recorder (gate B 4a, 4b): the ring empties smoothly as the clock ticks, the level bars
+   * bob while the microphone listens, the video's red dot blinks, and each number of its 3, 2, 1
+   * lands with a small settle.
+   */
+  .wish-ring-left { transition: stroke-dashoffset 250ms linear, stroke 400ms ease; }
+  .wish-levels > span {
+    width: 3px;
+    height: 18px;
+    border-radius: 2px;
+    background: var(--color-ember);
+    transform-origin: center;
+    animation: wish-bar 900ms ease-in-out infinite;
+  }
+  .wish-levels > span:nth-child(2) { animation-delay: -300ms; }
+  .wish-levels > span:nth-child(3) { animation-delay: -600ms; }
+  .wish-levels > span:nth-child(4) { animation-delay: -150ms; }
+  .wish-levels > span:nth-child(5) { animation-delay: -450ms; }
+  .wish-rec-dot { animation: wish-blink 1200ms ease-in-out infinite; }
+  .wish-count { animation: wish-count-in 900ms cubic-bezier(0.16, 1, 0.3, 1) both; text-shadow: 0 4px 24px rgb(0 0 0 / 0.35); }
+
+  /*
    * The floating progress circle (Ruling BE): it pops in, and its ring glides as bytes go. Once
    * everything has arrived (Ruling BJ) the ring completes, then the ember disc pops with a small
    * overshoot, its tick draws, and one pulse goes out. Each step's resting state is its end state,
@@ -638,6 +659,19 @@ html[data-upload-morph="reopen"]::view-transition-old(upload-morph) { animation:
 html[data-upload-morph="reopen"]::view-transition-new(upload-morph) { animation: upload-morph-in 280ms ease-in 250ms both; }
 html[data-upload-morph]::view-transition-old(root),
 html[data-upload-morph]::view-transition-new(root) { animation: none; }
+@keyframes wish-bar {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+@keyframes wish-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+@keyframes wish-count-in {
+  from { opacity: 0; transform: scale(1.5); }
+  35% { opacity: 1; transform: scale(1); }
+  to { opacity: 0.9; transform: scale(0.96); }
+}
 @keyframes upload-morph-out {
   to { opacity: 0; }
 }

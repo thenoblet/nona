@@ -1,4 +1,5 @@
 import AwsS3, { type AwsS3Part, type AwsS3UploadParameters } from "@uppy/aws-s3";
+import type { GuestUploadPurpose } from "@/lib/media/limits";
 import Uppy, { type UppyFile } from "@uppy/core";
 import { createApiClient, type ApiAnswer, type ApiClient } from "./api";
 import { EventReporter } from "./events";
@@ -178,6 +179,11 @@ function handOver(): Run["handedOver"] {
 type CancelResult = "done" | "refused" | "unanswered";
 
 export type EngineOptions = {
+  /**
+   * What the files are for (POST /api/uploads's purpose): the album's, unless a wish's recording
+   * is sending (Task 16, Ruling BU: one upload client for both).
+   */
+  purpose?: GuestUploadPurpose;
   /** The guest's name on this phone, sent with their guest and each upload. */
   guestName: () => string | null;
   /** Called with the guest's personal link once POST /api/guest answers. */
@@ -682,7 +688,7 @@ class UploadEngine implements Engine {
     const answer = await this.#api.request("/api/uploads", {
       method: "POST",
       body: {
-        purpose: "album",
+        purpose: this.#options.purpose ?? "album",
         filename: run.file.name,
         size: run.file.size,
         contentType: item.contentType,
@@ -720,7 +726,7 @@ class UploadEngine implements Engine {
     run.session = session;
     run.startParts = session.uploadedParts;
     run.partUrls = this.#partUrlsFor(run, session.uploadedParts.map((part) => part.partNumber));
-    this.#startedFiles.record(run.file.size, run.fingerprint as string, session.mediaId, { kind: item.kind });
+    if (item.kind !== "audio") this.#startedFiles.record(run.file.size, run.fingerprint as string, session.mediaId, { kind: item.kind });
     if (run.cancelled) void this.#cancelOnServer(run, session.mediaId);
   }
 

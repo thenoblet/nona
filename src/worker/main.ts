@@ -10,6 +10,7 @@ import { photoHandler } from "./jobs/photo";
 import { playableHandler } from "./jobs/playable";
 import { posterHandler } from "./jobs/poster";
 import { visibilityHandler } from "./jobs/visibility";
+import { wishHandler } from "./jobs/wish";
 import type { MediaHandlers } from "./queues";
 import { runWorker } from "./runtime";
 
@@ -35,10 +36,10 @@ const jobQueue = () => getBoss(config.queuePoolSize);
  * iPhone photo's full-size JPEG, on its first download; media.poster, a video's probe and poster;
  * media.playable, a clean copy of a video's own streams, which the album plays an H.264 video from;
  * media.convert, an H.264 version of a video every phone can play (on demand at once, the backlog
- * while its switch is on); and media.visibility, deleting a hidden item's public files and purging
- * them from Cloudflare (CF_PURGE_TOKEN and CF_ZONE_ID). A queue with none yet keeps its jobs
- * waiting, unfailed (Ruling AA), until the release that brings its handler:
- * - media.wish: Task 16, a voice or video wish's recording;
+ * while its switch is on); media.wish, a voice or video wish's recording made into what the wishes
+ * wall plays (Task 16); and media.visibility, deleting a hidden item's public files and purging them
+ * from Cloudflare (CF_PURGE_TOKEN and CF_ZONE_ID). A queue with none yet keeps its jobs waiting,
+ * unfailed (Ruling AA), until the release that brings its handler:
  * - media.card: Task 19, a site photo's link-preview card.
  */
 const handlers: MediaHandlers = {
@@ -64,6 +65,16 @@ const handlers: MediaHandlers = {
     jobQueue,
   }),
   [MEDIA_QUEUES.playable]: playableHandler({ ffmpegMemoryBytes: config.ffmpegMemoryBytes, jobQueue }),
+  [MEDIA_QUEUES.wish]: wishHandler({
+    convertMemoryBytes: config.convertMemoryBytes,
+    ffmpegMemoryBytes: config.ffmpegMemoryBytes,
+    decoderThreads: config.threads.decoder,
+    x264Threads: config.threads.x264,
+    filterThreads: config.threads.ffmpegFilters,
+    x264Preset: config.x264Preset,
+    convertMaxSeconds: config.convertMaxSeconds,
+    jobQueue,
+  }),
   [MEDIA_QUEUES.visibility]: visibilityHandler({}),
 };
 

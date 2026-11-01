@@ -24,38 +24,45 @@ export const SLOW_WATCH_MILLISECONDS = 30_000;
 /** The most moments one round asks after (GET /api/media's own limit). */
 const MAX_IDS_PER_ROUND = 50;
 
-/** Hears a moment's news each time it is asked after: the moment as the album has it now, or null once it is gone. */
-export type ItemListener = (item: AlbumItem | null) => void;
+/**
+ * Hears a moment's news each time it is asked after: the moment as the album has it now, or null
+ * once it is gone. A watch of something else (a wish's recording, Task 16) hears its own items.
+ */
+export type ItemListener<TItem = AlbumItem> = (item: TItem | null) => void;
 
-export type ItemWatch = {
+export type ItemWatch<TItem = AlbumItem> = {
   /** Starts asking after the moment; returns what stops it. */
-  watch(mediaId: string, onChange: ItemListener): () => void;
+  watch(mediaId: string, onChange: ItemListener<TItem>): () => void;
 };
 
 /** Whether the page is on screen, and word when that changes (a browser's visibilitychange). */
 export type Visibility = { isVisible: () => boolean; onChange: (listener: () => void) => () => void };
 
-export type ItemWatchOptions = {
+export type ItemWatchOptions<TItem extends { id: string } = AlbumItem> = {
   /** Every named moment the album still has; a missing one is gone. Throws when it couldn't ask. */
-  fetchItems: (mediaIds: string[]) => Promise<AlbumItem[]>;
+  fetchItems: (mediaIds: string[]) => Promise<TItem[]>;
   maxIds?: number;
   /** The page's visibility; without it, the page counts as always on screen. */
   visibility?: Visibility;
 };
 
 /** A watched moment: who hears its news, when it was first watched, and when it was last asked after. */
-type Watched = { listeners: Set<ItemListener>; since: number; askedAt: number | null };
+type Watched<TItem> = { listeners: Set<ItemListener<TItem>>; since: number; askedAt: number | null };
 
 /** When the moment is next due: 5 s after it was last asked (or first watched), 30 s once that was 3 minutes in. */
-function dueAt(entry: Watched): number {
+function dueAt(entry: Pick<Watched<never>, "since" | "askedAt">): number {
   const from = entry.askedAt ?? entry.since;
   return from + (from - entry.since < SLOW_AFTER_MILLISECONDS ? ITEM_WATCH_MILLISECONDS : SLOW_WATCH_MILLISECONDS);
 }
 
-export function createItemWatch(options: ItemWatchOptions): ItemWatch {
+/**
+ * A shared check of `TItem`s by id, on the pace above: the album's moments (itemWatch), or a wish's
+ * recordings (Task 16's wishMediaWatch), each through its own batched read.
+ */
+export function createItemWatch<TItem extends { id: string } = AlbumItem>(options: ItemWatchOptions<TItem>): ItemWatch<TItem> {
   const maxIds = options.maxIds ?? MAX_IDS_PER_ROUND;
   const visible = () => options.visibility?.isVisible() ?? true;
-  const watched = new Map<string, Watched>();
+  const watched = new Map<string, Watched<TItem>>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   /** When the timer set is to start the next round. */
   let timerAt = 0;
@@ -121,7 +128,7 @@ export function createItemWatch(options: ItemWatchOptions): ItemWatch {
 
   return {
     watch(mediaId, onChange) {
-      const entry = watched.get(mediaId) ?? { listeners: new Set<ItemListener>(), since: Date.now(), askedAt: null };
+      const entry = watched.get(mediaId) ?? { listeners: new Set<ItemListener<TItem>>(), since: Date.now(), askedAt: null };
       entry.listeners.add(onChange);
       watched.set(mediaId, entry);
       scheduleNext();
@@ -135,19 +142,21 @@ export function createItemWatch(options: ItemWatchOptions): ItemWatch {
   };
 }
 
+/** The browser page's visibility (its visibilitychange), which every watch pauses by. */
+export function pageVisibility(): Visibility {
+  return {
+    isVisible: () => document.visibilityState === "visible",
+    onChange: (listener) => {
+      document.addEventListener("visibilitychange", listener);
+      return () => document.removeEventListener("visibilitychange", listener);
+    },
+  };
+}
+
 let pageWatch: ItemWatch | null = null;
 
 /** The page's one shared check, asking GET /api/media?ids=, paused while the page is hidden. */
 export function itemWatch(): ItemWatch {
-  pageWatch ??= createItemWatch({
-    fetchItems: (mediaIds) => fetchItems(mediaIds),
-    visibility: {
-      isVisible: () => document.visibilityState === "visible",
-      onChange: (listener) => {
-        document.addEventListener("visibilitychange", listener);
-        return () => document.removeEventListener("visibilitychange", listener);
-      },
-    },
-  });
+  pageWatch ??= createItemWatch({ fetchItems: (mediaIds) => fetchItems(mediaIds), visibility: pageVisibility() });
   return pageWatch;
 }

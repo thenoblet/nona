@@ -44,6 +44,37 @@ describe("the upload store", () => {
     ]);
   });
 
+  it("takes a wish's voice note as audio and its video message as video, and turns away what a wish doesn't take (Task 16)", () => {
+    const store = createUploadStore({ previews: { create: () => null, revoke: () => {} }, purpose: "wish" });
+    const queued = store.add(
+      [
+        picked("voice-wish.webm", "audio/webm;codecs=opus"),
+        picked("Recording.m4a", ""),
+        picked("video-wish.mp4", "video/mp4"),
+        picked("long.m4a", "audio/mp4", SIZE_LIMITS.voiceWish + 1),
+        picked("photo.jpg", "image/jpeg"),
+      ],
+      "video",
+    );
+
+    expect(queued.map((item) => [item.file.name, item.kind, item.contentType])).toEqual([
+      ["voice-wish.webm", "audio", "audio/webm"],
+      ["Recording.m4a", "audio", "audio/mp4"],
+      ["video-wish.mp4", "video", "video/mp4"],
+    ]);
+    const failures = Object.fromEntries(store.getSnapshot().items.filter((item) => item.failure).map((item) => [item.file.name, item.failure]));
+    expect(failures).toEqual({
+      "long.m4a": { reason: "This voice message is over 20 MB, the most a wish takes.", hint: null, canRetry: false },
+      "photo.jpg": { reason: "Only voice and video recordings can be sent here.", hint: null, canRetry: false },
+    });
+    expect(thumbOf({ kind: "audio", previewUrl: null, serverThumbUrl: null }, false)).toEqual({ kind: "icon", icon: "mic" });
+  });
+
+  it("still turns a voice note away from the album", () => {
+    const { store } = storeWithPreviews();
+    expect(pick(store, "gallery", picked("voice.m4a", "audio/mp4"))).toEqual([]);
+  });
+
   it("turns a file over its limit away before it sends, with gate A's words and no Try again", () => {
     const { store } = storeWithPreviews();
     const queued = pick(

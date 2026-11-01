@@ -75,6 +75,20 @@ export type MediaFilter = {
 
 export type WishKind = (typeof WISH_KINDS)[number];
 
+/** How far a recorded wish's recording has got: being made ready by the worker, ready, or failed. */
+export type WishMediaState = "processing" | "ready" | "failed";
+
+/** What the wall plays of a ready recording: public files the worker made, never the guest's original. */
+export type WishRecording = {
+  /** A voice note's M4A, or a video message's MP4. */
+  url: string;
+  /** A video message's poster; null for a voice note. */
+  poster: string | null;
+  /** A video message's picture, upright; null for a voice note. */
+  width: number | null;
+  height: number | null;
+};
+
 export type Wish = {
   id: string;
   kind: WishKind;
@@ -83,16 +97,32 @@ export type Wish = {
   duration?: string;
   signedAs: string;
   createdAt: string;
+  /** A voice or video wish's files, once its recording is ready. */
+  recording?: WishRecording;
+  /**
+   * A voice or video wish whose recording is still being made ready, or failed: only its sender's
+   * browser is ever shown one (Ruling BR).
+   */
+  pending?: { mediaId: string; state: Exclude<WishMediaState, "ready"> };
 };
 
-export type WishInput = {
-  kind: WishKind;
+/** A written wish to save. */
+export type TextWishInput = {
+  kind: "text";
   message?: string;
   signedAs: string;
-  /** The sending guest, once guests are recognised. */
+  /** The sending browser's own guest, when it has one. */
   guestId?: string;
-  /** A voice or video wish's recording. */
-  mediaId?: string;
+};
+
+/** A voice or video wish to save, naming its recording. */
+export type RecordedWishInput = {
+  kind: "voice" | "video";
+  /** The recording: the media id the upload API gave the guest's phone. */
+  mediaId: string;
+  signedAs: string;
+  /** Every guest the sending browser knows (its cookie's): the recording must be one of theirs. */
+  guestIds: readonly string[];
 };
 
 /** A browser that has RSVPed or uploaded (guests.ts). */

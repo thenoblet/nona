@@ -234,7 +234,8 @@ export async function AfterAlbum({ celebrations }: { celebrations: Celebration[]
 export async function WishesWall() {
   let wishes: Wish[] | null;
   try {
-    wishes = await listWishes();
+    // A guest's own recorded wishes show to them while they are made ready (Ruling BR).
+    wishes = await listWishes(await readGuestIds());
   } catch (error) {
     console.error("[home] could not read the wishes:", describeError(error));
     wishes = null;

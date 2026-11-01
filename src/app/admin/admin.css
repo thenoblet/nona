@@ -492,7 +492,9 @@
 .admin-wishes tbody tr:last-child td { border-bottom: 0; }
 .admin-wishes tr.is-hidden .admin-wish-body { color: var(--admin-muted); }
 .admin-wish-body { display: block; max-width: 46ch; overflow-wrap: anywhere; }
-.admin-wish-recording { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.admin-wish-recording { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; max-width: 100%; }
+.admin-wish-audio { display: block; flex-basis: 100%; width: 100%; max-width: 360px; height: 40px; }
+.admin-wish-video { display: block; flex-basis: 100%; width: auto; max-width: min(100%, 360px); max-height: 320px; border-radius: 6px; background: #000; }
 .admin-wish-who { font-weight: 600; white-space: nowrap; }
 .admin-wish-when { white-space: nowrap; color: var(--admin-muted); font-size: 14px; }
 .admin-wish-actions { display: flex; flex-wrap: wrap; gap: 6px; }

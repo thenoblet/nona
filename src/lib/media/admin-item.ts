@@ -278,7 +278,16 @@ export type AdminWish = {
    * A voice or video wish's recording (a media row of purpose `wish`): where Task 16 plays it. Null
    * for a written wish.
    */
-  recording: { mediaId: string; kind: "audio" | "video" | "photo"; status: "uploading" | "uploaded" | "ready" | "failed"; seconds: number | null } | null;
+  recording: {
+    mediaId: string;
+    kind: "audio" | "video" | "photo";
+    status: "uploading" | "uploaded" | "ready" | "failed";
+    seconds: number | null;
+    /** The file the wall plays, once ready and while visible: what the couple play here. Null otherwise. */
+    url: string | null;
+    /** A video message's poster, with its file. */
+    poster: string | null;
+  } | null;
   /** When a recording's 30-day lock lets the wish be deleted, ISO; null for a written wish, which has none. */
   deletableFrom: string | null;
   /** Whether it may be deleted now, as the server read it (the delete re-checks). */

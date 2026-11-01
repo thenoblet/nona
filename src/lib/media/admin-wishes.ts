@@ -3,6 +3,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { isUuid } from "@/lib/data/ids";
 import { getDb } from "@/lib/db/client";
 import { media, wishes } from "@/lib/db/schema";
+import { publicUrl } from "@/lib/storage/keys";
 import type { AdminWish, AdminWishPage } from "./admin-item";
 import { deletableFrom } from "./moderation";
 import { decodeTimeCursor, encodeTimeCursor, microsecondText, type TimeCursor } from "./time-cursor";
@@ -10,7 +11,7 @@ import { decodeTimeCursor, encodeTimeCursor, microsecondText, type TimeCursor } 
 /*
  * The admin's Wishes tab (Task 17): every wish but the deleted, hidden ones too, newest first, along
  * wishes_admin_idx, paged by a cursor; a voice or video wish's recording read beside it by primary
- * key, for its state and its lock (Task 16 plays it there).
+ * key, for its state, its lock and the file the wall plays, which the couple play here (Task 16).
  */
 
 /** A page's size. */
@@ -30,6 +31,8 @@ const wishColumns = {
   recordingStatus: media.status,
   recordingSeconds: media.durationSeconds,
   recordingUploadedAt: media.uploadedAt,
+  recordingDerived: media.derived,
+  recordingVisible: sql<boolean | null>`${media.hiddenAt} is null and ${media.deletedAt} is null and not ${media.removedByUploader}`,
 };
 
 type WishRow = {
@@ -46,7 +49,23 @@ type WishRow = {
   recordingStatus: "uploading" | "uploaded" | "ready" | "failed" | null;
   recordingSeconds: number | null;
   recordingUploadedAt: Date | null;
+  recordingDerived: Partial<Record<string, string>> | null;
+  recordingVisible: boolean | null;
 };
+
+/**
+ * What the couple play of a recording: the file the wall plays (a voice note's M4A, a video
+ * message's MP4) and a video's poster, once media.wish has made them, while it is visible; none
+ * while it is being made, after it failed, or once hidden (its files are withdrawn: its original
+ * still opens).
+ */
+function playableOf(row: WishRow): { url: string | null; poster: string | null } {
+  const ready = row.recordingStatus === "ready" && row.recordingVisible === true;
+  const played = row.kind === "voice" ? row.recordingDerived?.audio : row.recordingDerived?.video;
+  const poster = row.recordingDerived?.["poster-view"];
+  if (!ready || !played) return { url: null, poster: null };
+  return { url: publicUrl(played), poster: poster ? publicUrl(poster) : null };
+}
 
 /** A page of the admin's wishes along wishes_admin_idx. Exported so a test can check its plan. */
 export function adminWishesQuery(cursor: TimeCursor | null, limit: number) {
@@ -82,6 +101,7 @@ function toAdminWish(row: WishRow): AdminWish {
             kind: row.recordingKind,
             status: row.recordingStatus,
             seconds: row.recordingSeconds === null ? null : Math.round(row.recordingSeconds),
+            ...playableOf(row),
           }
         : null,
     deletableFrom: lockedUntil?.toISOString() ?? null,

@@ -494,6 +494,78 @@ export async function markVideoReady(mediaId: string, video: ProcessedVideo): Pr
 }
 
 /*
+ * Recorded wishes (Task 16): a voice or video wish's recording, a media row of purpose `wish`,
+ * processed by media.wish into what the wishes wall plays. Never listed in the album.
+ */
+
+/** What media.wish reads of a recording before it starts. */
+export type WishToProcess = ItemToProcess & {
+  /** `audio` for a voice wish, `video` for a video wish (the upload API's kind, from the declared type). */
+  kind: MediaFileKind;
+};
+
+/** The recording, if media.wish has work to do for it (awaitsProcessing, and a wish's); otherwise null. One read on the primary key. */
+export async function findWishToProcess(mediaId: string): Promise<WishToProcess | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .select({
+      id: media.id,
+      kind: media.kind,
+      originalKey: media.originalKey,
+      startedAt: media.startedAt,
+      capturedAt: media.capturedAt,
+      derivedGeneration: media.derivedGeneration,
+    })
+    .from(media)
+    .where(and(awaitsProcessing(mediaId), sql`${media.purpose} = 'wish'`))
+    .limit(1);
+  return row ?? null;
+}
+
+/** What media.wish made of a recording, for markWishReady. */
+export type ProcessedWish = {
+  /** The files the wall plays: a voice note's `audio`; a video message's `video` and its poster's two sizes. */
+  derived: Partial<Record<DerivedVariant, string>>;
+  /** The generation they were made for, as findWishToProcess read it: the mark needs it current. */
+  derivedGeneration: number;
+  /** The length of what the wall plays, from ffprobe on the file made (after any trim). */
+  durationSeconds: number;
+  /** A video message's picture, as made (within 720p, upright); null for a voice note. */
+  width: number | null;
+  height: number | null;
+  thumbhash: string | null;
+  averageColor: string | null;
+  /** The recording's own video codec, as ffprobe named it; null for a voice note. */
+  videoCodec: string | null;
+};
+
+/**
+ * Marks a processed recording `ready` with what media.wish made, in one statement and only while a
+ * job still has work to do for it (awaitsProcessing), in the generation its files were made for,
+ * as markPhotoReady does. It is never listed: the wishes wall reads it through its wish. Returns
+ * the facts its manifest holds as this left them, or null when it changed nothing.
+ */
+export async function markWishReady(mediaId: string, wish: ProcessedWish): Promise<MediaManifest | null> {
+  if (!isUuid(mediaId)) return null;
+  const [row] = await getDb()
+    .update(media)
+    .set({
+      status: "ready",
+      failureReason: null,
+      derived: wish.derived,
+      durationSeconds: wish.durationSeconds,
+      width: wish.width,
+      height: wish.height,
+      thumbhash: wish.thumbhash,
+      averageColor: wish.averageColor,
+      videoCodec: wish.videoCodec,
+    })
+    .where(and(awaitsProcessing(mediaId, wish.derivedGeneration), sql`${media.purpose} = 'wish'`))
+    .returning(manifestColumns);
+  return row ?? null;
+}
+
+/*
  * Video conversions (Task 11). A ready video's `conversion` goes `none` → `queued` (it needs one:
  * its poster job found it unplayable or long, a phone asked, or the couple made it a highlight) →
  * `converting` (a media.convert job holds its lease, conversion_job_id) → `done` (its MP4 is

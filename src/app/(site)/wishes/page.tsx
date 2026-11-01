@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { listWishes } from "@/lib/data/wishes";
+import { readGuestIds } from "@/lib/guests/cookie";
 import { shareDefaults } from "@/lib/share";
 import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { Paper } from "@/components/ui/Paper";
@@ -63,10 +64,13 @@ export default function WishesPage() {
   );
 }
 
-/** Read at request time, so a wish sent from the form shows up straight away. */
+/**
+ * Read at request time, so a wish sent from the form shows up straight away. The browser's own
+ * guests (its cookie) see their recorded wishes while they are made ready (Ruling BR).
+ */
 async function WishesWall() {
   await connection();
-  const wishes = await listWishes();
+  const wishes = await listWishes(await readGuestIds());
 
   if (!wishes.length) {
     return <p className="m-0 text-center font-serif text-xl text-mocha italic">No wishes yet. Be the first to leave one.</p>;
