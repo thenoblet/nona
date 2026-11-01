@@ -63,9 +63,9 @@ export const clientStyles = `
 a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; }
 @media only screen and (max-width: 480px) {
   .nn-pad { padding-left: 16px !important; padding-right: 16px !important; }
-  .nn-stub { width: 64px !important; }
-  .nn-ticket { padding-left: 16px !important; padding-right: 16px !important; }
+  .nn-stub { width: 54px !important; }
+  .nn-ticket { padding-left: 14px !important; padding-right: 14px !important; }
   /* "Noblet & Nancy" stays on one line: in Georgia, where the script font can't load, 36 px is too wide for 320 px. */
-  .nn-sign { font-size: 32px !important; line-height: 42px !important; }
+  .nn-sign { font-size: 27px !important; line-height: 34px !important; }
 }
 `;
