@@ -16,6 +16,12 @@ export type SettingValues = {
   convert_backlog: boolean;
   /** The worker's last heartbeat (ISO time), or null before it has ever run. */
   worker_heartbeat: string | null;
+  /**
+   * The venue TV's delay (Task 17): how many seconds after a moment is listed the slideshow may
+   * show it, 0 to 900, so the couple can hide anything first. Null until the admin saves one, when
+   * SLIDESHOW_DELAY_SECONDS applies (slideshow-delay.ts reads it).
+   */
+  slideshow_delay_seconds: number | null;
 };
 
 export type SettingKey = keyof SettingValues;
@@ -26,6 +32,7 @@ export const SETTING_DEFAULTS: SettingValues = {
   uploads_closed_at: null,
   convert_backlog: true,
   worker_heartbeat: null,
+  slideshow_delay_seconds: null,
 };
 
 /** The setting's saved value, or `fallback` when none has been saved. A saved null stays null. */
