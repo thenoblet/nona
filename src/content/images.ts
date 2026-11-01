@@ -10,6 +10,7 @@ import chrysanthemumsPortrait from "../../public/images/flowers/chrysanthemums-p
 import daisiesWrapped from "../../public/images/flowers/daisies-wrapped.jpg";
 import lilian from "../../public/images/party/lilian.jpg";
 import james from "../../public/images/party/james.jpg";
+import dennis from "../../public/images/party/dennis.jpg";
 
 export type Photo = { src: StaticImageData; alt: string; position?: string };
 
@@ -38,6 +39,7 @@ export const photos = {
 export const partyPhotos: Partial<Record<string, Photo>> = {
   lilian: { src: lilian, alt: "Lilian, maid of honour", position: "center 40%" },
   james: { src: james, alt: "James, best man", position: "center 30%" },
+  dennis: { src: dennis, alt: "Dennis, groomsman", position: "center 30%" },
 };
 
 /**
