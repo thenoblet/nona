@@ -26,7 +26,7 @@ export const metadata: Metadata = {
 export default function WishesPage() {
   return (
     <main className="min-h-dvh bg-white pb-28">
-      <PhoneHeader tone="light" backHref="/album" backText="Album">
+      <PhoneHeader tone="light" sibling={{ href: "/album", text: "Photos", icon: "camera" }}>
         <div className="flex flex-col items-center gap-2.5 text-center">
           <Eyebrow className="mt-1.5">Our guestbook</Eyebrow>
           <h1 className="m-0 font-script text-[56px] leading-[1.1] font-normal sm:text-[64px]">Leave us a wish</h1>

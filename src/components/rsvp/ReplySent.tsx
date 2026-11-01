@@ -6,7 +6,8 @@ import { couple } from "@/content/wedding";
 import { celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
 import type { Celebration, SiteContent } from "@/lib/content/schema";
 import { photos } from "@/content/images";
-import { PillAnchor } from "@/components/ui/Button";
+import { PillAnchor, PillLink } from "@/components/ui/Button";
+import { Halo } from "@/components/ui/Halo";
 import { Icon } from "@/components/ui/Icon";
 import type { RsvpValues } from "./options";
 
@@ -98,6 +99,22 @@ export function ReplySent({
           );
         })}
       </ul>
+
+      {accepted.length === 0 ? (
+        <div
+          className="mt-1 flex animate-rise flex-col items-center gap-3 self-stretch rounded-[var(--radius-paper)] bg-white px-5 pt-6 pb-6 shadow-[0_1px_2px_rgb(61_41_39/0.06),0_14px_32px_rgb(61_41_39/0.1)]"
+          style={{ animationDelay: "600ms" }}
+        >
+          <Halo icon="heart" size="md" />
+          <p className="m-0 font-serif text-[26px] leading-tight italic">We&apos;ll miss you</p>
+          <p className="m-0 max-w-[34ch] text-[15px] leading-[1.6] text-balance text-mocha">
+            Send us a wish instead: a few words, a voice note or a short video. We&apos;ll keep it with the day.
+          </p>
+          <PillLink href="/wishes" variant="cocoa" className="mt-1.5">
+            Leave a wish
+          </PillLink>
+        </div>
+      ) : null}
 
       {accepted.length > 0 ? (
         <>

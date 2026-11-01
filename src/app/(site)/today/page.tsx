@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { couple } from "@/content/wedding";
 import { PillLink } from "@/components/ui/Button";
+import { Icon } from "@/components/ui/Icon";
 import { Motto } from "@/components/ui/Typography";
 import { SharePill } from "@/components/layout/SharePill";
 import { DockItem } from "@/components/music/Dock";
@@ -81,6 +82,15 @@ function TodayLayout({ dayLabel: dayLabelSlot, happeningNow, orderOfDay, quickAc
           <PillLink href="/album" variant="ember" icon="camera" size="lg" block className="justify-start!">
             Share photos &amp; videos
           </PillLink>
+          <Link
+            href="/wishes"
+            className="press -mt-1 flex min-h-13 items-center gap-3 rounded-full border border-white/35 bg-white/10 py-2 pr-6 pl-2 text-xs uppercase tracking-[0.2em] text-white no-underline"
+          >
+            <span className="flex size-10 items-center justify-center rounded-full bg-white/10">
+              <Icon name="heart" size={17} className="text-ember" />
+            </span>
+            Leave us a wish
+          </Link>
         </div>
       </header>
 
