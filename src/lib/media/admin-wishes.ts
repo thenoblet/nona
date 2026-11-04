@@ -57,12 +57,13 @@ type WishRow = {
  * What the couple play of a recording: the file the wall plays (a voice note's M4A, a video
  * message's MP4) and a video's poster, once media.wish has made them, while it is visible; none
  * while it is being made, after it failed, or once hidden (its files are withdrawn: its original
- * still opens).
+ * still opens). The poster is the 480 px one the wall shows: a <video> fetches its poster whatever
+ * its preload says, and a page holds 50 wishes, on the couple's phone too.
  */
 function playableOf(row: WishRow): { url: string | null; poster: string | null } {
   const ready = row.recordingStatus === "ready" && row.recordingVisible === true;
   const played = row.kind === "voice" ? row.recordingDerived?.audio : row.recordingDerived?.video;
-  const poster = row.recordingDerived?.["poster-view"];
+  const poster = row.recordingDerived?.["poster-thumb"];
   if (!ready || !played) return { url: null, poster: null };
   return { url: publicUrl(played), poster: poster ? publicUrl(poster) : null };
 }

@@ -272,14 +272,18 @@ describe("the admin's wishes", () => {
     expect(await findAdminWish("not-an-id")).toBeNull();
   });
 
-  it("plays a ready recording from the file the wall plays (and a video's poster); none while it is made, failed or hidden", async () => {
+  it("plays a ready recording from the file the wall plays (and a video's small poster); none while it is made, failed or hidden", async () => {
     const insertWish = async (kind: "voice" | "video", mediaId: string) =>
       (await getDb().insert(wishes).values({ signedAs: "Kwame", kind, mediaId }).returning())[0].id;
     const voiceId = await addAlbumItem({ purpose: "wish", kind: "audio", derived: { audio: "derived/v/0123456789abcdef/audio.m4a" } });
     const videoId = await addAlbumItem({
       purpose: "wish",
       kind: "video",
-      derived: { video: "derived/w/0123456789abcdef/video.mp4", "poster-view": "derived/w/0123456789abcdef/poster-view.webp" },
+      derived: {
+        video: "derived/w/0123456789abcdef/video.mp4",
+        "poster-thumb": "derived/w/0123456789abcdef/poster-thumb.webp",
+        "poster-view": "derived/w/0123456789abcdef/poster-view.webp",
+      },
     });
     const processingId = await addAlbumItem({ purpose: "wish", kind: "audio", status: "uploaded" });
     const hiddenId = await addAlbumItem({
@@ -297,7 +301,8 @@ describe("the admin's wishes", () => {
     expect((await findAdminWish(voice))?.recording).toMatchObject({ url: publicUrl("derived/v/0123456789abcdef/audio.m4a"), poster: null });
     expect((await findAdminWish(video))?.recording).toMatchObject({
       url: publicUrl("derived/w/0123456789abcdef/video.mp4"),
-      poster: publicUrl("derived/w/0123456789abcdef/poster-view.webp"),
+      // The 480 px poster, as the wall's: a page of 50 wishes never fetches 50 full-size ones.
+      poster: publicUrl("derived/w/0123456789abcdef/poster-thumb.webp"),
     });
     for (const id of [processing, hidden]) expect((await findAdminWish(id))?.recording).toMatchObject({ url: null, poster: null });
   });
