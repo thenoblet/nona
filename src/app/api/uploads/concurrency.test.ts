@@ -104,17 +104,27 @@ async function timed<TResult>(request: () => Promise<TResult>): Promise<Timed<TR
   return { result, totalMs, ownMs: totalMs - coveredMilliseconds(timing.r2Calls) };
 }
 
-/** Watches the test database for lock waits while `during` runs; returns the most seen at once. */
-async function mostLockWaits(during: () => Promise<void>): Promise<number> {
+/**
+ * Watches the test database for lock waits while `during` runs: the most seen at once, and what
+ * each one waited for, so a failure says which lock it was. Relation extension locks ('extend') are
+ * left out: Postgres takes one for a moment whenever concurrent inserts grow a table or one of its
+ * indexes, which 50 starts into a freshly emptied media table (and its many indexes) can make
+ * collide on a slow runner. They are no sign of the contention this test guards against: row,
+ * transaction or advisory locks the start path's own queries would wait on.
+ */
+async function lockWaits(during: () => Promise<void>): Promise<{ most: number; seen: string[] }> {
   const watcher = postgres({ ...dbConfig(), max: 1, onnotice: () => {} });
   let watching = true;
   let most = 0;
+  const seen = new Set<string>();
   const watch = (async () => {
     while (watching) {
-      const [{ waiting }] = await watcher<{ waiting: number }[]>`
-        select count(*)::int as waiting from pg_locks
-        where not granted and database = (select oid from pg_database where datname = current_database())`;
-      most = Math.max(most, waiting);
+      const waiting = await watcher<{ locktype: string; mode: string; relation: string | null }[]>`
+        select locktype, mode, relation::regclass::text as relation from pg_locks
+        where not granted and locktype <> 'extend'
+          and database = (select oid from pg_database where datname = current_database())`;
+      most = Math.max(most, waiting.length);
+      for (const lock of waiting) seen.add(`${lock.locktype} ${lock.mode}${lock.relation ? ` on ${lock.relation}` : ""}`);
       await new Promise((resolve) => setTimeout(resolve, 2));
     }
   })();
@@ -125,7 +135,7 @@ async function mostLockWaits(during: () => Promise<void>): Promise<number> {
     await watch;
     await watcher.end();
   }
-  return most;
+  return { most, seen: [...seen] };
 }
 
 async function deadlocks(): Promise<number> {
@@ -184,7 +194,7 @@ describe("the upload API under a burst", () => {
 
     let outcomes: Timed<{ status: number; mediaId: string }>[] = [];
     const began = performance.now();
-    const waits = await mostLockWaits(async () => {
+    const waits = await lockWaits(async () => {
       outcomes = await Promise.all(
         browsers.map((jar, index) =>
           asBrowser(jar, () =>
@@ -209,7 +219,7 @@ describe("the upload API under a burst", () => {
     // before the load test, which measures it on the real box).
     const burstCeilingMs = 400 * Math.max(1, 4 / availableParallelism());
     expect(percentile(outcomes.map((outcome) => outcome.ownMs), 0.95)).toBeLessThan(burstCeilingMs);
-    expect(waits).toBe(0);
+    expect(waits.most, `waited on: ${waits.seen.join("; ")}`).toBe(0);
     expect(await deadlocks()).toBe(deadlocksBefore);
     expect(elapsedMs).toBeLessThan(10_000);
 
