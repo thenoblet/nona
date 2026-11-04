@@ -23,6 +23,8 @@ Mobile-first: every page is designed for a phone, then widened for larger screen
 | `/admin/rsvps` | Every current reply, with totals per celebration, search, filters, each reply's confirmation email ("Sent", "Sending", "Not sent", "Failed" or "No email") and the replies to check ("Keep this one", "Keep both"). |
 | `/admin/rsvps.csv` | The replies as a spreadsheet (CSV), times in Accra. |
 | `/admin/content/[section]` | Edit the site's times, venues and text, one section at a time (`celebrations`, `schedule`, `venues`, `landmarks`, `faq`, `travel`, `gifts`, `party`, `story`, `live-stream`), with every saved version kept for undo. |
+| `/admin/photos` | The couple's moderation of the album, newest first: hide, unhide, move to another celebration, highlight, retry a failed photo or video, or delete one for good once its 30-day lock has passed. Above it, the uploads switch (open or close guest uploads), the backlog switch (convert the videos phones can't play, a few at a time) and the venue TV's delay. |
+| `/admin/photos/wishes` | Every wish guests have left, written, voice or video, newest first: play a recording, hide, unhide or delete one. |
 | `/admin/photos/site` | The site's own photos (the landing cover and print, the home hero, the invitation band, the story, the gallery, each link preview card's photo and one portrait per wedding-party member): replace any, set its alt text and focal point, or go back to an earlier one. A link preview's card is drawn again by the media worker; the built-in photos in `src/content/images.ts` stay as defaults. |
 
 ### Previewing the homepage versions
@@ -45,13 +47,13 @@ src/
   lib/
     mode.ts            before / wedding weekend / after
     db/ content/       Postgres client, schema, migrations; editable site content
-    data/              rsvp.ts (Postgres), media.ts and wishes.ts (stand-ins, see below)
+    data/              Postgres reads and writes: replies, guests, wishes, settings
     email/ jobs/       confirmation emails (Resend), sent from a pg-boss job queue
     storage/           Cloudflare R2 (MinIO locally): object keys, multipart uploads, manifests
     media/             the upload API's work and the media table's queries
-  worker/              the media worker, a process and image of its own (see below)
     calendar/          calendar files for each celebration
     qr.ts              album QR codes
+  worker/              the media worker, a process and image of its own (see below)
   fonts/               self-hosted fonts (no request to Google)
 public/
   images/              story photos and flowers
@@ -174,6 +176,11 @@ in this repository.
 | `EMAIL_REPLY_TO` | Where a guest's reply to the email goes. Several addresses, separated by commas, all receive it. |
 | `CF_ACCESS_TEAM_DOMAIN` | The Cloudflare Access team domain as a bare host (`<team>.cloudflareaccess.com`, without `https://`). |
 | `CF_ACCESS_AUD` | The Access application's audience tag. With either of these two missing, the admin refuses everyone. |
+| `R2_ENDPOINT` | R2's S3 address for the account, `https://<account id>.r2.cloudflarestorage.com`. |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | The R2 API token's keys (see R2 and Cloudflare below). |
+| `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET` | `nona-private` (the originals, as guests sent them, and their manifests) and `nona-public` (the thumbnails, viewing copies and link preview cards the site shows). |
+| `MEDIA_BASE_URL` | Where the public bucket is served, `https://media.nobletxnancy.com`. Without it or any of the R2 settings, guests can't upload and the album can't show. |
+| `SLIDESHOW_DELAY_SECONDS` | The venue TV's delay before a new photo or video reaches it: whole seconds from 0 to 900, 180 when unset. Once the couple save a delay under Admin → Photos, theirs wins. |
 
 **Never set `ADMIN_DEV_EMAIL` or `ALLOW_MODE_PREVIEW` in production.** The first stands in for a
 signed-in admin on a developer's machine; the second lets anyone preview the wedding-weekend and
@@ -187,10 +194,49 @@ way gets nothing.
 The database is backed up every night at 02:30 UTC by Dokploy, to a private Cloudflare R2 bucket.
 Backups are kept forever.
 
+**An index added during the freeze (from 3 Dec) is created by hand, with `CONCURRENTLY`.**
+Migrations run at server start in one transaction, where a plain `CREATE INDEX` blocks writes to
+its table while it builds. Create the index on the live database first with
+`CREATE INDEX CONCURRENTLY`, and write its migration as `CREATE INDEX IF NOT EXISTS`, so the deploy
+finds it there and does nothing.
+
+The uptime checks and their alerts are `infra/monitoring.bicep`, deployed by hand with the commands
+in its header. The address the alerts go to is passed at deploy time (`alertEmail`), never kept in
+this repository.
+
 To deploy automatically, put the Dokploy app's deploy URL in the repository secret `DOKPLOY_DEPLOY_URL`.
 Only `main` builds the image and deploys; running the workflow by hand on another branch runs the
 tests only. To freeze deploys (the wedding week), blank that secret. To roll back, point the app at an earlier
 `:sha-` tag.
+
+### R2 and Cloudflare
+
+Guests' photos and videos live in Cloudflare R2. What the code relies on is set up by hand in
+Cloudflare (`npm run storage:init` only sets up the local MinIO):
+
+- **Two buckets:** `nona-private` and `nona-public`, with r2.dev access off on both. The private one
+  is reached only through presigned links.
+- **CORS.** On `nona-private`: the origin `https://nobletxnancy.com`, methods `PUT`, `GET` and
+  `HEAD`, and `ETag` exposed: a phone reads each part's ETag to finish its upload, so without it no
+  upload completes. On `nona-public`: `GET` and `HEAD` from the same origin. Save to Photos fetches
+  from both; without their CORS it falls back to a plain download.
+- **A 30-day bucket lock on `originals/`** in `nona-private`, and on nothing else: manifests sit
+  beside the originals and are rewritten in place. 30 days from upload, never indefinite: a
+  permanent delete waits for the lock to pass, and against one that never does it retries for
+  ever. It must be in place before uploads open.
+- **A lifecycle rule on `nona-private`:** abort incomplete multipart uploads after 7 days. An
+  abandoned upload is left for it to clear, and a resume relies on an unfinished one lasting that
+  long.
+- **The custom domain `media.nobletxnancy.com`** on `nona-public`, proxied: `MEDIA_BASE_URL`. It
+  must be in the zone `CF_ZONE_ID` names and the purge token covers, or a hidden photo's copies in
+  Cloudflare's cache can't be purged.
+- **The tokens:**
+  - an R2 API token with Object Read & Write on both buckets, for the site and the worker
+    (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`). The site signs the phones' uploads, writes the
+    manifests and deletes what the couple delete for good; the worker reads originals and writes
+    and deletes the public files;
+  - a Cloudflare API token allowed only "Zone · Cache Purge" on the site's zone, for the worker
+    alone (`CF_PURGE_TOKEN`).
 
 ## The media worker
 
