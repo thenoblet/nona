@@ -170,7 +170,7 @@ test("a reply's own guest is known only through its email: the phone that sent i
     await other.goto(`/my/${reply.link_token}`);
     await other.getByRole("button", { name: "Yes, that's me" }).click();
     await expect(other).toHaveURL(/\/album\?view=mine$/);
-    await expect(other.getByRole("main").getByRole("tab", { name: "My uploads" })).toHaveAttribute("aria-selected", "true");
+    await expect(other.getByRole("main").getByRole("group", { name: "Whose moments" }).getByRole("button", { name: "My uploads" })).toHaveAttribute("aria-pressed", "true");
     await expect(moments(other).locator(`[data-moment="${mediaId}"]`).getByRole("img", { name: "Your upload" })).toBeVisible();
   } finally {
     // Later specs count the album's photos.

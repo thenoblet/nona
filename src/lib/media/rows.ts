@@ -30,8 +30,12 @@ type UploadEventKind = (typeof UPLOAD_EVENT_KINDS)[number];
 
 /**
  * Whether anyone may see or fetch the item: it isn't hidden, deleted or removed by its uploader.
- * Every presign, download, playback and slideshow path checks this first. An unknown id, or one
- * that isn't a UUID, is not visible.
+ * An unknown id, or one that isn't a UUID, is not visible. No route calls it: each path that
+ * serves an item states the same condition in its own query (visibleItem below, visibleAlbumItems
+ * in album.ts, isVisibleUpload in uploads.ts, visibleRecording in data/wishes.ts,
+ * recordingVisible in admin-wishes.ts, findItemToWithdraw, and moderation's highlight and retry),
+ * so a change to what visible means changes every one of them. The media_removed_is_hidden check
+ * (removed implies hidden) keeps those that test only hidden_at in agreement.
  */
 export async function isVisible(mediaId: string): Promise<boolean> {
   if (!isUuid(mediaId)) return false;
@@ -157,7 +161,8 @@ export async function findUpload(mediaId: string): Promise<UploadRow | null> {
 }
 
 export type ResumableUploadKey = {
-  guestId: string;
+  /** Every guest the browser knows, its own first: an upload it started as an earlier own guest carries on too. */
+  guestIds: string[];
   purpose: MediaPurpose;
   sizeBytes: number;
   fingerprint: string;
@@ -169,13 +174,13 @@ export type ResumableUploadKey = {
  * resume index applies under a generic plan (a pooled prepared statement's). No ORDER BY, so no
  * sort: two unfinished uploads of one file (two starts at once) are equally good to resume.
  */
-export function resumableUploadQuery({ guestId, purpose, sizeBytes, fingerprint }: ResumableUploadKey) {
+export function resumableUploadQuery({ guestIds, purpose, sizeBytes, fingerprint }: ResumableUploadKey) {
   return getDb()
     .select(uploadColumns)
     .from(media)
     .where(
       and(
-        eq(media.guestId, guestId),
+        inArray(media.guestId, guestIds),
         eq(media.sizeBytes, sizeBytes),
         eq(media.fileFingerprint, fingerprint),
         sql`${media.status} = 'uploading'`,
@@ -185,7 +190,7 @@ export function resumableUploadQuery({ guestId, purpose, sizeBytes, fingerprint 
     .limit(1);
 }
 
-/** The guest's unfinished upload of this file (same purpose, size and fingerprint), or null. */
+/** The browser's unfinished upload of this file (same purpose, size and fingerprint), under any of its guests, or null. */
 export async function findResumableUpload(key: ResumableUploadKey): Promise<UploadRow | null> {
   const [row] = await resumableUploadQuery(key);
   return row ?? null;

@@ -383,6 +383,40 @@ test.describe("the switches", () => {
       await context.close();
     }
   });
+
+  test("the TV delay's field follows a delay the other admin saved, unless something is typed in it", async ({ browser, baseURL }) => {
+    const context = await couple(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await page.goto("/admin/photos");
+      const card = page.locator('[data-switch="tv-delay"]').filter({ visible: true });
+      const seconds = card.getByLabel("Seconds");
+      await expect(seconds).toHaveValue("180");
+      const backlogCard = page.locator('[data-switch="backlog"]').filter({ visible: true });
+      /** Opening a switch's confirm reads the page again, as any of the admin's changes does. */
+      const readThePageAgain = async () => {
+        await page.getByRole("switch", { name: "Convert backlog videos" }).click();
+        await backlogCard.getByRole("button", { name: "Cancel" }).click();
+      };
+
+      // The other admin saves 45 s; once this page reads again, the untouched field shows it.
+      await sql`insert into settings (key, value) values ('slideshow_delay_seconds', '45'::jsonb)
+        on conflict (key) do update set value = excluded.value, updated_at = now()`;
+      await readThePageAgain();
+      await expect(card.getByText("45 seconds", { exact: true })).toBeVisible();
+      await expect(seconds).toHaveValue("45");
+
+      // A delay being typed stays as typed when the other admin saves again.
+      await seconds.fill("90");
+      await sql`update settings set value = '30'::jsonb, updated_at = now() where key = 'slideshow_delay_seconds'`;
+      await readThePageAgain();
+      await expect(card.getByText("30 seconds", { exact: true })).toBeVisible();
+      await expect(seconds).toHaveValue("90");
+    } finally {
+      await sql`delete from settings where key = 'slideshow_delay_seconds'`;
+      await context.close();
+    }
+  });
 });
 
 test("a wish hidden from the Wishes tab leaves the wall, and Unhide puts it back", async ({ browser, baseURL, request }) => {

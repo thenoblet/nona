@@ -67,6 +67,15 @@ function sessionStorageOrNull(): SessionStorageLike | null {
 }
 
 /**
+ * After a chunk failed to load: when it was a script chunk (a deploy may have removed the one this
+ * page names), reloads the page once, as reloadOnceAfterChunkError allows. True when it reloads.
+ * The viewer's chunk uses it too.
+ */
+export function reloadOnceForMissingChunk(error: unknown): boolean {
+  return isChunkLoadError(error) && reloadOnceAfterChunkError({ storage: sessionStorageOrNull(), reload: () => window.location.reload(), now: Date.now() });
+}
+
+/**
  * The uploader for a pick. A chunk a deploy removed reloads the page once (the pick is lost, and
  * the guest picks again on the fresh page); the promise then never settles, as the page is going.
  */
@@ -74,9 +83,7 @@ export async function loadEngineForPick(): Promise<EngineModule> {
   try {
     return await loadEngine();
   } catch (error) {
-    if (isChunkLoadError(error) && reloadOnceAfterChunkError({ storage: sessionStorageOrNull(), reload: () => window.location.reload(), now: Date.now() })) {
-      return new Promise<EngineModule>(() => {});
-    }
+    if (reloadOnceForMissingChunk(error)) return new Promise<EngineModule>(() => {});
     throw error;
   }
 }

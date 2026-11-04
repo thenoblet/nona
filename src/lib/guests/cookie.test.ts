@@ -16,7 +16,6 @@ import {
   ownGuestId,
   personalLink,
   readGuestIds,
-  rememberGuest,
   renameOwnGuest,
   signGuestIds,
   verifyGuestIds,
@@ -151,49 +150,6 @@ describe("the cookie", () => {
   });
 });
 
-describe("rememberGuest", () => {
-  it("makes the linked guest the browser's own when it has none", async () => {
-    const linked = randomUUID();
-    await rememberGuest(linked);
-    expect(await readGuestIds()).toEqual([linked]);
-  });
-
-  it("keeps the browser's own id first, puts the newest next and drops duplicates", async () => {
-    const [own, first, second] = [randomUUID(), randomUUID(), randomUUID()];
-    sendCookie([own]);
-
-    await rememberGuest(first);
-    expect(await readGuestIds()).toEqual([own, first]);
-    await rememberGuest(second);
-    expect(await readGuestIds()).toEqual([own, second, first]);
-    await rememberGuest(first);
-    expect(await readGuestIds()).toEqual([own, first, second]);
-    await rememberGuest(own);
-    expect(await readGuestIds()).toEqual([own, first, second]);
-  });
-
-  it("never replaces the browser's own id, and keeps at most ten, dropping the oldest remembered", async () => {
-    const own = randomUUID();
-    sendCookie([own]);
-    const remembered = Array.from({ length: 12 }, () => randomUUID());
-    for (const guestId of remembered) await rememberGuest(guestId);
-
-    const ids = await readGuestIds();
-    expect(ids).toHaveLength(10);
-    expect(ids[0]).toBe(own);
-    expect(ids.slice(1)).toEqual(remembered.slice(-9).reverse());
-  });
-
-  it("refuses something that isn't a guest id, leaving the cookie alone", async () => {
-    const own = randomUUID();
-    sendCookie([own]);
-    await expect(rememberGuest("guest-1")).rejects.toThrow();
-    await expect(rememberGuest(`${randomUUID()},${randomUUID()}`)).rejects.toThrow();
-    expect(browserCookies.sets).toHaveLength(0);
-    expect(await readGuestIds()).toEqual([own]);
-  });
-});
-
 describe("adoptGuest (Ruling CG)", () => {
   it("makes the linked guest the browser's own when it has none", async () => {
     const linked = randomUUID();
@@ -322,7 +278,7 @@ describe("ensureOwnGuest", () => {
 
   it("reuses a guest opened through a personal link when it became the browser's own", async () => {
     const linked = await createGuest("Adwoa");
-    await rememberGuest(linked.id);
+    await adoptGuest(linked.id);
     expect((await ensureOwnGuest()).id).toBe(linked.id);
     expect(await guestCount()).toBe(1);
   });

@@ -57,6 +57,20 @@ vi.mock("../processes", async (importOriginal) => {
   };
 });
 
+// A test can swap what heif-dec decoded for other bytes, as a crafted HEIC could make it.
+const decoding = vi.hoisted(() => ({ replaceWith: null as Buffer | null }));
+vi.mock("./photo", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./photo")>();
+  return {
+    ...real,
+    decodeHeic: async (...args: Parameters<typeof real.decodeHeic>) => {
+      const decoded = await real.decodeHeic(...args);
+      if (decoding.replaceWith) await (await import("node:fs/promises")).writeFile(decoded, decoding.replaceWith);
+      return decoded;
+    },
+  };
+});
+
 const sentJobs = vi.hoisted(() => [] as { name: string; data: unknown }[]);
 
 const JPEG_OPTIONS: JpegOptions = {
@@ -104,6 +118,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetDb();
   publishing.afterPut = null;
+  decoding.replaceWith = null;
   programs.runs = [];
   sentJobs.length = 0;
 });
@@ -167,8 +182,8 @@ async function readyHeic(bytes: Uint8Array, values: Partial<typeof media.$inferI
   return id;
 }
 
-function jpegJob(mediaId: string): MediaJob {
-  return { id: randomUUID(), queue: MEDIA_QUEUES.jpeg, data: { mediaId }, signal: AbortSignal.timeout(120_000), retryCount: 0 };
+function jpegJob(mediaId: string, signal = AbortSignal.timeout(120_000)): MediaJob {
+  return { id: randomUUID(), queue: MEDIA_QUEUES.jpeg, data: { mediaId }, signal, retryCount: 0 };
 }
 
 async function readItem(mediaId: string) {
@@ -236,6 +251,22 @@ describe.runIf(heicTests)("a HEIC's full-size JPEG", () => {
     expect((await readItem(mediaId)).derived.jpeg).toBeUndefined();
     expect((await publicKeysOf(mediaId)).filter((key) => key.endsWith("/jpeg.jpg"))).toEqual([]);
     expect(sentJobs).toEqual([{ name: MEDIA_QUEUES.visibility, data: { mediaId, action: "hide" } }]);
+  });
+
+  it("fails the job, never the worker, when what heif-dec made isn't a JPEG, leaving the photo ready", async () => {
+    const mediaId = await readyHeic(await heicFrom(await phonePhoto(300, 200).jpeg().toBuffer()));
+    decoding.replaceWith = Buffer.from("not a JPEG at all, but a few bytes long");
+
+    // The refusal must reach the upload and fail the job at once. A .pipe() chain threw it with no
+    // listener instead (an uncaught exception: the worker's death) while the upload waited.
+    const failure = await makeFullSizeJpeg(jpegJob(mediaId, AbortSignal.timeout(20_000)), JPEG_OPTIONS).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("The decoded file is not a JPEG");
+    const item = await readItem(mediaId);
+    expect(item).toMatchObject({ status: "ready", failureReason: null });
+    expect(item.derived.jpeg).toBeUndefined();
+    expect((await publicKeysOf(mediaId)).filter((key) => key.endsWith("/jpeg.jpg"))).toEqual([]);
   });
 });
 

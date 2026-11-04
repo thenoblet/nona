@@ -188,11 +188,6 @@ const FIXED_SLOTS: SlotDefinition[] = [
 
 const FIXED_BY_ID = new Map(FIXED_SLOTS.map((slot) => [slot.id, slot]));
 
-/** The slots every site has, in the admin's order. */
-export function fixedSlots(): SlotDefinition[] {
-  return FIXED_SLOTS;
-}
-
 /** A wedding-party member's portrait slot: `party-<member id>`. */
 export function partySlotId(memberId: string): string {
   return `party-${memberId}`;

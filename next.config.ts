@@ -18,8 +18,10 @@ const nextConfig: NextConfig = {
     formats: ["image/webp"],
     // No remotePatterns: guest media (the R2 media domain) never goes through the optimiser.
   },
-  // The link preview cards are prerendered, but may be redrawn on the server after their
-  // cache lifetime, so the server build must carry the fonts they are drawn with.
+  // The link preview cards' fonts, copied into the server build. All four card routes are
+  // prerendered at build time and never drawn on the server (routes.test.ts checks they read
+  // nothing at request time), so nothing reads the fonts there today; they cost the image little,
+  // and keep a card that ever became dynamic from failing for want of them.
   outputFileTracingIncludes: {
     "/opengraph-image": ["src/fonts/og/**/*"],
     "/*/opengraph-image*": ["src/fonts/og/**/*"],

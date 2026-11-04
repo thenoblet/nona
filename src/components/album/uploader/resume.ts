@@ -8,7 +8,7 @@
  *   than sent twice (the API only resumes unfinished uploads, so a start would send it again).
  */
 
-import { browserStorage, createStartedFiles, type StorageLike } from "./local-records";
+import type { StorageLike } from "./local-records";
 
 export { fingerprintFile } from "./fingerprint";
 export type { StorageLike } from "./local-records";
@@ -18,8 +18,6 @@ export type SentFiles = {
   find(size: number, fingerprint: string): string | null;
   remember(size: number, fingerprint: string, mediaId: string): void;
   forget(size: number, fingerprint: string): void;
-  /** Forgets the file that went to this upload (its guest removed it). */
-  forgetMedia(mediaId: string): void;
 };
 
 const SENT_FILES_KEY = "nona:sent-files";
@@ -68,19 +66,5 @@ export function createSentFiles(storage: StorageLike | null): SentFiles {
       delete entries[keyOf(size, fingerprint)];
       write(entries);
     },
-    forgetMedia(mediaId) {
-      const entries = read();
-      const kept = Object.fromEntries(Object.entries(entries).filter(([, entry]) => entry?.mediaId !== mediaId));
-      if (Object.keys(kept).length !== Object.keys(entries).length) write(kept);
-    },
   };
-}
-
-/**
- * Forgets everything this phone remembers of an upload: for "Remove my upload" (Task 15), so the
- * same file picked again is sent afresh rather than asked about.
- */
-export function forgetMedia(mediaId: string, storage: StorageLike | null = browserStorage()): void {
-  createSentFiles(storage).forgetMedia(mediaId);
-  createStartedFiles(storage).forgetMedia(mediaId);
 }

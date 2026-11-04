@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import * as zod from "zod";
 import { cleanFilename, cleanName } from "@/lib/data/text";
-import { ensureOwnGuest, ownGuestId } from "@/lib/guests/cookie";
+import { ensureOwnGuest, readGuestIds } from "@/lib/guests/cookie";
 import { rateLimitedResponse, takeToken } from "@/lib/guests/rate-limit";
 import { errorResponse, jsonResponse, readJsonBody } from "@/lib/http/json";
 import { describeError } from "@/lib/log-error";
@@ -44,8 +44,8 @@ const startRequest = zod.object({
  * - A file of the wrong type, empty or over its limit: 400 `{ error, message }` in plain words.
  * - Album uploads while the couple have them closed: 403 `uploads-closed`, unless it resumes an
  *   upload started before the close, within 24 hours of it. Wishes are never closed.
- * - The same file again (same guest, purpose, size and fingerprint, still uploading), even renamed:
- *   its existing upload, with the parts already sent.
+ * - The same file again (same purpose, size and fingerprint, still uploading, under any guest the
+ *   browser knows), even renamed: its existing upload, with the parts already sent.
  * - A browser without a guest (no cookie, or one the server didn't sign): 403 `no-guest`. The phone
  *   awaits POST /api/guest before its first start, so starts never race to make guests.
  * - The same file (size and fingerprint) as an item the couple hid, from any guest's phone: 409
@@ -53,7 +53,8 @@ const startRequest = zod.object({
  * Limited per browser by its own guest (a burst of 100, then 2 a second); never by IP.
  */
 export async function POST(request: Request) {
-  const ownId = await ownGuestId();
+  const guestIds = await readGuestIds();
+  const ownId = guestIds[0] ?? null;
   if (!ownId) return errorResponse(403, "no-guest");
   const { allowed, retryAfterSeconds } = takeToken(ownId, "start");
   if (!allowed) return rateLimitedResponse(retryAfterSeconds);
@@ -71,7 +72,9 @@ export async function POST(request: Request) {
     // The reads at once: a burst of starts shares the database pool.
     const [uploads, unfinished, hidden] = await Promise.all([
       purpose === "album" ? readUploadsSwitch() : UPLOADS_ALWAYS_OPEN,
-      findResumableUpload({ guestId: ownId, purpose, sizeBytes: size, fingerprint }),
+      // Under any of the browser's guests: after a take-over (Ruling CG), an upload it started as its
+      // earlier own guest carries on, rather than go up twice beside the sweeper finishing the first.
+      findResumableUpload({ guestIds, purpose, sizeBytes: size, fingerprint }),
       isHiddenByCouple({ sizeBytes: size, fingerprint }),
     ]);
     if (hidden) return errorResponse(409, "hidden");

@@ -4,6 +4,7 @@ import {
   BIG_FILE_BYTES,
   cameraCaption,
   createUploadStore,
+  declaredType,
   returnNoticeWords,
   thumbOf,
   UPLOAD_WORDS,
@@ -469,5 +470,23 @@ describe("the notice on return", () => {
     expect(returnNoticeWords([{ kind: "video" }, { kind: "photo" }, { kind: null }])).toBe(
       "3 of your files didn't finish sending. Choose them again and they'll carry on from where they stopped.",
     );
+  });
+});
+
+describe("declaredType: the type a file is declared as, for the album and the site's photos alike", () => {
+  const file = (name: string, type: string) => ({ name, type });
+
+  it("puts right a browser's alias and drops parameters", () => {
+    expect(declaredType(file("IMG_0001.JPG", "image/pjpeg"))).toBe("image/jpeg");
+    expect(declaredType(file("IMG_0001.JPG", "image/jpg"))).toBe("image/jpeg");
+    expect(declaredType(file("photo.png", "Image/PNG; charset=binary"))).toBe("image/png");
+  });
+
+  it("goes by the name when the browser gives no type, and leaves anything else to the API", () => {
+    expect(declaredType(file("cover.webp", ""))).toBe("image/webp");
+    expect(declaredType(file("cover.AVIF", ""))).toBe("image/avif");
+    expect(declaredType(file("IMG_0001.HEIC", ""))).toBe("image/heic");
+    expect(declaredType(file("IMG_0001.heif", ""))).toBe("image/heif");
+    expect(declaredType(file("notes", ""))).toBe("application/octet-stream");
   });
 });

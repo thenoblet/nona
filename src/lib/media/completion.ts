@@ -158,7 +158,8 @@ export async function finishIfOriginalExists(
  * - `incomplete`: the parts R2 holds don't add up to the declared size, so nothing changed;
  * - `invalid-parts`: they add up, but R2 refused to join them (a part other than the last under 5 MiB);
  * - `overfilled`: they hold more than the declared size, so the upload was discarded;
- * - `missing`: the guest cancelled it while R2 joined its parts, so its row is gone and nothing is queued;
+ * - `missing`: its row went from under the complete while R2 joined its parts (a defence: a cancel
+ *   never deletes the row of an upload R2 has joined), so nothing is queued;
  * - `expired`: the upload is gone and no original was made (aborted or expired).
  */
 export type CompleteOutcome = "uploaded" | "incomplete" | "invalid-parts" | "overfilled" | "missing" | "expired";

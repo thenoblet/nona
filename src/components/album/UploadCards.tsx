@@ -451,12 +451,15 @@ export function BatchCard({
               className={`col-start-1 row-start-1 transition-[opacity,transform] duration-300 ${busy ? "scale-50 opacity-0" : ""}`}
             />
           </span>
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5" aria-live="polite">
-            <p className="m-0 font-serif text-xl leading-[1.2] italic">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <p className="m-0 font-serif text-xl leading-[1.2] italic" aria-live="polite">
               <MorphText text={verb} /> to the album
             </p>
+            {/* "N of M sent" is told as it changes; the time left, which changes every few seconds, isn't. */}
             <p className="m-0 text-[13px] font-medium tabular-nums">
-              {sent} of {total} sent
+              <span aria-live="polite">
+                {sent} of {total} sent
+              </span>
               {busy && timeLeft ? <span className="font-normal text-mocha"> · {timeLeft}</span> : null}
             </p>
           </div>

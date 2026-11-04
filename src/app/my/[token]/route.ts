@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { findGuestByToken } from "@/lib/data/guests";
 import type { Guest } from "@/lib/data/types";
-import { adoptGuest, ensureOwnGuest, ownGuestId, rememberGuest } from "@/lib/guests/cookie";
+import { adoptGuest, ownGuestId } from "@/lib/guests/cookie";
 import { rateLimitedResponse, takeToken } from "@/lib/guests/rate-limit";
 import { readBodyText } from "@/lib/http/read-body";
 import { describeError } from "@/lib/log-error";
@@ -102,10 +102,9 @@ export async function GET(_request: Request, { params }: LinkContext) {
  * changing nothing).
  * - "Yes, that's me": the linked guest becomes this browser's own from now on, so what it shares
  *   goes with the link; a guest it had before is remembered first, its uploads still in "My
- *   uploads" (Ruling CG).
- * - "No, I'm someone else": the browser keeps its own guest (or gets a new one), with the linked one
- *   remembered beside it.
- * Both then open "My uploads".
+ *   uploads" (Ruling CG). Then "My uploads" opens.
+ * - "No, I'm someone else" changes nothing and opens the album, as an unknown token does. Someone
+ *   shown a guest's link is never handed that guest's uploads as their own, with Remove.
  */
 export async function POST(request: Request, { params }: LinkContext) {
   if (!postedFromThisSite(request)) return plainText(403, "Please choose on your link's own page.");
@@ -118,21 +117,12 @@ export async function POST(request: Request, { params }: LinkContext) {
   if (body === null) return plainText(413, "The request is too large.");
   const choice = new URLSearchParams(body).get("choice");
   if (choice !== "yes" && choice !== "no") return plainText(400, "Please choose one of the two answers.");
+  if (choice === "no") return redirectTo("/album", 303);
 
   const guest = await linkedGuest(token);
   if (guest === undefined) return unavailable();
   if (!guest) return redirectTo("/album", 303);
 
-  if (choice === "yes") {
-    await adoptGuest(guest.id);
-    return redirectTo("/album?view=mine", 303);
-  }
-  try {
-    await ensureOwnGuest(null);
-  } catch (error) {
-    console.error("[my] could not make the browser's own guest:", describeError(error));
-    return unavailable();
-  }
-  await rememberGuest(guest.id);
+  await adoptGuest(guest.id);
   return redirectTo("/album?view=mine", 303);
 }

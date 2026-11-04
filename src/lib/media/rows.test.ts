@@ -539,7 +539,7 @@ describe("the upload API's lookups", () => {
 
   it("finds a guest's unfinished upload of a file through the partial resume index, under a generic plan", async () => {
     const plan = await genericPlan(
-      resumableUploadQuery({ guestId: randomUUID(), purpose: "album", sizeBytes: 1000, fingerprint: "f".repeat(64) }),
+      resumableUploadQuery({ guestIds: [randomUUID(), randomUUID()], purpose: "album", sizeBytes: 1000, fingerprint: "f".repeat(64) }),
     );
     // The index's condition (status = 'uploading') holds only because the query states it literally.
     expect(plan).toContain("media_resume_idx");

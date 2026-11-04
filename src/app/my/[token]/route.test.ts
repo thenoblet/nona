@@ -172,17 +172,15 @@ describe("POST /my/[token], from the confirm page", () => {
     expect(await guestCount()).toBe(1);
   });
 
-  it('"No, I\'m someone else" makes a new own guest and remembers the linked one after it', async () => {
+  it('"No, I\'m someone else" changes nothing: it opens the album, making and remembering no guest', async () => {
     const linked = await createGuest("Ama");
     const response = await choose(linked.linkToken, "no");
     expect(response.status).toBe(303);
-    expect(response.headers.get("Location")).toBe("/album?view=mine");
-    const [ownId, ...remembered] = await readGuestIds();
-    expect(ownId).not.toBe(linked.id);
-    expect(remembered).toEqual([linked.id]);
-    expect((await findGuestById(ownId))?.displayName).toBeNull();
-    expect((await findGuestById(linked.id))?.displayName).toBe("Ama");
-    expect(await guestCount()).toBe(2);
+    expect(response.headers.get("Location")).toBe("/album");
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(browserCookies.sets).toHaveLength(0);
+    expect(await readGuestIds()).toEqual([]);
+    expect(await guestCount()).toBe(1);
   });
 
   it('"Yes, that\'s me" on a browser that already shared makes the linked guest its own from now on, its earlier guest remembered first (Ruling CG)', async () => {
@@ -204,12 +202,17 @@ describe("POST /my/[token], from the confirm page", () => {
     expect(await readGuestIds()).toEqual([linked.id, remembered.id]);
   });
 
-  it('"No, I\'m someone else" on a browser with its own guest keeps it first and remembers the linked one beside it', async () => {
-    const [own, linked] = [await createGuest("Kofi"), await createGuest("Ama")];
-    sendCookie([own.id]);
-    expect((await choose(linked.linkToken, "no")).status).toBe(303);
-    expect(await readGuestIds()).toEqual([own.id, linked.id]);
-    expect(await guestCount()).toBe(2);
+  it('"No, I\'m someone else" leaves a browser\'s cookie as it was: the linked guest\'s uploads never become its own', async () => {
+    const [own, remembered, linked] = [await createGuest("Kofi"), await createGuest("Yaw"), await createGuest("Ama")];
+    sendCookie([own.id, remembered.id]);
+    const cookie = browserCookies.values.get(guestCookieName());
+    const response = await choose(linked.linkToken, "no");
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/album");
+    expect(browserCookies.sets).toHaveLength(0);
+    expect(browserCookies.values.get(guestCookieName())).toBe(cookie);
+    expect(await readGuestIds()).toEqual([own.id, remembered.id]);
+    expect(await guestCount()).toBe(3);
   });
 
   it("accepts the site's own host behind the proxy (X-Forwarded-Host) and a browser that sends only Origin", async () => {
@@ -291,11 +294,11 @@ describe("POST /my/[token], from the confirm page", () => {
     expect(await readGuestIds()).toEqual([own.id]);
   });
 
-  it("answers 503 when the database fails, changing nothing and logging no token", async () => {
+  it("answers 503 to Yes when the database fails, changing nothing and logging no token", async () => {
     const linked = await createGuest("Ama");
     database.down = true;
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    const response = await choose(linked.linkToken, "no");
+    const response = await choose(linked.linkToken, "yes");
     expect(response.status).toBe(503);
     expect(browserCookies.sets).toHaveLength(0);
     expect(await guestCount()).toBe(1);

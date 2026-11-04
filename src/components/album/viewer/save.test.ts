@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DownloadAnswer } from "../album-client";
-import { fetchWhole, prepareSave, STALL_MILLISECONDS, waitForLink, type SaveDependencies } from "./save";
+import { fetchWhole, prepareSave, SAVE_AT_MOST_BYTES, STALL_MILLISECONDS, waitForLink, type SaveDependencies } from "./save";
 
 /*
  * Save to Photos' first tap (gate B 1c), and the link a download waits for. Fix round 1: a video
@@ -174,6 +174,47 @@ describe("fetchWhole", () => {
     expect(blob.size).toBe(200 * 512);
     expect(told.length).toBeLessThanOrEqual(3);
     expect(told.at(-1)).toBe(1);
+  });
+
+  it("never reads a file past 200 MB into the page: its content-length is enough, and the save downloads instead", async () => {
+    const told: (number | null)[] = [];
+    let cancelled = false;
+    const tooBig = () => {
+      const response = streaming([new Uint8Array(1024)], { end: false, length: SAVE_AT_MOST_BYTES + 1 });
+      const body = response.body as ReadableStream<Uint8Array>;
+      const cancel = body.cancel.bind(body);
+      body.cancel = (reason) => ((cancelled = true), cancel(reason));
+      return response;
+    };
+    const failure = await fetchWhole("https://media.example/playable.mp4", {
+      signal: new AbortController().signal,
+      onProgress: (fraction) => told.push(fraction),
+      fetchImplementation: async () => tooBig(),
+    }).catch((error: unknown) => error);
+    expect((failure as Error).name).toBe("TooBigToSaveError");
+    expect(cancelled).toBe(true);
+    expect(told).toEqual([]);
+
+    const outcome = await prepareSave({
+      mediaId: "video-1",
+      source: { variant: "converted", url: "https://media.example/playable.mp4", extension: "mp4", type: "video/mp4" },
+      filename: "NONA26-reception-video-1.mp4",
+      signal: new AbortController().signal,
+      onProgress: noProgress,
+      dependencies: dependencies({ fetchWhole: (url, options) => fetchWhole(url, { ...options, fetchImplementation: async () => tooBig() }) }),
+    });
+    expect(outcome).toEqual({ kind: "download", variant: "converted" });
+  });
+
+  it("stops reading a file that says no length once more than it takes has arrived", async () => {
+    const chunks = Array.from({ length: 8 }, () => new Uint8Array(512));
+    const failure = await fetchWhole("https://media.example/playable.mp4", {
+      signal: new AbortController().signal,
+      onProgress: noProgress,
+      maxBytes: 2048,
+      fetchImplementation: async () => streaming(chunks, { end: false }),
+    }).catch((error: unknown) => error);
+    expect((failure as Error).name).toBe("TooBigToSaveError");
   });
 
   it("is a plain GET: no headers of its own, no cache mode", async () => {

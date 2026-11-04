@@ -19,8 +19,8 @@ export const metadata: Metadata = {
  * Asked when a browser opens a personal link that isn't already its own (GET /my/[token] sends it
  * here), so a link shared in a group chat doesn't make everyone who taps it that guest. A browser
  * that already has a guest of its own is told what "Yes" would do: from then on it shares with the
- * link, and what it shared before stays in My uploads (Ruling CG). Both answers post to
- * /my/[token], which only accepts them from this site.
+ * link, and what it shared before stays in My uploads (Ruling CG). "No" changes nothing and opens
+ * the album. Both answers post to /my/[token], which only accepts them from this site.
  */
 export default function ConfirmLinkPage({ params }: PageProps<"/my/[token]/confirm">) {
   return (

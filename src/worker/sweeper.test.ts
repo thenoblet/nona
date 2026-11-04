@@ -788,10 +788,13 @@ describe("the sweeper's queries", () => {
    * The plan Postgres would use for the query once it is prepared and run with any values (a
    * generic plan), on a media table like the wedding's: 3,000 items, nearly all ready and listed, a
    * tenth of them videos with a few conversions queued or under way, a few uploads in transit, a
-   * few hidden. They are written and ANALYZEd in a transaction that is rolled back, so neither the
-   * rows nor their statistics outlive it, and no statistics another test left (an autoanalyze of
-   * a table full of one test's uploads) can sway the plan. Sequential scans are put out of reach,
-   * as they would be on a full table.
+   * few hidden. They are written and ANALYZEd in a transaction that is rolled back, so the rows
+   * and their column statistics (pg_statistic) don't outlive it, and none another test left (an
+   * autoanalyze of a table full of one test's uploads) can sway the plan. The table's row and page
+   * counts (pg_class's reltuples and relpages) do outlive it: ANALYZE writes those in place, and a
+   * rollback doesn't undo them. They change only the planner's estimates for the tests after it,
+   * and every plan test in this file ANALYZEs its own data first. Sequential scans are put out of
+   * reach, as they would be on a full table.
    */
   async function genericPlan(query: { sql: string }): Promise<string> {
     try {

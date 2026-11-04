@@ -5,6 +5,7 @@ import { Halo } from "@/components/ui/Halo";
 import { Icon } from "@/components/ui/Icon";
 import { MorphText } from "./UploadCards";
 import { hideLinkOffer, markLinkOfferShown } from "./uploader/personal-link";
+import { copyText } from "./viewer/device";
 
 /*
  * The guest's personal link (gate A): offered once, under their first upload, and kept in My
@@ -13,9 +14,11 @@ import { hideLinkOffer, markLinkOfferShown } from "./uploader/personal-link";
  * is the only button. Its own chunk: it shows only once a file has been added.
  */
 
+// For the guest's own phones, never for showing people photos: whoever opens it is asked whether
+// they are this guest, and only "Yes" joins them.
 const SHARE_TEXT = {
-  title: "My NONA'26 uploads",
-  text: "My photos and videos from Noblet and Nancy's wedding",
+  title: "My personal NONA'26 link",
+  text: "Just for my own phones: it brings my uploads to any phone",
 };
 
 const COPIED_FOR_MILLISECONDS = 2_400;
@@ -34,29 +37,6 @@ function useCanShare(): boolean {
 /** The link as shown: without its https://, cut with an ellipsis where it runs out of room. */
 function shortened(link: string): string {
   return link.replace(/^https?:\/\//, "");
-}
-
-/** Copies text, through the clipboard API or, where that is refused, a selected text box. */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const box = document.createElement("textarea");
-    box.value = text;
-    box.setAttribute("readonly", "");
-    box.style.position = "fixed";
-    box.style.opacity = "0";
-    document.body.append(box);
-    box.select();
-    try {
-      return document.execCommand("copy");
-    } catch {
-      return false;
-    } finally {
-      box.remove();
-    }
-  }
 }
 
 /** Selects the link's text on screen, so the guest can copy it by hand. */

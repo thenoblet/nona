@@ -13,7 +13,6 @@ import {
   subscribeToStartedFiles,
   type StorageLike,
 } from "./local-records";
-import { createSentFiles, forgetMedia } from "./resume";
 
 function memoryStorage(): StorageLike & { values: Map<string, string> } {
   const values = new Map<string, string>();
@@ -286,20 +285,5 @@ describe("the Cancels not yet answered", () => {
     const corrupt = memoryStorage();
     corrupt.setItem("nona:pending-cancels", "[1, 2");
     expect(createPendingCancels(corrupt).list()).toEqual([]);
-  });
-});
-
-describe("forgetMedia", () => {
-  it("forgets a removed upload's file, so the same file picked again is sent afresh", () => {
-    const storage = memoryStorage();
-    createSentFiles(storage).remember(5000, "f1", "media-1");
-    createSentFiles(storage).remember(6000, "f2", "media-2");
-    createStartedFiles(storage).record(5000, "f1", "media-1");
-
-    forgetMedia("media-1", storage);
-
-    expect(createSentFiles(storage).find(5000, "f1")).toBeNull();
-    expect(createSentFiles(storage).find(6000, "f2")).toBe("media-2");
-    expect(createStartedFiles(storage).hasUnfinished()).toBe(false);
   });
 });

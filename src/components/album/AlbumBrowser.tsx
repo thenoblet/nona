@@ -22,6 +22,7 @@ import { AlbumUploadsContext } from "./album-uploads";
 import { MediaTile } from "./MediaTile";
 import { useWaitingTiles } from "./use-waiting-tiles";
 import { useFreshGuestOnReturn } from "./use-fresh-guest";
+import { reloadOnceForMissingChunk } from "./uploader/load";
 import { setPersonalLink, usePersonalLink } from "./uploader/personal-link";
 import { loadViewer, prefetchViewerWhenIdle } from "./viewer/load";
 import type { ViewerProps } from "./viewer/Viewer";
@@ -34,12 +35,56 @@ const PersonalLinkStrip = lazy<ComponentType<{ link: string }>>(() =>
     .catch(() => ({ default: NothingShown })),
 );
 
-// The viewer, its own chunk: fetched at idle, and for certain on the first tap.
-const Viewer = lazy<ComponentType<ViewerProps>>(() => loadViewer().then((module) => ({ default: module.Viewer })));
-
 function NothingShown(): null {
   return null;
 }
+
+/** The viewer's props, with what the album hears when its chunk couldn't be fetched. */
+type LazyViewerProps = ViewerProps & { onDidntLoad: () => void };
+
+/**
+ * The viewer, its own chunk: fetched at idle, and for certain on the first tap. A chunk that can't
+ * be fetched never reaches the album's error page, which would take the whole album (and any
+ * upload card) with it: ViewerDidntLoad stands in. React keeps a lazy's answer, so the album makes
+ * a new one after a failure, and the next tap fetches the chunk again.
+ */
+function lazyViewer(): ComponentType<LazyViewerProps> {
+  return lazy<ComponentType<LazyViewerProps>>(() =>
+    loadViewer().then(
+      (module) => ({ default: module.Viewer }),
+      (error: unknown) => {
+        function ViewerChunkFailed(props: LazyViewerProps) {
+          return <ViewerDidntLoad {...props} error={error} />;
+        }
+        return { default: ViewerChunkFailed };
+      },
+    ),
+  );
+}
+
+/**
+ * Stands in for a viewer whose chunk couldn't be fetched. A script chunk (one a deploy removed, as
+ * far as the page can tell) reloads the page once, to pick up the new one, unless a file is still
+ * on its way from this page: a reload would stop it. Otherwise the viewer closes, as Back would,
+ * and the album says why.
+ */
+function ViewerDidntLoad({ error, onRequestClose, onExited, onDidntLoad }: LazyViewerProps & { error: unknown }): null {
+  const { busy } = use(AlbumUploadsContext);
+  const handled = useRef(false);
+  useEffect(() => {
+    // Once, even where React runs an effect twice.
+    if (handled.current) return;
+    handled.current = true;
+    if (!busy && reloadOnceForMissingChunk(error)) return;
+    onRequestClose();
+    onExited();
+    onDidntLoad();
+  }, [busy, error, onRequestClose, onExited, onDidntLoad]);
+  return null;
+}
+
+/** How long the album says the viewer couldn't open. */
+const VIEWER_TROUBLE_MILLISECONDS = 6_000;
 
 type Whose = "everyone" | "mine";
 type Filters = { celebration: AlbumCelebration | "all"; kind: AlbumKind | "all"; whose: Whose };
@@ -119,6 +164,8 @@ export function AlbumBrowser({
   const [stats, setStats] = useState(startStats);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set());
   const [opened, setOpened] = useState<Opened | null>(null);
+  const [Viewer, setViewer] = useState(lazyViewer);
+  const [viewerTrouble, setViewerTrouble] = useState(false);
   const [news, setNews] = useState<(NewCountAnswer & { key: string }) | null>(null);
   const clientLink = usePersonalLink();
   // The link learned last wins: the server's joins the page's store as it arrives (a fresh render,
@@ -195,6 +242,18 @@ export function AlbumBrowser({
 
   // The viewer's chunk, fetched while the page is idle.
   useEffect(() => prefetchViewerWhenIdle(), []);
+
+  // The viewer's chunk didn't come: a new lazy, so the next tap fetches it again, and a word on why
+  // nothing opened, for a few seconds.
+  const viewerDidntLoad = useCallback(() => {
+    setViewer(() => lazyViewer());
+    setViewerTrouble(true);
+  }, []);
+  useEffect(() => {
+    if (!viewerTrouble) return;
+    const timer = window.setTimeout(() => setViewerTrouble(false), VIEWER_TROUBLE_MILLISECONDS);
+    return () => window.clearTimeout(timer);
+  }, [viewerTrouble]);
 
   // New moments: asked every 30 s while the page is visible, and soon after one of the guest's own lands.
   const since = listing?.newestCursor ?? null;
@@ -283,6 +342,7 @@ export function AlbumBrowser({
   const openById = useCallback(
     async (mediaId: string, pushed: boolean) => {
       const tile = document.querySelector<HTMLElement>(`[data-moment="${CSS.escape(mediaId)}"]`);
+      setViewerTrouble(false);
       if (viewable.some((item) => item.id === mediaId)) {
         setOpened({ id: mediaId, tile, pushed, loose: null, closing: false });
         return;
@@ -316,6 +376,7 @@ export function AlbumBrowser({
 
   function openTile(item: AlbumItem, tile: HTMLElement) {
     window.history.pushState(null, "", `${addressWithout()}#m/${item.id}`);
+    setViewerTrouble(false);
     setOpened({ id: item.id, tile, pushed: true, loose: null, closing: false });
   }
 
@@ -368,7 +429,6 @@ export function AlbumBrowser({
       </div>
 
       <Segmented
-        role="tablist"
         label="Whose moments"
         value={filters.whose}
         onChange={(whose: Whose) => chooseFilters({ whose })}
@@ -392,7 +452,14 @@ export function AlbumBrowser({
         </Suspense>
       ) : null}
 
-      {newCount > 0 && news ? <NewMomentsPill count={newCount} newest={news.newest} onShow={bringIn} /> : null}
+      {newCount > 0 && news && !viewerTrouble ? <NewMomentsPill count={newCount} newest={news.newest} onShow={bringIn} /> : null}
+      <div role="status" className="sticky top-3 z-10 flex h-0 justify-center">
+        {viewerTrouble ? (
+          <p className="m-0 mt-1.5 max-w-[calc(100%-2rem)] rounded-2xl bg-cocoa px-4 py-2.5 text-center text-[13px] leading-snug text-white shadow-[var(--shadow-pill-cocoa)]">
+            Couldn&apos;t open this moment. Check your connection and try again.
+          </p>
+        ) : null}
+      </div>
 
       {loading ? (
         <TilesLoading />
@@ -463,6 +530,7 @@ export function AlbumBrowser({
               }
             }}
             onExited={() => setOpened(null)}
+            onDidntLoad={viewerDidntLoad}
             onChanged={(item) => everyListing((moments) => moments.map((moment) => (moment.id === item.id ? item : moment)))}
             onRemoved={(item) => {
               everyListing((moments) => moments.filter((moment) => moment.id !== item.id));

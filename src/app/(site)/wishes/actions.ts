@@ -7,7 +7,7 @@ import { isUuid } from "@/lib/data/ids";
 import { signatureProblem } from "@/lib/data/signature";
 import { addWish } from "@/lib/data/wishes";
 import { ensureOwnGuest, readGuestIds } from "@/lib/guests/cookie";
-import { takeToken } from "@/lib/guests/rate-limit";
+import { returnToken, takeToken } from "@/lib/guests/rate-limit";
 import { describeError } from "@/lib/log-error";
 
 export type WishFormState = {
@@ -22,7 +22,7 @@ export type WishFormState = {
 const MAX_MESSAGE = 1000;
 
 const DIDNT_SEND = "Your wish didn't send. Please try again.";
-const TOO_MANY = "You've sent a few wishes just now. Please wait a minute, then send this one.";
+const TOO_MANY = "You've sent a lot of wishes just now. Please wait a few seconds, then send this one.";
 
 /**
  * Saves a written wish in Postgres and re-renders the page so it appears on the wall. It comes from
@@ -48,11 +48,16 @@ export async function sendWish(_prev: WishFormState, formData: FormData): Promis
   if (errors.message || errors.signedAs) return { status: "error", values, errors };
 
   let wish;
+  let turnTakenBy: string | null = null;
   try {
     const guest = await ensureOwnGuest();
+    // The turn is taken before the save, so sends side by side can't overrun the bucket, and given
+    // back if the save fails: a database blip never uses up a guest's wishes.
     if (!takeToken(guest.id, "text-wish").allowed) return { status: "error", values, errors: { form: TOO_MANY } };
+    turnTakenBy = guest.id;
     wish = await addWish({ kind: "text", message, signedAs, guestId: guest.id });
   } catch (error) {
+    if (turnTakenBy) returnToken(turnTakenBy, "text-wish");
     console.error("[wishes] could not save a wish:", describeError(error));
     return { status: "error", values, errors: { form: DIDNT_SEND } };
   }

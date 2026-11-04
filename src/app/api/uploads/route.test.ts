@@ -3,6 +3,8 @@ import { DeleteObjectsCommand, UploadPartCommand, type S3Client } from "@aws-sdk
 import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { contentDefaults } from "@/lib/content/defaults";
+import type { Celebration } from "@/lib/content/schema";
 import { createGuest, findGuestById } from "@/lib/data/guests";
 import { setSetting } from "@/lib/data/settings";
 import { getDb } from "@/lib/db/client";
@@ -46,9 +48,11 @@ async function afterResponse(): Promise<void> {
   await Promise.all(afterTasks.splice(0));
 }
 
+// The built-in site text, with the celebrations a test sets in place of the built-in ones.
+const siteText = vi.hoisted(() => ({ celebrations: null as Celebration[] | null }));
 vi.mock("@/lib/content/get", async () => {
   const { contentDefaults } = await import("@/lib/content/defaults");
-  return { getSiteContent: async () => contentDefaults };
+  return { getSiteContent: async () => ({ ...contentDefaults, celebrations: siteText.celebrations ?? contentDefaults.celebrations }) };
 });
 
 // The app's job queue, played by a real pg-boss in a schema of its own; `sendFails` makes every
@@ -241,6 +245,7 @@ beforeEach(async () => {
   browserCookies.clear();
   afterTasks.length = 0;
   queue.sendFails = false;
+  siteText.celebrations = null;
   await setSetting("uploads_open", true);
 });
 
@@ -386,17 +391,38 @@ describe("an upload, start to finish", () => {
     }
   });
 
-  it("groups an upload by when it was taken, or by when it started without a capture time", async () => {
+  it("groups an upload by when it was taken", async () => {
     await signIn();
     const ceremony = await startSession(smallFile({ capturedAt: "2026-12-05T11:00:00Z" }));
     const thanks = await startSession(smallFile({ capturedAt: "2026-12-06T10:00:00+00:00" }));
-    // Today (October) is no celebration's day.
-    const today = await startSession(smallFile());
+    const before = await startSession(smallFile({ capturedAt: "2026-11-01T12:00:00Z" }));
     expect((await mediaRow(ceremony.mediaId)).celebration).toBe("ceremony");
     expect((await mediaRow(thanks.mediaId)).celebration).toBe("thanks");
-    expect((await mediaRow(today.mediaId)).celebration).toBe("more");
+    // 1 November is no celebration's day.
+    expect((await mediaRow(before.mediaId)).celebration).toBe("more");
     await afterResponse();
     expect((await readManifest(thanks.mediaId))?.celebration).toBe("thanks");
+  });
+
+  it("groups an upload without a capture time by when it started, whatever day that is", async () => {
+    await signIn();
+    // The ceremony all of today (Accra is UTC), the thanksgiving all of tomorrow, in case the start
+    // lands past midnight, and the reception the day after: the start's own day decides.
+    const day = (offsetDays: number) => new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
+    const today = day(0);
+    const dates = { ceremony: today, thanks: day(1), reception: day(2) };
+    siteText.celebrations = contentDefaults.celebrations.map((celebration) => ({
+      ...celebration,
+      date: dates[celebration.id],
+      startTime: "00:00",
+      endTime: "23:59",
+    }));
+
+    const session = await startSession(smallFile());
+
+    const row = await mediaRow(session.mediaId);
+    expect(row.capturedAt).toBeNull();
+    expect(row.celebration).toBe(row.startedAt.toISOString().slice(0, 10) === today ? "ceremony" : "thanks");
   });
 
   it("refuses a browser without a guest with 403 no-guest, making no guest and no upload", async () => {
@@ -433,7 +459,8 @@ describe("an upload, start to finish", () => {
   it("gives the browser a new own guest when its cookie names one the database no longer has", async () => {
     const gone = randomUUID();
     browserCookies.values.set(guestCookieName(), signGuestIds([gone]));
-    const session = await startSession(smallFile({ uploaderName: "Esi" }));
+    // Taken on 1 November, no celebration's day, so it is More moments whatever today is.
+    const session = await startSession(smallFile({ uploaderName: "Esi", capturedAt: "2026-11-01T12:00:00Z" }));
     const [guestId] = await readGuestIds();
     expect(guestId).not.toBe(gone);
     expect((await findGuestById(guestId))?.displayName).toBe("Esi");
@@ -488,6 +515,25 @@ describe("resuming", () => {
       { kind: "resumed", guestId: guest.id },
       { kind: "completed", guestId: guest.id },
     ]);
+  });
+
+  it("resumes an upload this browser started as a guest it still remembers, after a take-over, rather than send it again", async () => {
+    const earlier = await signIn();
+    const body = photo();
+    const first = await startSession(body);
+    const bytes = randomBytes(body.size);
+    const [sentFirst] = await sendParts(first, bytes, [1]);
+
+    // "Yes, that's me" made the link's guest this browser's own, the earlier one remembered after it.
+    const linked = await createGuest("Ama's link");
+    browserCookies.values.set(guestCookieName(), signGuestIds([linked.id, earlier.id]));
+
+    const again = await start(body);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ ...first, uploadedParts: [{ partNumber: 1, etag: sentFirst.etag, size: PART_SIZE_BYTES }] });
+    // One upload of the file, still the earlier guest's: none for the sweeper to finish beside it.
+    expect(await mediaCount()).toBe(1);
+    expect((await mediaRow(first.mediaId)).guestId).toBe(earlier.id);
   });
 
   it("starts a new upload for another size, another purpose or another guest's file", async () => {

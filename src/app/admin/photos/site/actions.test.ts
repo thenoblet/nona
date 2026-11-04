@@ -1,9 +1,9 @@
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
-import { readAllSiteImages, readLiveSiteImage, setCardKey } from "@/lib/site-images/store";
+import { readAllSiteImages, setCardKey } from "@/lib/site-images/store";
 import { resetDb } from "../../../../../test/db";
-import { addSitePhoto } from "../../../../../test/site-images";
+import { addSitePhoto, readLiveSiteImage } from "../../../../../test/site-images";
 import { dropBossSchema, startTestBoss } from "../../../../../test/uploads";
 
 // Against the test database (docker compose up -d db).

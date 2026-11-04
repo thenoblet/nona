@@ -97,9 +97,10 @@ export type WorkerConfig = {
    */
   x264Cap: X264Cap | null;
   /**
-   * The longest video the worker converts, in seconds (Ruling AR). A longer one's conversion is
-   * `failed` with the reason `too-long` at once: it plays from its original where a phone can, and
-   * its original stays downloadable.
+   * The longest video the worker converts, in seconds (Ruling AR), and, times 60, the most frames
+   * (its length times its frame rate, counted at most 240: Ruling BG). A longer one's conversion, or
+   * one with more frames, is `failed` with the reason `too-long` at once: it plays from its playable
+   * copy where a phone can, and its original stays downloadable.
    */
   convertMaxSeconds: number;
   /** Connections in the job queue's pool: room for every handler's polling and heartbeats at once. */

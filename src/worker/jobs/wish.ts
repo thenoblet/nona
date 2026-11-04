@@ -9,7 +9,7 @@ import { headOriginal, putPublicObject } from "@/lib/storage/objects";
 import type { X264Preset } from "../config";
 import { PermanentJobError, type JobReport, type MediaJob, type MediaJobHandler } from "../queues";
 import { saveOriginal, withScratch } from "../scratch";
-import { conversionCpuSeconds, conversionMilliseconds } from "./convert";
+import { conversionCpuSeconds } from "./convert";
 import { containerProblem } from "./playable";
 import { contentHashOf, rewriteManifest, withdrawIfHidden, type JobQueue } from "./publishing";
 import { deriveStills, VIEW, type Stills } from "./stills";
@@ -84,6 +84,17 @@ const PROBE_MILLISECONDS = 60_000;
 const VOICE_MILLISECONDS = 5 * 60_000;
 /** Its CPU time: AAC has no threads, and a minute of Opus or AAC takes about 2 CPU-seconds. */
 const VOICE_CPU_SECONDS = 120;
+/**
+ * How long a video message's conversion may run. It must end well inside media.wish's 15-minute
+ * expiry, so that a stuck one ends by ffmpeg's own time-out (ToolTimeoutError, which names the tool
+ * and how it ended) rather than by the job expiring around it; an album conversion's limit
+ * (conversionMilliseconds: 15 minutes for 30 s at 30 fps, 20 at 60) never would. At most 30 s is
+ * made, at 720p and 30 fps: the hardest clip a phone records, 4K HDR at 60 fps, takes about
+ * 3 s a second of video converted to 1080p on 3 CPUs, twice that at 60 fps, so about 3 minutes.
+ * 8 minutes leaves room for a box busy with a conversion, and the other 7 cover the download, the
+ * probe and the poster (a minute each at most) and the upload.
+ */
+export const VIDEO_WISH_MILLISECONDS = 8 * 60_000;
 /** The poster's frame decodes from the made file's keyframe: under a second. */
 const POSTER_MILLISECONDS = 60_000;
 /** The poster's frame is at most this far in, as a video's in the album. */
@@ -471,7 +482,7 @@ async function makeVideo(paths: { original: string; output: string }, folder: st
       memoryBytes: options.convertMemoryBytes,
       cpuSeconds: conversionCpuSeconds(length, facts.framesPerSecond, options.convertMaxSeconds),
     },
-    conversionMilliseconds(length, facts.framesPerSecond),
+    VIDEO_WISH_MILLISECONDS,
   );
   const convertMilliseconds = Math.round(performance.now() - startedAt);
   if ((await sizeOf(paths.output)) === 0) throw blameFileFromThirdAttempt("ffmpeg exited 0 but wrote nothing", run.retryCount, run.source);

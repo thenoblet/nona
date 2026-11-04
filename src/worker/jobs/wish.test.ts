@@ -14,7 +14,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { getDb } from "@/lib/db/client";
 import { media, wishes } from "@/lib/db/schema";
 import { storageConfig } from "@/lib/env";
-import { MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
+import { MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES, type MediaQueueName } from "@/lib/jobs/media-queues";
 import { WISH_SECONDS } from "@/lib/media/limits";
 import { storageClient } from "@/lib/storage/client";
 import { originalKey, publicUrl } from "@/lib/storage/keys";
@@ -27,6 +27,7 @@ import { prepareScratchRoot } from "../scratch";
 import { runVisibilityJob, type VisibilityOptions } from "./visibility";
 import {
   processWish,
+  VIDEO_WISH_MILLISECONDS,
   videoWishArgs,
   videoWishProblem,
   voiceArgs,
@@ -75,14 +76,14 @@ vi.mock("@/lib/storage/objects", async (importOriginal) => {
 });
 
 // Every program the job runs, with its priority, so a test can see how it ran.
-type ProgramRun = { args: string[]; priority: string };
+type ProgramRun = { args: string[]; priority: string; timeoutMilliseconds: number };
 const programs = vi.hoisted(() => ({ runs: [] as ProgramRun[] }));
 vi.mock("../processes", async (importOriginal) => {
   const real = await importOriginal<typeof import("../processes")>();
   return {
     ...real,
     runProcess: (...args: Parameters<typeof real.runProcess>) => {
-      programs.runs.push({ args: [args[0], ...args[1]], priority: args[2].priority });
+      programs.runs.push({ args: [args[0], ...args[1]], priority: args[2].priority, timeoutMilliseconds: args[2].timeoutMilliseconds });
       return real.runProcess(...args);
     },
   };
@@ -780,6 +781,10 @@ describe.skipIf(!ffmpegSeven)("media.wish: a video message (ffmpeg notes §2.5)"
     expect(args.slice(args.indexOf("-i") - 2, args.indexOf("-i"))).toEqual(["-threads", "2"]);
     expect(args[args.lastIndexOf("-threads") + 1]).toBe("3");
     expect(args.some((arg) => arg.startsWith("--cpu="))).toBe(true);
+    // Its own time limit, with minutes to spare inside media.wish's expiry, so a stuck conversion
+    // ends by ffmpeg's time-out, never by the job expiring around it.
+    expect(conversion?.timeoutMilliseconds).toBe(VIDEO_WISH_MILLISECONDS);
+    expect(VIDEO_WISH_MILLISECONDS).toBeLessThanOrEqual((MEDIA_QUEUE_OPTIONS[MEDIA_QUEUES.wish].expireInSeconds ?? 0) * 1000 - 5 * 60_000);
   });
 });
 

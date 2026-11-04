@@ -2,11 +2,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { siteImages } from "@/lib/db/schema";
 import { resetDb } from "../../../test/db";
-import { addSitePhoto } from "../../../test/site-images";
+import { addSitePhoto, readLiveSiteImage } from "../../../test/site-images";
 import {
   isLiveSiteImage,
   readAllSiteImages,
-  readLiveSiteImage,
   readLiveSiteImages,
   readSiteUpload,
   restoreSiteImage,

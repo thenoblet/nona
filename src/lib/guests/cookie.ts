@@ -79,14 +79,6 @@ export async function ownGuestId(): Promise<string | null> {
   return (await readGuestIds())[0] ?? null;
 }
 
-/** The ids after remembering one: the own id first, the newest remembered next, no repeats, at most ten. */
-function withRemembered(ids: readonly string[], guestId: string): string[] {
-  if (ids.length === 0) return [guestId];
-  const [ownId, ...remembered] = ids;
-  if (guestId === ownId) return [...ids];
-  return [ownId, guestId, ...remembered.filter((id) => id !== guestId)].slice(0, MAX_GUEST_IDS);
-}
-
 /**
  * The ids after taking a guest as the browser's own: it first, the previous own id next (now the
  * newest remembered), then the rest; no repeats, at most ten, dropping the oldest remembered.
@@ -108,18 +100,6 @@ export async function adoptGuest(guestId: string): Promise<string[]> {
   const known = await readGuestIds();
   if (known[0] === guestId) return known;
   const ids = withOwn(known, guestId);
-  await writeGuestIds(ids);
-  return ids;
-}
-
-/**
- * Adds a guest opened through a personal link to this browser's list, so "My uploads" shows theirs
- * too ("No, I'm someone else"). It never replaces the browser's own id; a browser without one takes
- * this guest as its own. Route handlers and server actions only, since it sets the cookie.
- */
-export async function rememberGuest(guestId: string): Promise<string[]> {
-  if (!isUuid(guestId)) throw new Error("rememberGuest needs a guest id");
-  const ids = withRemembered(await readGuestIds(), guestId);
   await writeGuestIds(ids);
   return ids;
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_TRACKED_BUCKETS, RATE_LIMITS, rateLimitedResponse, takeToken, type RateLimitBucket } from "./rate-limit";
+import { MAX_TRACKED_BUCKETS, RATE_LIMITS, rateLimitedResponse, returnToken, takeToken, type RateLimitBucket } from "./rate-limit";
 
 // The counts live on globalThis so every server bundle in the process shares them.
 function trackedBuckets(): Map<string, unknown> {
@@ -75,13 +75,13 @@ describe("takeToken", () => {
     expect(takeMany(guestId, "presign", 60 * presignsPerPhoto, 30_000)).toBe(60 * presignsPerPhoto);
   });
 
-  it("allows 5 written wishes, then one a minute", () => {
+  it("allows 20 written wishes at once (a phone passed round a table), then one every 10 s", () => {
     const guestId = randomUUID();
-    expect(takeMany(guestId, "text-wish", 5, 0)).toBe(5);
-    expect(takeToken(guestId, "text-wish", 0)).toEqual({ allowed: false, retryAfterSeconds: 60 });
-    expect(takeToken(guestId, "text-wish", 30_000)).toEqual({ allowed: false, retryAfterSeconds: 30 });
-    expect(takeToken(guestId, "text-wish", 60_000).allowed).toBe(true);
-    expect(takeToken(guestId, "text-wish", 60_000).allowed).toBe(false);
+    expect(takeMany(guestId, "text-wish", 25, 0)).toBe(20);
+    expect(takeToken(guestId, "text-wish", 0)).toEqual({ allowed: false, retryAfterSeconds: 10 });
+    expect(takeToken(guestId, "text-wish", 4_000)).toEqual({ allowed: false, retryAfterSeconds: 6 });
+    expect(takeToken(guestId, "text-wish", 10_000).allowed).toBe(true);
+    expect(takeToken(guestId, "text-wish", 10_000).allowed).toBe(false);
   });
 
   it("allows 20 personal-link opens and 20 guest calls, then one a second", () => {
@@ -107,9 +107,9 @@ describe("takeToken", () => {
     expect(takeToken(guestId, "start", 0).allowed).toBe(false);
   });
 
-  it("holds the numbers the plan sets: 100 then 2 a second, 5 written wishes then 1 a minute, 20 then 1 a second", () => {
+  it("holds the numbers the plan sets: 100 then 2 a second, 20 written wishes then 1 every 10 s, 20 then 1 a second", () => {
     for (const bucket of UPLOAD_BUCKETS) expect(RATE_LIMITS[bucket]).toEqual({ burst: 100, refillEveryMs: 500 });
-    expect(RATE_LIMITS["text-wish"]).toEqual({ burst: 5, refillEveryMs: 60_000 });
+    expect(RATE_LIMITS["text-wish"]).toEqual({ burst: 20, refillEveryMs: 10_000 });
     expect(RATE_LIMITS.link).toEqual({ burst: 20, refillEveryMs: 1_000 });
     expect(RATE_LIMITS.guest).toEqual({ burst: 20, refillEveryMs: 1_000 });
   });
@@ -123,10 +123,37 @@ describe("takeToken", () => {
   });
 });
 
+describe("returnToken", () => {
+  it("gives back the turn a failed request took, so the next one goes through", () => {
+    const guestId = randomUUID();
+    expect(takeMany(guestId, "text-wish", 20, 0)).toBe(20);
+    returnToken(guestId, "text-wish", 0);
+    expect(takeToken(guestId, "text-wish", 0).allowed).toBe(true);
+    expect(takeToken(guestId, "text-wish", 0).allowed).toBe(false);
+  });
+
+  it("never fills a bucket past full, nor lets more through than the burst, whatever comes back", () => {
+    const guestId = randomUUID();
+    takeToken(guestId, "text-wish", 0);
+    returnToken(guestId, "text-wish", 0);
+    returnToken(guestId, "text-wish", 0);
+    returnToken(randomUUID(), "text-wish", 0);
+    expect(takeMany(guestId, "text-wish", 25, 0)).toBe(20);
+  });
+
+  it("gives back only one turn's worth, so turns taken side by side still count", () => {
+    const guestId = randomUUID();
+    // Twenty sends at once, one of which fails and gives its turn back: one more fits, no more.
+    expect(takeMany(guestId, "text-wish", 20, 0)).toBe(20);
+    returnToken(guestId, "text-wish", 5_000);
+    expect(takeMany(guestId, "text-wish", 5, 5_000)).toBe(1);
+  });
+});
+
 describe("the counts stay bounded", () => {
   it("forgets buckets that have refilled once there are too many", () => {
     const limited = randomUUID();
-    takeMany(limited, "text-wish", 6, 0);
+    takeMany(limited, "text-wish", RATE_LIMITS["text-wish"].burst + 1, 0);
     for (let guest = 1; guest < MAX_TRACKED_BUCKETS; guest += 1) takeToken(randomUUID(), "start", 0);
     expect(trackedBuckets().size).toBe(MAX_TRACKED_BUCKETS);
 
