@@ -101,6 +101,33 @@ function visibleGalleryInput(): HTMLInputElement | null {
 
 const UploadContext = createContext<UploadControls | null>(null);
 
+/*
+ * The tab's uploads: its store and its uploader, made once in the browser and kept for as long as
+ * the tab is open, as the item watch and the personal link are. A client navigation away (Next
+ * keeps the album hidden in <Activity>, or drops it after a few other pages) and back finds the
+ * same cards and the same uploader, so a file never sends on unseen while its card is gone, and a
+ * re-pick never sends its parts twice. The server's render gets a store of its own each time.
+ */
+let tabStore: UploadStore | null = null;
+let tabEngine: Promise<Engine> | null = null;
+
+function storeOfThisTab(): UploadStore {
+  if (typeof window === "undefined") return createUploadStore();
+  tabStore ??= createUploadStore();
+  return tabStore;
+}
+
+/** The tab's uploader, loaded with `loader` and started on first use; one that couldn't load is loaded again next time. */
+function engineOfThisTab(store: UploadStore, loader: typeof loadEngine): Promise<Engine> {
+  tabEngine ??= loader()
+    .then((module) => module.startEngine(store, { guestName: readGuestName, onPersonalLink: setPersonalLink }))
+    .catch((error: unknown) => {
+      tabEngine = null;
+      throw error;
+    });
+  return tabEngine;
+}
+
 function useUpload(): UploadControls {
   const controls = use(UploadContext);
   if (!controls) throw new Error("Album upload controls must sit inside <UploadProvider>.");
@@ -109,31 +136,16 @@ function useUpload(): UploadControls {
 
 /** Shares the uploads between the share buttons and the cards under the header. */
 export function UploadProvider({ children }: { children: ReactNode }) {
-  const [store] = useState<UploadStore>(() => createUploadStore());
+  const [store] = useState<UploadStore>(storeOfThisTab);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  const engine = useRef<Promise<Engine> | null>(null);
   const inputs = useRef<Partial<Record<CameraSource, HTMLInputElement | null>>>({});
   /** The changed file whose place the gallery's next pick takes (Ruling BA). */
   const replacing = useRef<string | null>(null);
   const [sharingOpen, setSharingOpen] = useState(false);
 
   function engineFrom(loader: typeof loadEngine): Promise<Engine> {
-    engine.current ??= loader()
-      .then((module) => module.startEngine(store, { guestName: readGuestName, onPersonalLink: setPersonalLink }))
-      .catch((error: unknown) => {
-        engine.current = null;
-        throw error;
-      });
-    return engine.current;
+    return engineOfThisTab(store, loader);
   }
-
-  // Let go of the thumbnails' memory when the page goes.
-  useEffect(
-    () => () => {
-      for (const item of store.getSnapshot().items) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-    },
-    [store],
-  );
 
   // A Cancel an earlier visit couldn't get answered is sent again; only then is the uploader loaded.
   useEffect(() => {
@@ -186,8 +198,8 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       );
     },
     retry(itemId) {
-      if (engine.current) {
-        void engine.current.then((loaded) => loaded.retry(itemId));
+      if (tabEngine) {
+        void tabEngine.then((loaded) => loaded.retry(itemId));
         return;
       }
       store.update(itemId, { status: "queued", failure: null });
@@ -197,12 +209,12 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       );
     },
     cancel(itemId) {
-      if (engine.current) void engine.current.then((loaded) => loaded.cancel(itemId));
+      if (tabEngine) void tabEngine.then((loaded) => loaded.cancel(itemId));
       // Nothing has reached the server before the uploader loads.
       else store.remove(itemId);
     },
     dismiss(itemId) {
-      if (engine.current) void engine.current.then((loaded) => loaded.dismiss(itemId));
+      if (tabEngine) void tabEngine.then((loaded) => loaded.dismiss(itemId));
       else store.remove(itemId);
     },
     register(source, input) {

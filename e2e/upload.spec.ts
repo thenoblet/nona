@@ -503,6 +503,52 @@ test.describe("uploading from the phone", () => {
     }
   });
 
+  test("an upload on its way survives a trip to Wishes and back: the same card, its preview, and nothing sent twice", async ({ browser, baseURL }) => {
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      await openAlbum(page);
+      // The photo's part waits, unanswered, until the guest is back on the album.
+      const puts = await watchPartPuts(page, () => "hold");
+      let starts = 0;
+      page.on("request", (request) => {
+        if (request.method() === "POST" && new URL(request.url()).pathname === "/api/uploads") starts += 1;
+      });
+      await picker(page, "Take a photo").setInputFiles(await photoOnDisk("round-trip.jpg", 300, 200));
+      const card = page.getByRole("region", { name: "Your photo" });
+      await expect.poll(() => puts.held.length, { timeout: 30_000 }).toBe(1);
+      await expect(card).toBeVisible();
+      // A mark on this very page: a reload would lose it.
+      await page.evaluate(() => ((window as unknown as { samePage: boolean }).samePage = true));
+
+      // Next keeps the album hidden while the guest is away (Activity), but only the last three
+      // pages: after Wishes and two more, the album is dropped, and coming back renders it afresh.
+      await page.getByRole("link", { name: "Wishes" }).click();
+      await expect(page).toHaveURL(/\/wishes$/);
+      const navigate = (path: string) => page.evaluate((to) => (window as unknown as { next: { router: { push: (href: string) => void } } }).next.router.push(to), path);
+      for (const path of ["/today", "/rsvp", "/album?mode=before"]) {
+        await navigate(path);
+        await expect(page).toHaveURL(new RegExp(`${path.replace("?", "\\?")}$`));
+      }
+      expect(await page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage)).toBe(true);
+
+      await expect(card).toBeVisible();
+      await expect
+        .poll(() => card.locator("img").first().evaluate((image) => (image as HTMLImageElement).naturalWidth), { timeout: 10_000 })
+        .toBeGreaterThan(0);
+      expect(starts).toBe(1);
+      expect(puts.held).toHaveLength(1);
+
+      await Promise.all(puts.held.splice(0).map((route) => route.continue()));
+      await expect(card.getByText("Added to the album")).toBeVisible({ timeout: 60_000 });
+      expect(starts).toBe(1);
+      expect(puts.sent).toEqual([]);
+      expect(puts.finished).toEqual([1]);
+    } finally {
+      await context.close();
+    }
+  });
+
   test("the personal link is offered once: a later visit's upload doesn't offer it again", async ({ browser, baseURL }) => {
     const context = await phone(browser, baseURL);
     try {
