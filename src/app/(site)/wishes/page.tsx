@@ -8,7 +8,7 @@ import { PhoneHeader } from "@/components/layout/PhoneHeader";
 import { Paper } from "@/components/ui/Paper";
 import { Reveal } from "@/components/ui/Reveal";
 import { Eyebrow, Motto, Ornament } from "@/components/ui/Typography";
-import { TextWish, VideoWish, VoiceWish } from "@/components/wishes/WishCards";
+import { pickWishStyles, TextWish, VideoWish, VoiceWish } from "@/components/wishes/WishCards";
 import { WishComposer } from "@/components/wishes/WishComposer";
 
 export const metadata: Metadata = {
@@ -76,17 +76,15 @@ async function WishesWall() {
     return <p className="m-0 text-center font-serif text-xl text-mocha italic">No wishes yet. Be the first to leave one.</p>;
   }
 
-  // Text wishes count separately so their papers keep cycling blush, white, cocoa.
-  const paperIndex: number[] = [];
-  let texts = 0;
-  for (const wish of wishes) paperIndex.push(wish.kind === "text" ? texts++ : 0);
+  // Each written wish on its own paper, never the same as the one before it.
+  const styles = pickWishStyles(wishes);
 
   return (
     <ul className="m-0 flex list-none flex-col gap-5.5 p-0">
       {wishes.map((wish, index) => (
         <Reveal as="li" key={wish.id}>
           {wish.kind === "text" ? (
-            <TextWish wish={wish} index={paperIndex[index]} />
+            <TextWish wish={wish} style={styles.get(wish.id) ?? "letter"} />
           ) : wish.kind === "voice" ? (
             <VoiceWish wish={wish} index={index} />
           ) : (

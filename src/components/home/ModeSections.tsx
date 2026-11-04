@@ -15,7 +15,7 @@ import { Reveal } from "@/components/ui/Reveal";
 import { Eyebrow, Ornament, SectionHeading } from "@/components/ui/Typography";
 import { AlbumBrowser } from "@/components/album/AlbumBrowser";
 import { OrderOfDay } from "@/components/today/OrderOfDay";
-import { TextWish, VideoWish, VoiceWish } from "@/components/wishes/WishCards";
+import { pickWishStyles, TextWish, VideoWish, VoiceWish } from "@/components/wishes/WishCards";
 
 function Perks() {
   return (
@@ -232,6 +232,8 @@ export async function WishesWall() {
     console.error("[home] could not read the wishes:", describeError(error));
     wishes = null;
   }
+  // Each written wish on its own paper, the same as on the wishes page.
+  const styles = pickWishStyles(wishes ?? []);
   return (
     <section id="wishes" className="bg-white px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[1160px] flex-col gap-12 sm:gap-14">
@@ -251,7 +253,7 @@ export async function WishesWall() {
                 ) : wish.kind === "video" ? (
                   <VideoWish wish={wish} index={index} />
                 ) : (
-                  <TextWish wish={wish} index={index} />
+                  <TextWish wish={wish} style={styles.get(wish.id) ?? "letter"} />
                 )}
               </div>
             ))}
