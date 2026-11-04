@@ -7,17 +7,19 @@
 // 2026). 3 locations every 10 minutes is ~12,960 runs a month, about $8.40 per
 // URL. Set frequencySeconds to 900 to roughly halve that.
 //
-// Deploy (resource-group scope):
+// Deploy (resource-group scope). alertEmail has no default, so the address the
+// alerts go to is never in this repository: pass it from your own shell.
 //   az deployment group what-if --resource-group luxbedding-rg \
-//     --subscription <cropdoor-prod-credits> --template-file infra/monitoring.bicep
+//     --subscription <cropdoor-prod-credits> --template-file infra/monitoring.bicep \
+//     --parameters alertEmail=<the alert address>
 //   az deployment group create  (same arguments)
-// Turn on the worker check once the worker is deployed:
-//   ... --parameters enableWorkerHealthTest=true
+// The worker's heartbeat check is on by default; pass enableWorkerHealthTest=false
+// only if the worker is retired.
 
 param location string = 'swedencentral'
 
-@description('Where availability alerts are emailed.')
-param alertEmail string = 'noblet@nobletxnancy.com'
+@description('Where availability alerts are emailed. No default: pass it at deploy time.')
+param alertEmail string
 
 param siteUrl string = 'https://nobletxnancy.com'
 
@@ -104,8 +106,8 @@ var checks = concat(
 )
 
 resource tests 'Microsoft.Insights/webtests@2022-06-15' = [
-  for c in checks: {
-    name: c.name
+  for check in checks: {
+    name: check.name
     location: location
     tags: union(tags, {
       // Required by Application Insights: links the test to its component.
@@ -113,8 +115,8 @@ resource tests 'Microsoft.Insights/webtests@2022-06-15' = [
     })
     kind: 'standard'
     properties: {
-      SyntheticMonitorId: c.name
-      Name: c.title
+      SyntheticMonitorId: check.name
+      Name: check.title
       Enabled: true
       Frequency: frequencySeconds
       Timeout: 30
@@ -122,7 +124,7 @@ resource tests 'Microsoft.Insights/webtests@2022-06-15' = [
       RetryEnabled: true
       Locations: testLocations
       Request: {
-        RequestUrl: '${siteUrl}${c.path}'
+        RequestUrl: '${siteUrl}${check.path}'
         HttpVerb: 'GET'
         ParseDependentRequests: false
       }
@@ -131,11 +133,11 @@ resource tests 'Microsoft.Insights/webtests@2022-06-15' = [
           ExpectedHttpStatusCode: 200
           SSLCheck: false
         },
-        empty(c.contentMatch)
+        empty(check.contentMatch)
           ? {}
           : {
               ContentValidation: {
-                ContentMatch: c.contentMatch
+                ContentMatch: check.contentMatch
                 IgnoreCase: false
                 PassIfTextFound: true
               }
@@ -146,23 +148,23 @@ resource tests 'Microsoft.Insights/webtests@2022-06-15' = [
 ]
 
 resource testAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [
-  for (c, i) in checks: {
-    name: '${c.name}-down'
+  for (check, index) in checks: {
+    name: '${check.name}-down'
     location: 'global'
     tags: union(tags, {
       'hidden-link:${appInsights.id}': 'Resource'
-      'hidden-link:${tests[i].id}': 'Resource'
+      'hidden-link:${tests[index].id}': 'Resource'
     })
     properties: {
-      description: '${c.title}: ${siteUrl}${c.path} failing from 2 or more locations'
+      description: '${check.title}: ${siteUrl}${check.path} failing from 2 or more locations'
       severity: 1
       enabled: true
-      scopes: [ tests[i].id, appInsights.id ]
+      scopes: [ tests[index].id, appInsights.id ]
       evaluationFrequency: 'PT1M'
       windowSize: 'PT5M'
       criteria: {
         'odata.type': 'Microsoft.Azure.Monitor.WebtestLocationAvailabilityCriteria'
-        webTestId: tests[i].id
+        webTestId: tests[index].id
         componentId: appInsights.id
         failedLocationCount: 2
       }
