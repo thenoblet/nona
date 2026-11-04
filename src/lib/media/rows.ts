@@ -161,7 +161,8 @@ export async function findUpload(mediaId: string): Promise<UploadRow | null> {
 }
 
 export type ResumableUploadKey = {
-  guestId: string;
+  /** Every guest the browser knows, its own first: an upload it started as an earlier own guest carries on too. */
+  guestIds: string[];
   purpose: MediaPurpose;
   sizeBytes: number;
   fingerprint: string;
@@ -173,13 +174,13 @@ export type ResumableUploadKey = {
  * resume index applies under a generic plan (a pooled prepared statement's). No ORDER BY, so no
  * sort: two unfinished uploads of one file (two starts at once) are equally good to resume.
  */
-export function resumableUploadQuery({ guestId, purpose, sizeBytes, fingerprint }: ResumableUploadKey) {
+export function resumableUploadQuery({ guestIds, purpose, sizeBytes, fingerprint }: ResumableUploadKey) {
   return getDb()
     .select(uploadColumns)
     .from(media)
     .where(
       and(
-        eq(media.guestId, guestId),
+        inArray(media.guestId, guestIds),
         eq(media.sizeBytes, sizeBytes),
         eq(media.fileFingerprint, fingerprint),
         sql`${media.status} = 'uploading'`,
@@ -189,7 +190,7 @@ export function resumableUploadQuery({ guestId, purpose, sizeBytes, fingerprint 
     .limit(1);
 }
 
-/** The guest's unfinished upload of this file (same purpose, size and fingerprint), or null. */
+/** The browser's unfinished upload of this file (same purpose, size and fingerprint), under any of its guests, or null. */
 export async function findResumableUpload(key: ResumableUploadKey): Promise<UploadRow | null> {
   const [row] = await resumableUploadQuery(key);
   return row ?? null;

@@ -517,6 +517,25 @@ describe("resuming", () => {
     ]);
   });
 
+  it("resumes an upload this browser started as a guest it still remembers, after a take-over, rather than send it again", async () => {
+    const earlier = await signIn();
+    const body = photo();
+    const first = await startSession(body);
+    const bytes = randomBytes(body.size);
+    const [sentFirst] = await sendParts(first, bytes, [1]);
+
+    // "Yes, that's me" made the link's guest this browser's own, the earlier one remembered after it.
+    const linked = await createGuest("Ama's link");
+    browserCookies.values.set(guestCookieName(), signGuestIds([linked.id, earlier.id]));
+
+    const again = await start(body);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ ...first, uploadedParts: [{ partNumber: 1, etag: sentFirst.etag, size: PART_SIZE_BYTES }] });
+    // One upload of the file, still the earlier guest's: none for the sweeper to finish beside it.
+    expect(await mediaCount()).toBe(1);
+    expect((await mediaRow(first.mediaId)).guestId).toBe(earlier.id);
+  });
+
   it("starts a new upload for another size, another purpose or another guest's file", async () => {
     await signIn();
     const body = photo();
