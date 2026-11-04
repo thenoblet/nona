@@ -13,9 +13,11 @@ import { hideLinkOffer, markLinkOfferShown } from "./uploader/personal-link";
  * is the only button. Its own chunk: it shows only once a file has been added.
  */
 
+// For the guest's own phones, never for showing people photos: whoever opens it is asked whether
+// they are this guest, and only "Yes" joins them.
 const SHARE_TEXT = {
-  title: "My NONA'26 uploads",
-  text: "My photos and videos from Noblet and Nancy's wedding",
+  title: "My personal NONA'26 link",
+  text: "Just for my own phones: it brings my uploads to any phone",
 };
 
 const COPIED_FOR_MILLISECONDS = 2_400;

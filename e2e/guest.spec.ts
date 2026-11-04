@@ -100,7 +100,7 @@ test("a phone without a guest is asked first, and \"Yes, that's me\" brings the 
   }
 });
 
-test("\"No, I'm someone else\" gives the phone its own guest and keeps the link's uploads beside it", async ({ browser, baseURL }) => {
+test("\"No, I'm someone else\" changes nothing on a phone without a guest: it opens the album, with no cookie", async ({ browser, baseURL }) => {
   const ownerPhone = await browser.newContext({ baseURL });
   const otherPhone = await browser.newContext({ baseURL });
   const sql = testDb();
@@ -110,11 +110,9 @@ test("\"No, I'm someone else\" gives the phone its own guest and keeps the link'
     const page = await otherPhone.newPage();
     await page.goto(`/my/${owner.token}`);
     await page.getByRole("button", { name: "No, I'm someone else" }).click();
-    await expect(page).toHaveURL(/\/album\?view=mine$/);
+    await expect(page).toHaveURL(/\/album$/);
 
-    const ownId = await ownGuestOf(otherPhone);
-    expect(ownId).not.toBe(owner.guestId);
-    expect(await cookieIds(otherPhone)).toEqual([ownId, owner.guestId]);
+    expect(await otherPhone.cookies()).toEqual([]);
     const [{ display_name: ownerName }] = await sql`SELECT display_name FROM guests WHERE id = ${owner.guestId}`;
     expect(ownerName).toBe("E2E Link Owner");
   } finally {
@@ -154,17 +152,23 @@ test("a phone that has its own guest is asked too, and told what Yes does: the l
   }
 });
 
-test("\"No, I'm someone else\" on a phone with its own guest keeps it, and remembers the link's guest beside it", async ({ browser, baseURL }) => {
+test("\"No, I'm someone else\" on a phone with its own guest leaves its cookie as it was: the link's uploads never become its own", async ({
+  browser,
+  baseURL,
+}) => {
   const ownerPhone = await browser.newContext({ baseURL });
   const otherPhone = await browser.newContext({ baseURL });
   try {
     const owner = await makeGuest(ownerPhone.request, "E2E Third Owner");
     const other = await makeGuest(otherPhone.request, "E2E Another Guest");
+    const [before] = (await otherPhone.cookies()).filter((stored) => stored.name === COOKIE);
     const page = await otherPhone.newPage();
     await page.goto(`/my/${owner.token}`);
     await page.getByRole("button", { name: "No, I'm someone else" }).click();
-    await expect(page).toHaveURL(/\/album\?view=mine$/);
-    expect(await cookieIds(otherPhone)).toEqual([other.guestId, owner.guestId]);
+    await expect(page).toHaveURL(/\/album$/);
+    const [after] = (await otherPhone.cookies()).filter((stored) => stored.name === COOKIE);
+    expect(after.value).toBe(before.value);
+    expect(await cookieIds(otherPhone)).toEqual([other.guestId]);
   } finally {
     await ownerPhone.close();
     await otherPhone.close();
