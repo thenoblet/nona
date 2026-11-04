@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test, type Browser, type BrowserContext, type Page, type Route } from "@playwright/test";
 import postgres from "postgres";
 import sharp from "sharp";
 import { TEST_DB_ENV, TEST_STORAGE_ENV } from "../test/env";
@@ -401,6 +401,112 @@ test.describe("a guest's personal link (spec §13)", () => {
     } finally {
       await firstPhone.close();
       await secondPhone.close();
+    }
+  });
+});
+
+/**
+ * Refuses the viewer's script (the chunk with its Save to Photos) while `refusing()` says so, as a
+ * weak signal or a deploy would; every other script comes as usual. Returns how many it refused.
+ */
+async function refuseViewerScript(page: Page, refusing: () => boolean): Promise<() => number> {
+  let refused = 0;
+  await page.route(/\/_next\/static\/chunks\/.*\.js$/, async (route) => {
+    const response = await route.fetch();
+    if (refusing() && (await response.text()).includes("Save to Photos")) {
+      refused += 1;
+      return route.abort("failed");
+    }
+    return route.fulfill({ response });
+  });
+  return () => refused;
+}
+
+const VIEWER_TROUBLE = "Couldn't open this moment. Check your connection and try again.";
+
+test.describe("a viewer whose script can't be fetched", () => {
+  test.describe.configure({ timeout: 120_000 });
+
+  test("closes with a word, leaving the album and an upload on its way, and the next tap fetches it again", async ({ browser, baseURL }) => {
+    const [moment] = await seedPhotos(1);
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      let refusing = true;
+      const refused = await refuseViewerScript(page, () => refusing);
+      // The photo's part never gets an answer, so its card stays on its way.
+      const heldParts: Route[] = [];
+      await page.route(/\/nona-private\/originals\//, (route) =>
+        route.request().method() === "PUT" ? void heldParts.push(route) : route.continue(),
+      );
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto("/album?mode=before");
+      await expect(page.getByRole("main").getByText("Choose photos & videos")).toBeVisible();
+      const photo = join(fixtures, "on-its-way.jpg");
+      await sharp(randomBytes(600 * 400 * 3), { raw: { width: 600, height: 400, channels: 3 } }).jpeg({ quality: 80 }).toFile(photo);
+      await page.getByRole("main").getByLabel("Take a photo").setInputFiles(photo);
+      const card = page.getByRole("region", { name: "Your photo" });
+      await expect.poll(() => heldParts.length, { timeout: 30_000 }).toBeGreaterThan(0);
+      await expect(card).toBeVisible();
+      // A mark on this very page: a reload would lose it.
+      await page.evaluate(() => ((window as unknown as { samePage: boolean }).samePage = true));
+
+      await grid(page).locator(`[data-moment="${moment.id}"] button`).click();
+
+      // Said in a live region (whose own box is 0 px high, as the new-moments pill's is).
+      await expect(page.getByRole("status").getByText(VIEWER_TROUBLE)).toBeVisible();
+      expect(refused()).toBeGreaterThan(0);
+      await expect(viewer(page)).toBeHidden();
+      await expect(page).not.toHaveURL(/#m\//);
+      await expect(page.getByText(/can't load right now|Application error/)).toHaveCount(0);
+      await expect(tiles(page)).toHaveCount(1);
+      await expect(card).toBeVisible();
+      await expect(card.getByText("Added to the album")).toHaveCount(0);
+      expect(await page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage)).toBe(true);
+
+      // The network is back: the next tap fetches the viewer again and opens the moment.
+      refusing = false;
+      await grid(page).locator(`[data-moment="${moment.id}"] button`).click();
+      await expect(viewer(page)).toBeVisible();
+      await expect(page.getByText(VIEWER_TROUBLE)).toHaveCount(0);
+      await expect(card).toBeVisible();
+      expect(errors).toEqual([]);
+      await Promise.all(heldParts.map((route) => route.abort().catch(() => {})));
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("on the home page's album after the wedding, reloads once for a new script, then closes with a word, and the page stays", async ({ browser, baseURL }) => {
+    const [moment] = await seedPhotos(1);
+    const context = await phone(browser, baseURL);
+    try {
+      const page = await context.newPage();
+      const refused = await refuseViewerScript(page, () => true);
+      await page.goto("/home?mode=after");
+      const album = page.locator("#album");
+      await expect(album.getByRole("heading", { name: "Every moment" })).toBeVisible();
+      await page.evaluate(() => ((window as unknown as { samePage: boolean }).samePage = true));
+
+      // Nothing is on its way from this page, so the first failure reloads it once, as after a deploy.
+      await album.locator(`[data-moment="${moment.id}"] button`).click();
+      await expect.poll(() => page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage ?? false)).toBe(false);
+      await expect(album.getByRole("heading", { name: "Every moment" })).toBeVisible();
+      await page.evaluate(() => ((window as unknown as { samePage: boolean }).samePage = true));
+
+      // Still refused after the reload: no second reload, the viewer closes and says why.
+      await album.locator(`[data-moment="${moment.id}"] button`).click();
+      // Said in a live region (whose own box is 0 px high, as the new-moments pill's is).
+      await expect(page.getByRole("status").getByText(VIEWER_TROUBLE)).toBeVisible();
+      expect(refused()).toBeGreaterThan(1);
+      await expect(viewer(page)).toBeHidden();
+      await expect(album.getByRole("heading", { name: "Every moment" })).toBeVisible();
+      await expect(album.locator(`[data-moment="${moment.id}"]`)).toBeVisible();
+      await expect(page.getByText(/can't load right now|Application error/)).toHaveCount(0);
+      expect(await page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage)).toBe(true);
+    } finally {
+      await context.close();
     }
   });
 });

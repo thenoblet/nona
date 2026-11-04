@@ -39,6 +39,7 @@ import { setPersonalLink, useLinkOfferAllowed, usePersonalLink } from "./uploade
 import { ServerThumbContext } from "./uploader/server-thumb";
 import {
   createUploadStore,
+  isBusy,
   returnNoticeWords,
   UPLOAD_WORDS,
   type UploadSnapshot,
@@ -154,13 +155,18 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // What the album's grid hears (album-uploads.ts): Send again while sharing is open, and each file added.
+  // What the album's grid hears (album-uploads.ts): Send again while sharing is open, each file
+  // added, and whether one is on its way.
   const added = snapshot.items.filter((item) => item.status === "added").length;
+  const busy = snapshot.items.some(isBusy);
   const chooseFiles = useCallback(() => {
     replacing.current = null;
     visibleGalleryInput()?.click();
   }, []);
-  const albumUploads = useMemo<AlbumUploads>(() => ({ sendAgain: sharingOpen ? chooseFiles : null, added }), [sharingOpen, added, chooseFiles]);
+  const albumUploads = useMemo<AlbumUploads>(
+    () => ({ sendAgain: sharingOpen ? chooseFiles : null, added, busy }),
+    [sharingOpen, added, busy, chooseFiles],
+  );
   // Ruling BB: the server's thumbnail of a file the phone couldn't draw, once it has one.
   const setServerThumb = useCallback((itemId: string, url: string) => store.update(itemId, { serverThumbUrl: url }), [store]);
 
