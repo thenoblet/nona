@@ -5,9 +5,9 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dbConfig } from "@/lib/env";
 import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { resetDb } from "../../../test/db";
-import { addSitePhoto } from "../../../test/site-images";
+import { addSitePhoto, readLiveSiteImage } from "../../../test/site-images";
 import { redrawRsvpCard, sendCardJobOrLog } from "./cards";
-import { readAllSiteImages, readLiveSiteImage, saveSiteImage, slotLockName } from "./store";
+import { readAllSiteImages, saveSiteImage, slotLockName } from "./store";
 
 // Against the test database (docker compose up -d db). The job queue is a stand-in that records sends.
 

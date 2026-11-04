@@ -175,11 +175,6 @@ async function liveRowOf(queries: Database | Transaction, slot: string): Promise
   return row ? toRow(row) : null;
 }
 
-/** The slot's live row, or null while it shows its built-in photo unedited. */
-export async function readLiveSiteImage(slot: string): Promise<SiteImageRow | null> {
-  return liveRowOf(getDb(), slot);
-}
-
 /** A row by its id. */
 export async function readSiteImage(id: string): Promise<SiteImageRow | null> {
   if (!isUuid(id)) return null;

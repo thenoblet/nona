@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
+import { readSiteImages, type SiteImageRow } from "@/lib/site-images/store";
 import { originalKey } from "@/lib/storage/keys";
 
 /*
@@ -46,4 +47,9 @@ export async function addSitePhoto(overrides: Partial<typeof media.$inferInsert>
       ...overrides,
     });
   return id;
+}
+
+/** The slot's live row (its newest), or null while it shows its built-in photo unedited. */
+export async function readLiveSiteImage(slot: string): Promise<SiteImageRow | null> {
+  return (await readSiteImages(slot))[0] ?? null;
 }

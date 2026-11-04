@@ -38,9 +38,9 @@ export async function previewCard(card: PreviewCard) {
 }
 
 /**
- * Cached so the cards are still prerendered at build time despite the async conversion. Kept for a
- * year (the build table's 1y): the server would only draw one again past that, and every deploy
- * prerenders them afresh.
+ * Cached so the cards are still prerendered at build time despite the async conversion. Every card
+ * route is static: each deploy prerenders them afresh and the server never draws one. A year
+ * (the build table's 1y) only has to outlast a deploy.
  */
 async function renderJpeg(card: PreviewCard) {
   "use cache";
