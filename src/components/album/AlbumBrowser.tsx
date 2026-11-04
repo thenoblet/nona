@@ -368,7 +368,6 @@ export function AlbumBrowser({
       </div>
 
       <Segmented
-        role="tablist"
         label="Whose moments"
         value={filters.whose}
         onChange={(whose: Whose) => chooseFilters({ whose })}

@@ -316,7 +316,7 @@ test.describe("the album", () => {
       const page = await context.newPage();
       await page.goto("/album?mode=before&view=mine");
 
-      await expect(page.getByRole("main").getByRole("tab", { name: "My uploads" })).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("main").getByRole("group", { name: "Whose moments" }).getByRole("button", { name: "My uploads" })).toHaveAttribute("aria-pressed", "true");
       await expect(tiles(page)).toHaveCount(3);
       await expect(grid(page).getByText("This photo is too large to show")).toBeVisible();
       await expect(grid(page).getByText("Getting it ready")).toBeVisible();
@@ -395,7 +395,7 @@ test.describe("a guest's personal link (spec §13)", () => {
       await other.goto(`/my/${token}`);
       await other.getByRole("button", { name: "Yes, that's me" }).click();
       await expect(other).toHaveURL(/\/album\?view=mine$/);
-      await expect(other.getByRole("main").getByRole("tab", { name: "My uploads" })).toHaveAttribute("aria-selected", "true");
+      await expect(other.getByRole("main").getByRole("group", { name: "Whose moments" }).getByRole("button", { name: "My uploads" })).toHaveAttribute("aria-pressed", "true");
       await expect(grid(other).locator(`[data-moment="${mediaId}"]`)).toBeVisible();
       await expect(grid(other).locator(`[data-moment="${mediaId}"]`).getByRole("img", { name: "Your upload" })).toBeVisible();
     } finally {
