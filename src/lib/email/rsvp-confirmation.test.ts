@@ -32,7 +32,7 @@ const render = (reply: RsvpRecord, content: SiteContent = contentDefaults) =>
 
 /** A guest's personal link, as the confirmation job reads it from the database. */
 const PERSONAL_LINK = `${SITE_URL}/my/made-up-token-for-the-confirmation-tests-0001`;
-const BEFORE_SHARING = "Open this link on your phone before you share your first photo, and your photos stay together on any phone.";
+const BEFORE_SHARING = "Open it on your phone before you share your first photo, so your photos stay together.";
 
 const renderWithLink = (reply: RsvpRecord, link: string | null = PERSONAL_LINK) =>
   renderRsvpConfirmation(reply, contentDefaults, SITE_URL, link);
@@ -79,7 +79,7 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.subject).toBe("Your reply to Noblet & Nancy");
   });
 
-  it("shows each answered celebration's name, day, time, place and answer, in the html and the text", async () => {
+  it("shows each answered celebration's name and answer, and the day, time and place of one the guest is coming to, in the html and the text", async () => {
     const mail = await render(record({ [first.id]: "yes", [second.id]: "no" }));
     for (const [body, written] of [
       [mail.html, asHtml],
@@ -87,14 +87,12 @@ describe("renderRsvpConfirmation", () => {
     ] as const) {
       const attending = card(body, first, second);
       const notAttending = card(body, second, null);
-      for (const [segment, celebration] of [
-        [attending, first],
-        [notAttending, second],
-      ] as const) {
-        expect(segment).toContain(written(weekdayDate(celebration)));
-        expect(segment).toContain(written(celebration.time));
-        expect(segment).toContain(written(placeOf(celebration)));
-      }
+      expect(attending).toContain(written(weekdayDate(first)));
+      expect(attending).toContain(written(first.time));
+      expect(attending).toContain(written(placeOf(first)));
+      // One they aren't coming to is only its name and answer: no day, time or place to keep.
+      expect(notAttending).not.toContain(written(weekdayDate(second)));
+      expect(notAttending).not.toContain(written(placeOf(second)));
       expect(attending).toContain("Attending");
       expect(attending).not.toContain("Not attending");
       expect(notAttending).toContain("Not attending");
@@ -128,8 +126,9 @@ describe("renderRsvpConfirmation", () => {
             : celebration,
       ),
     });
-    const numeric = await render(record({ [first.id]: "yes", [second.id]: "no" }), withDays("05", "12"));
-    const written = await render(record({ [first.id]: "yes", [second.id]: "no" }), withDays("[Day]", "5th"));
+    // Both attended: the date line is shown only for a celebration the guest is coming to.
+    const numeric = await render(record({ [first.id]: "yes", [second.id]: "yes" }), withDays("05", "12"));
+    const written = await render(record({ [first.id]: "yes", [second.id]: "yes" }), withDays("[Day]", "5th"));
     for (const [body, asWritten] of [
       [numeric.html, asHtml],
       [numeric.text, (value: string) => value],
@@ -289,7 +288,7 @@ describe("renderRsvpConfirmation", () => {
     expect(mail.html).not.toContain("data-outlook-only");
     // Straight around the 600 px container: opened inside the page's padding, closed before it ends.
     const [beforeOpen, afterOpen] = mail.html.split(outlookOpen);
-    expect(beforeOpen).toMatch(/<td style="padding:0 0 44px">$/);
+    expect(beforeOpen).toMatch(/<td style="padding:0 0 28px">$/);
     expect(afterOpen).toMatch(/^<table align="center" width="100%"[^>]*style="max-width:600px">/);
     const [beforeClose, afterClose] = mail.html.split(outlookClose);
     expect(beforeClose).toMatch(/nobletxnancy\.com|example\.com/);
