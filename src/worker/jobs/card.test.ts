@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,7 +34,9 @@ vi.mock("@/lib/storage/objects", async (importOriginal) => {
   };
 });
 
-import { cardHandler, type CardOptions } from "./card";
+import { CARD_FONTS } from "@/lib/preview-cards/layout";
+import { previewCardText } from "@/lib/preview-cards/text";
+import { cardHandler, drawCardJpeg, type CardOptions } from "./card";
 
 const projectRoot = fileURLToPath(new URL("../../../", import.meta.url));
 /** As in the worker's image: the fonts and the built-in preview photos, from the checkout here. */
@@ -189,6 +191,36 @@ describe("media.card", () => {
     const card = await readPublic(key!);
     expect(await sharp(card.bytes).metadata()).toMatchObject({ width: 1200, height: 630 });
     expect(card.bytes.length).toBeLessThanOrEqual(MAX_CARD_BYTES);
+  });
+
+  it("names a built-in card by the photo's bytes: a photo swapped under the same file name is drawn again", async () => {
+    const swapped = await mkdtemp(join(tmpdir(), "nona-card-public-"));
+    try {
+      await mkdir(join(swapped, "images/story"), { recursive: true });
+      const file = join(swapped, "images/story/nancy-smile.jpg");
+      await copyFile(join(projectRoot, "public/images/story/nancy-smile.jpg"), file);
+      const saved = await saveSiteImage({ slot: "preview-wishes", mediaId: null, alt: "Nancy", focal: { x: 0.5, y: 0.25 }, savedBy: "a" });
+      await draw(saved.id, { ...OPTIONS, publicFolder: swapped });
+      const first = (await readSiteImage(saved.id))?.cardKey;
+      // The same name, another photo: the shoot's replacement dropped into the image.
+      await copyFile(join(projectRoot, "public/images/story/bouquet.jpg"), file);
+      await draw(saved.id, { ...OPTIONS, publicFolder: swapped });
+      const second = (await readSiteImage(saved.id))?.cardKey;
+      expect(second).not.toBe(first);
+      expect(puts.keys).toEqual([first, second]);
+    } finally {
+      await rm(swapped, { recursive: true, force: true });
+    }
+  });
+
+  it("fails for good, without retrying, when a card can't come under its size limit", async () => {
+    const fonts = await Promise.all(
+      CARD_FONTS.map(async ({ name, file, weight, style }) => ({ name, data: await readFile(join(OPTIONS.fontsFolder, file)), weight, style })),
+    );
+    const photo = await readFile(join(projectRoot, "public/images/story/kiss.jpg"));
+    const drawing = drawCardJpeg(previewCardText("album", contentDefaults.rsvp), { bytes: photo, focal: { x: 0.5, y: 0.3 } }, fonts, 1_000);
+    await expect(drawing).rejects.toBeInstanceOf(PermanentJobError);
+    await expect(drawing).rejects.toMatchObject({ reason: "card-too-large" });
   });
 
   it("draws the RSVP card again under a new key once the site text's reply-by date or replies change", async () => {

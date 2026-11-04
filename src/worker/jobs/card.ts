@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import satori from "satori";
@@ -29,6 +30,8 @@ import { contentHashOf } from "./publishing";
  * 4. The JPEG goes to the public bucket under a content hash of everything it was drawn from (the
  *    photo, the focal point, the words, these settings), so a retried job finds the same key, and
  *    its key is stored on the row (card_key). A row whose card is already that key does nothing.
+ *    The couple's photo is named by its own content-hashed key; a built-in one by a hash of its
+ *    bytes, so a photo swapped under the same file name is drawn again.
  * The RSVP card's words follow the site text (its reply-by date, or that replies closed), so a
  * change there sends this job again (lib/site-images/cards.ts), and the card gets a new key.
  * Logs carry ids, sizes and timings only: never the alt text, the slot or the card's words.
@@ -75,13 +78,20 @@ function loadFonts(folder: string): Promise<Font[]> {
   return loading;
 }
 
-/** The photo a row draws from: where it comes from (for the hash and the key) and how to read it. */
+/** The photo a row draws from: what identifies it (for the hash), whose folder its card goes in, and how to read it. */
 type PhotoSource = { identity: string; keyOwner: string; read: () => Promise<Buffer> };
 
-function photoSourceOf(row: SiteImageRow, card: keyof typeof previewPhotos, options: CardOptions, signal: AbortSignal): PhotoSource {
+async function photoSourceOf(
+  row: SiteImageRow,
+  card: keyof typeof previewPhotos,
+  options: CardOptions,
+  signal: AbortSignal,
+): Promise<PhotoSource> {
   if (!row.mediaId) {
-    const { file } = previewPhotos[card];
-    return { identity: `builtin:${file}`, keyOwner: `site-${row.slot}`, read: () => readFile(join(options.publicFolder, file)) };
+    // The built-in photo is a file in the image, a hundred KB or so: read now, and named by its bytes.
+    const bytes = await readFile(join(options.publicFolder, previewPhotos[card].file));
+    const identity = `builtin:${createHash("sha256").update(bytes).digest("hex")}`;
+    return { identity, keyOwner: `site-${row.slot}`, read: async () => bytes };
   }
   const key = row.photo?.derived.large ?? row.photo?.derived.view;
   if (row.photo?.status !== "ready" || !key) {
@@ -120,6 +130,7 @@ export async function drawCardJpeg(
   text: CardText,
   photo: { bytes: Buffer; focal: Focal },
   fonts: Font[],
+  maxBytes = MAX_CARD_BYTES,
 ): Promise<{ jpeg: Buffer; quality: number }> {
   const svg = await satori(cardElement({ ...text, photo: await croppedPhoto(photo.bytes, photo.focal), position: "center" }), {
     width: ogSize.width,
@@ -131,11 +142,12 @@ export async function drawCardJpeg(
   let fallback: { jpeg: Buffer; quality: number } | null = null;
   for (const quality of QUALITIES) {
     const jpeg = await sharp(pixels.data, { raw }).jpeg({ quality, mozjpeg: true }).toBuffer();
-    if (jpeg.length <= TARGET_CARD_BYTES) return { jpeg, quality };
-    if (!fallback && jpeg.length <= MAX_CARD_BYTES) fallback = { jpeg, quality };
+    if (jpeg.length <= Math.min(TARGET_CARD_BYTES, maxBytes)) return { jpeg, quality };
+    if (!fallback && jpeg.length <= maxBytes) fallback = { jpeg, quality };
   }
   if (fallback) return fallback;
-  throw new Error(`The card is over ${MAX_CARD_BYTES} bytes even at quality ${QUALITIES.at(-1)}`);
+  // The same picture would come out the same size again: retrying can't help.
+  throw new PermanentJobError("card-too-large", `The card is over ${maxBytes} bytes even at quality ${QUALITIES.at(-1)}`);
 }
 
 /** media.card's work for one job. */
@@ -155,7 +167,7 @@ export async function drawCard(job: MediaJob, options: CardOptions): Promise<Job
 
   const { value: rsvp } = await readSection("rsvp");
   const text = previewCardText(card, rsvp);
-  const source = photoSourceOf(row, card, options, job.signal);
+  const source = await photoSourceOf(row, card, options, job.signal);
   const inputs = JSON.stringify({ focal: [row.focal.x, row.focal.y], text });
   const contentHash = contentHashOf(source.identity, `card-settings-${CARD_SETTINGS_VERSION}\n${inputs}`);
   const key = derivedKey(source.keyOwner, contentHash, "card", "jpg");

@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { isUuid } from "@/lib/data/ids";
 import { getDb } from "@/lib/db/client";
 import { media, siteImages, type MEDIA_STATUSES } from "@/lib/db/schema";
@@ -96,12 +96,22 @@ function toRow(selected: SelectedRow): SiteImageRow {
   };
 }
 
-/** The newest row of every slot that has one: what the site shows. One read of the slot index, a primary-key join each. */
+/**
+ * A site photo's media row, joined only while it may be shown: never one hidden or deleted. Site
+ * photos are outside the moderation's reach today (adminScopeOf is the album's), so this is a defence.
+ */
+const shownMedia = and(eq(media.id, siteImages.mediaId), isNull(media.hiddenAt), isNull(media.deletedAt));
+
+/**
+ * The newest row of every slot that has one: what the site shows. One read of the slot index, a
+ * primary-key join each. A row whose photo was hidden or deleted has no photo, so the slot shows
+ * its built-in one.
+ */
 export async function readLiveSiteImages(): Promise<SiteImageRow[]> {
   const rows = await getDb()
     .selectDistinctOn([siteImages.slot], rowColumns)
     .from(siteImages)
-    .leftJoin(media, eq(media.id, siteImages.mediaId))
+    .leftJoin(media, shownMedia)
     .orderBy(siteImages.slot, desc(siteImages.savedAt), desc(siteImages.id));
   return rows.map(toRow);
 }
@@ -225,6 +235,18 @@ export async function isLiveSiteImage(id: string): Promise<boolean> {
   return result[0]?.live === true;
 }
 
+/**
+ * The wedding-party members that have a portrait saved in Site photos, by member id, whatever its
+ * state: a new member is never given one of these ids, so never shows someone else's portrait.
+ */
+export async function readPortraitMemberIds(): Promise<string[]> {
+  const rows = await getDb()
+    .selectDistinct({ slot: siteImages.slot })
+    .from(siteImages)
+    .where(sql`${siteImages.slot} like 'party-%'`);
+  return rows.map((row) => row.slot.slice("party-".length));
+}
+
 /** Records the row's drawn card. False when the row is gone. */
 export async function setCardKey(id: string, cardKey: string): Promise<boolean> {
   if (!isUuid(id)) return false;
@@ -250,7 +272,7 @@ export async function readSiteUpload(mediaId: string): Promise<(SitePhotoFile & 
       averageColor: media.averageColor,
     })
     .from(media)
-    .where(and(eq(media.id, mediaId), eq(media.purpose, "site"), sql`${media.deletedAt} is null`))
+    .where(and(eq(media.id, mediaId), eq(media.purpose, "site"), isNull(media.hiddenAt), isNull(media.deletedAt)))
     .limit(1);
   return row ?? null;
 }

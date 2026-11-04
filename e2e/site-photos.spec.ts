@@ -47,6 +47,27 @@ async function ogImage(request: APIRequestContext, path: string): Promise<string
   return /<meta property="og:image" content="([^"]*)"/.exec(head)?.[1];
 }
 
+/** Uploads a photo into a slot through the admin, sets its alt text and focal point, and saves it. */
+async function replaceSlot(page: Page, name: string, alt: string, focal: { x: number; y: number }): Promise<void> {
+  const slot = slotOf(page, name);
+  const chooser = page.waitForEvent("filechooser");
+  await slot.getByRole("button", { name: new RegExp(`^(Replace|Add a photo for) ${name}$`) }).click();
+  await (await chooser).setFiles({ name: `${name}.jpg`, mimeType: "image/jpeg", buffer: await lakePhoto() });
+  await slot.getByLabel("Alt text").waitFor({ timeout: 120_000 });
+  await slot.getByLabel("Alt text").fill(alt);
+  const picker = slot.getByRole("button", { name: /^Focal point/ });
+  const box = (await picker.boundingBox())!;
+  await picker.click({ position: { x: box.width * focal.x, y: box.height * focal.y } });
+  await slot.getByRole("button", { name: "Save" }).click();
+  await expect(slot.getByText("Saved. The site shows it within a few seconds.")).toBeVisible();
+}
+
+/** An <img>'s object-position as two percentages. */
+async function positionOf(image: Locator): Promise<number[]> {
+  const position = await image.evaluate((element) => getComputedStyle(element).objectPosition);
+  return position.split(" ").map((part) => Number.parseFloat(part));
+}
+
 async function forgetSitePhotos(): Promise<void> {
   await sql`delete from site_images`;
   await sql`delete from media where purpose = 'site'`;
@@ -74,6 +95,54 @@ test("without Cloudflare Access the Site photos page shows no slot, and its uplo
     expect(response.headers()["cache-control"], path).toBe("private, no-store");
   }
   expect((await sql`select count(*)::int as count from media where purpose = 'site'`)[0].count).toBe(0);
+});
+
+test("with nothing replaced, the landing cover and print render exactly as before Task 19: the built-ins through next/image", async ({
+  browser,
+}) => {
+  // Captured from 33689f7's production build (task-19-work/logs/landing-markup-base.json), the
+  // static file's content hash aside. Built-in photos keep next/image's own markup.
+  const image = (name: string, width: number) => `/_next/image?url=%2F_next%2Fstatic%2Fmedia%2F${name}.HASH.jpg&w=${width}&q=75`;
+  const srcset = (name: string, widths: number[]) => widths.map((width) => `${image(name, width)} ${width}w`).join(", ");
+  const expected = [
+    {
+      alt: "Noblet and Nancy embrace beneath a neon Marry Me sign, in black and white",
+      class: "object-cover",
+      "data-nimg": "fill",
+      decoding: "async",
+      sizes: "(min-width: 1024px) 47vw, 100vw",
+      src: image("embrace-bw", 3840),
+      srcset: srcset("embrace-bw", [384, 640, 750, 828, 1080, 1200, 1920, 2048, 3840]),
+      style: "position: absolute; height: 100%; width: 100%; inset: 0px; object-position: center 45%; color: transparent;",
+    },
+    {
+      alt: "Nancy holds her bouquet and the ring as they hug",
+      class: "block h-[180px] w-full object-cover sm:h-[230px] lg:h-[290px]",
+      "data-nimg": "1",
+      decoding: "async",
+      height: "1280",
+      loading: "lazy",
+      sizes: "230px",
+      src: image("bouquet", 3840),
+      srcset: srcset("bouquet", [32, 48, 64, 96, 128, 256, 384, 640, 750, 828, 1080, 1200, 1920, 2048, 3840]),
+      style: "color:transparent;object-position:center 20%",
+      width: "720",
+    },
+  ];
+  const guest = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 });
+  await guest.goto("/");
+  await expect(guest.getByRole("img", { name: "Noblet and Nancy embrace beneath a neon Marry Me sign, in black and white" })).toBeVisible();
+  const images = await guest.evaluate(() =>
+    [...document.querySelectorAll("main img")].map((element) =>
+      Object.fromEntries(
+        [...element.attributes]
+          .map((attribute) => [attribute.name, attribute.value.replace(/(embrace-bw|bouquet)\.[A-Za-z0-9_-]+\.jpg/g, "$1.HASH.jpg")])
+          .sort(([first], [second]) => first.localeCompare(second)),
+      ),
+    ),
+  );
+  expect(images).toEqual(expected);
+  await guest.close();
 });
 
 test.describe("replacing the site's photos", () => {
@@ -133,6 +202,41 @@ test.describe("replacing the site's photos", () => {
     await expect.poll(() => backdrop.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
     expect(await guest.locator("#top img[src*='/_next/image']").count()).toBe(0);
     await guest.close();
+  });
+
+  test("the landing cover and print, replaced in the admin, show on / from the media domain at their focal points", async ({
+    browser,
+    baseURL,
+  }) => {
+    const context = await couple(browser, baseURL);
+    const page = await context.newPage();
+    await page.goto("/admin/photos/site");
+    await replaceSlot(page, "Landing cover", "E2E The cover by the lake", { x: 0.3, y: 0.6 });
+    await replaceSlot(page, "Landing print", "E2E The print by the lake", { x: 0.7, y: 0.2 });
+    await context.close();
+    const rows = await sql`select slot, media_id from site_images where slot in ('landing-cover', 'landing-print') order by slot`;
+
+    for (const width of [390, 1280]) {
+      const guest = await browser.newPage({ viewport: { width, height: 900 } });
+      await guest.goto("/");
+      const cover = guest.getByRole("img", { name: "E2E The cover by the lake" });
+      const print = guest.getByRole("img", { name: "E2E The print by the lake" });
+      await expect(cover).toBeVisible();
+      expect(await cover.getAttribute("src")).toMatch(new RegExp(`^${TEST_STORAGE_ENV.MEDIA_BASE_URL}/derived/${rows[0].media_id}/`));
+      expect(await cover.getAttribute("fetchpriority")).toBe("high");
+      expect(await cover.getAttribute("sizes")).toBe("(min-width: 1024px) 47vw, 100vw");
+      const [coverAcross, coverDown] = await positionOf(cover);
+      expect(coverAcross).toBeCloseTo(30, -0.5);
+      expect(coverDown).toBeCloseTo(60, -0.5);
+      expect(await print.getAttribute("src")).toMatch(new RegExp(`^${TEST_STORAGE_ENV.MEDIA_BASE_URL}/derived/${rows[1].media_id}/`));
+      expect(await print.getAttribute("sizes")).toBe("230px");
+      const [printAcross, printDown] = await positionOf(print);
+      expect(printAcross).toBeCloseTo(70, -0.5);
+      expect(printDown).toBeCloseTo(20, -0.5);
+      await expect.poll(() => cover.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+      expect(await guest.locator("main img[src*='/_next/image']").count()).toBe(0);
+      await guest.close();
+    }
   });
 
   test("a link preview's photo, refocused in the admin, gets a card the worker draws, and /album's og:image points at it", async ({

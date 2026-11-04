@@ -103,10 +103,12 @@ describe("restoring an earlier version", () => {
 });
 
 describe("readSiteUpload", () => {
-  it("reads only the couple's site photos, never a guest's album item", async () => {
+  it("reads only the couple's site photos, never a guest's album item, nor one hidden or deleted", async () => {
     const site = await addSitePhoto({ status: "uploaded" });
     const album = await addSitePhoto({ purpose: "album" });
+    const hidden = await addSitePhoto({ hiddenAt: new Date(), hiddenBy: "couple@example.com" });
+    const deleted = await addSitePhoto({ deletedAt: new Date() });
     expect(await readSiteUpload(site)).toMatchObject({ id: site, status: "uploaded" });
-    expect(await readSiteUpload(album)).toBeNull();
+    for (const mediaId of [album, hidden, deleted]) expect(await readSiteUpload(mediaId)).toBeNull();
   });
 });

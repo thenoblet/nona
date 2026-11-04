@@ -96,15 +96,17 @@ function slugFrom(name: string): string {
 
 /**
  * Ids a new member must not take even when no one in the list has them: portraits are found by
- * id, so a new "Lilian" must not show the old Lilian's photo.
+ * id, so a new "Lilian" must not show the old Lilian's photo. The couple's own portraits (Site
+ * photos) are found the same way: their ids come in as `portraitIds`.
  */
 const reservedPartyIds = [...contentDefaults.party.map((member) => member.id), ...Object.keys(partyPhotos)];
 
 /** New members (no id yet) get one from their name, unique in the list; existing ids never change. */
-function prepareParty(party: unknown): unknown {
+function prepareParty(party: unknown, portraitIds: readonly string[]): unknown {
   if (!Array.isArray(party)) return party;
   const taken = new Set([
     ...reservedPartyIds,
+    ...portraitIds,
     ...party.filter(isObject).flatMap((member) => (typeof member.id === "string" && member.id !== "" ? [member.id] : [])),
   ]);
   return party.map((member) => {
@@ -130,7 +132,11 @@ function mapItems(value: unknown, prepare: (item: unknown) => unknown): unknown 
  * and gives new party members their ids. Anything not in the expected shape is passed through, so
  * the schema refuses it with a message.
  */
-export function prepareSection(key: SectionKey, value: unknown): unknown {
+export function prepareSection(
+  key: SectionKey,
+  value: unknown,
+  context: { portraitIds?: readonly string[] } = {},
+): unknown {
   switch (key) {
     case "celebrations":
       return mapItems(value, prepareCelebration);
@@ -144,7 +150,7 @@ export function prepareSection(key: SectionKey, value: unknown): unknown {
     case "travel":
       return mapItems(value, (item) => (isObject(item) ? withOptional(item, "href") : item));
     case "party":
-      return prepareParty(value);
+      return prepareParty(value, context.portraitIds ?? []);
     case "liveStream":
       return isObject(value) ? { ...value, url: optionalText(value.url, null) } : value;
     default:

@@ -34,6 +34,8 @@ export type SlotView = {
   name: string;
   where: string;
   shape: SlotShape;
+  /** What the alt text is for here: read aloud to guests, or kept though nothing reads it. */
+  altHint: string;
   /** Gate B's states: the built-in photo (edited or not), the couple's, or none at all. "Not saved" is the editor's own. */
   state: "builtin" | "yours" | "none";
   /** Whether a built-in photo's alt text or focal point were edited. */
@@ -85,6 +87,13 @@ function savedLabel(row: SiteImageRow): string {
   return `${accraDateTime(row.savedAt.toISOString())} by ${row.savedBy}`;
 }
 
+/** The editor's hint under the alt text: whether guests' screen readers read it. */
+export function altHintOf(slot: Pick<SlotDefinition, "decorative" | "preview">): string {
+  if (slot.decorative) return "Not read aloud: this photo sits behind text.";
+  if (slot.preview) return "Not read aloud: the link preview describes the card in its own words.";
+  return "Read aloud to guests who can't see the photo.";
+}
+
 /** One slot as the admin shows it, from its rows, newest first (the first is live). */
 export function slotView(slot: SlotDefinition, rows: SiteImageRow[]): SlotView {
   const builtin = builtinPhoto(slot.id);
@@ -111,6 +120,7 @@ export function slotView(slot: SlotDefinition, rows: SiteImageRow[]): SlotView {
     name: slot.name,
     where: slot.where,
     shape: slot.shape,
+    altHint: altHintOf(slot),
     hasBuiltin: builtin !== null,
     card,
     versions,

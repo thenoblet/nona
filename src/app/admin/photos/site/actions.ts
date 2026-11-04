@@ -73,7 +73,7 @@ export async function saveSlotAction(input: SaveSlotInput): Promise<SlotActionRe
     const upload = await readSiteUpload(mediaId);
     if (!upload) return { ok: false, error: "That photo isn't there any more. Choose it again." };
     if (upload.status === "failed") return { ok: false, error: "That photo couldn't be read. Try another." };
-    if (upload.status !== "ready") return { ok: false, error: "That photo is still being got ready. Save again in a moment." };
+    if (upload.status !== "ready") return { ok: false, error: "That photo is still being prepared. Save again in a moment." };
   }
   const saved = await saveSiteImage({ slot, mediaId, alt, focal, savedBy: admin.email });
   return afterChange(saved);

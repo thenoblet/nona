@@ -72,6 +72,16 @@ describe("what a guest page shows in a slot", () => {
     });
   });
 
+  it("never shows a photo that was hidden or deleted: the slot falls back to its built-in one", async () => {
+    const hidden = await addSitePhoto({ hiddenAt: new Date(), hiddenBy: "couple@example.com" });
+    const deleted = await addSitePhoto({ deletedAt: new Date() });
+    await saveSiteImage({ slot: "story-met-arch", mediaId: hidden, alt: "Hidden", focal: { x: 0.5, y: 0.5 }, savedBy: "a" });
+    await saveSiteImage({ slot: "gallery-left", mediaId: deleted, alt: "Deleted", focal: { x: 0.5, y: 0.5 }, savedBy: "a" });
+    const photos = slotPhotos(await getSiteImages(), contentDefaults.party);
+    expect(photos["story-met-arch"]?.kind).toBe("builtin");
+    expect(photos["gallery-left"]?.kind).toBe("builtin");
+  });
+
   it("keeps the built-in photo while a saved photo isn't ready to show", async () => {
     const mediaId = await addSitePhoto({ status: "uploaded" });
     await saveSiteImage({ slot: "story-met-arch", mediaId, alt: "Not yet", focal: { x: 0.5, y: 0.5 }, savedBy: "a" });

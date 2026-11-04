@@ -3,7 +3,7 @@ import { expect, test, type APIRequestContext, type Browser, type BrowserContext
 import postgres from "postgres";
 import sharp from "sharp";
 import { rsvp as builtInRsvp } from "../src/content/wedding";
-import { TEST_DB_ENV } from "../test/env";
+import { TEST_DB_ENV, TEST_STORAGE_ENV } from "../test/env";
 import { TAKE_OVER_LINE } from "./personal-link";
 import { ACCESS_HEADER, accessToken } from "./cloudflare-access";
 
@@ -406,11 +406,39 @@ async function openInvitation(page: Page) {
   await page.getByRole("button", { name: "Break the seal to open your invitation" }).click({ force: true });
 }
 
+/**
+ * The card's bytes: the build-time one from the site, or one the media worker drew (Task 19), which
+ * is on the media domain.
+ */
 async function previewImage(request: APIRequestContext, url: string | undefined): Promise<Buffer> {
   expect(url).toBeTruthy();
+  if (url!.startsWith(TEST_STORAGE_ENV.MEDIA_BASE_URL)) {
+    const response = await fetch(url!, { signal: AbortSignal.timeout(10_000) });
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    return Buffer.from(await response.arrayBuffer());
+  }
   const response = await request.get(new URL(url!).pathname + new URL(url!).search);
   expect(response.headers()["content-type"]).toBe("image/jpeg");
   return response.body();
+}
+
+/**
+ * The RSVP page's og:image once the media worker has drawn the card with the new words (Ruling CJ:
+ * the web server never draws one): a card on the media domain other than `previous`. The worker takes
+ * a second or so; the pages' cached read of the site photos refreshes within 15 s.
+ */
+async function newWorkerCard(request: APIRequestContext, previous: string | undefined): Promise<string> {
+  let image: string | undefined;
+  await expect
+    .poll(
+      async () => {
+        image = (await previewTags(request, "/rsvp")).image;
+        return image !== previous && image?.startsWith(`${TEST_STORAGE_ENV.MEDIA_BASE_URL}/derived/site-preview-rsvp/`);
+      },
+      { timeout: 60_000, intervals: [1_000] },
+    )
+    .toBe(true);
+  return image!;
 }
 
 test.describe("the couple's RSVP switch", () => {
@@ -428,7 +456,9 @@ test.describe("the couple's RSVP switch", () => {
     baseURL,
     request,
   }) => {
-    const openCard = await previewImage(request, (await previewTags(request, "/rsvp")).image);
+    test.setTimeout(120_000);
+    const openImage = (await previewTags(request, "/rsvp")).image;
+    const openCard = await previewImage(request, openImage);
     await page.goto("/rsvp");
     await fillReply(page, "E2E Too Late", "e2e-too-late@example.com");
 
@@ -481,7 +511,8 @@ test.describe("the couple's RSVP switch", () => {
     const rsvpPreview = await previewTags(request, "/rsvp");
     expect(rsvpPreview.description).toBe("Replies have closed.");
     expect((await previewTags(request, "/")).description).toMatch(/Tepa, Ashanti\. Replies have closed\.$/);
-    expect((await previewImage(request, rsvpPreview.image)).equals(openCard)).toBe(false);
+    // The card with "Replies have closed" is the worker's, on the media domain.
+    expect((await previewImage(request, await newWorkerCard(request, openImage))).equals(openCard)).toBe(false);
   });
 
   test("reopening: the form is back and a reply is saved", async ({ page, browser, baseURL }) => {
@@ -507,6 +538,7 @@ test.describe("the couple's RSVP switch", () => {
     baseURL,
     request,
   }) => {
+    test.setTimeout(120_000);
     expect((await previewTags(request, "/")).description).toMatch(/Kindly reply by 20 November\.$/);
     const before = await previewTags(request, "/rsvp");
     expect(before.description).toContain("Please reply by 20 November;");
@@ -529,7 +561,8 @@ test.describe("the couple's RSVP switch", () => {
     expect((await previewTags(request, "/", SNAPCHAT)).description).toMatch(/Kindly reply by 27 November\.$/);
     const after = await previewTags(request, "/rsvp");
     expect(after.description).toContain("Please reply by 27 November;");
-    expect((await previewImage(request, after.image)).equals(cardBefore)).toBe(false);
+    // The card with the new date is the worker's, on the media domain.
+    expect((await previewImage(request, await newWorkerCard(request, before.image))).equals(cardBefore)).toBe(false);
   });
 
   test("a page that saw an older version is told who saved since, and nothing changes", async ({ page, browser, baseURL }) => {

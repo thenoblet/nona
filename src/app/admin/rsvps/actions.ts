@@ -51,14 +51,14 @@ export async function keepBothAction(
 /**
  * After a save, guests' pages and the reply action read the new settings at once, and this page
  * re-renders. The RSVP link preview shows the reply-by date or that replies closed, so the worker
- * draws it again when the couple changed its photo (after the response).
+ * draws it again with the new words (after the response).
  */
 function settingsSaved(result: SaveResult, adminEmail: string): SaveState {
   if (!result.ok) {
     return { status: "error", errors: result.newer ? [newerVersionMessage(result.newer, adminEmail)] : result.errors };
   }
   updateTag(CONTENT_TAG);
-  after(() => redrawRsvpCard());
+  after(() => redrawRsvpCard(adminEmail));
   refresh();
   return { status: "saved", errors: [], version: result.version };
 }

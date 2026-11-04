@@ -12,8 +12,8 @@ const printPhoto = "block h-[180px] w-full object-cover sm:h-[230px] lg:h-[290px
 
 /**
  * The cover and the print, read at request time, so a photo the couple replace in the admin shows
- * without a rebuild (the build has no database). Each waits in its box while it streams in: no
- * built-in photo is fetched only to be swapped out.
+ * without a rebuild (the build has no database). Each waits in its box, cocoa so the cover's white
+ * caption and menu read, while it streams in: no built-in photo is fetched only to be swapped out.
  */
 async function LandingPhoto({ slotId }: { slotId: "landing-cover" | "landing-print" }) {
   await connection();
@@ -32,7 +32,7 @@ export default function Landing() {
   return (
     <main className="min-h-dvh bg-white text-cocoa lg:grid lg:grid-cols-[minmax(0,47%)_minmax(0,1fr)]">
       <div className="relative lg:sticky lg:top-0 lg:h-dvh">
-        <div className="relative aspect-[4/5] w-full bg-tile sm:aspect-[16/11] lg:aspect-auto lg:h-full">
+        <div className="relative aspect-[4/5] w-full bg-cocoa sm:aspect-[16/11] lg:aspect-auto lg:h-full">
           <Suspense>
             <LandingPhoto slotId="landing-cover" />
           </Suspense>
@@ -53,7 +53,7 @@ export default function Landing() {
           className="print absolute right-5 -bottom-20 w-[150px] animate-rise bg-white p-2 pb-8 shadow-[0_18px_40px_rgb(61_41_39/0.22)] sm:right-12 sm:w-[190px] lg:top-[58%] lg:-right-20 lg:bottom-auto lg:w-[230px] lg:p-2.5 lg:pb-10"
           style={{ transform: "rotate(-4deg)", animationDelay: "500ms" }}
         >
-          <Suspense fallback={<div className={`${printPhoto} bg-tile`} />}>
+          <Suspense fallback={<div className={`${printPhoto} bg-cocoa`} />}>
             <LandingPhoto slotId="landing-print" />
           </Suspense>
           <p className="absolute inset-x-0 bottom-1.5 m-0 text-center font-script text-xl sm:text-2xl">she said yes</p>

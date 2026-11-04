@@ -98,6 +98,17 @@ describe("prepareSection", () => {
     expect(prepared.map((member) => member.id)).toEqual(["bernice", "lilian-2", "james-2", "dennis-2"]);
   });
 
+  it("never gives a new member the id of one with a portrait saved in Site photos (Task 19)", () => {
+    const party = [
+      { id: "bernice", name: "Bernice", role: "Bridesmaid" },
+      { id: "", name: "Ama", role: "Usher" },
+      { id: "", name: "Kofi", role: "Usher" },
+    ];
+    const prepared = prepareSection("party", party, { portraitIds: ["ama", "bernice"] }) as Record<string, unknown>[];
+    // Bernice keeps her own id (existing ids never change); a new Ama doesn't get the old Ama's.
+    expect(prepared.map((member) => member.id)).toEqual(["bernice", "ama-2", "kofi"]);
+  });
+
   it("passes through what isn't the expected shape, for the schema to refuse", () => {
     expect(prepareSection("celebrations", "nope")).toBe("nope");
     expect(prepareSection("party", [null, 3])).toEqual([null, 3]);

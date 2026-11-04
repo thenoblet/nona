@@ -44,6 +44,8 @@ export type SlotDefinition = {
   maxWidth: number;
   /** The link preview card this slot's photo is drawn into. */
   preview?: PreviewCardId;
+  /** A photo behind text, which screen readers skip (alt=""): its alt text is kept, never read aloud. */
+  decorative?: true;
 };
 
 const FIXED_SLOTS: SlotDefinition[] = [
@@ -68,9 +70,10 @@ const FIXED_SLOTS: SlotDefinition[] = [
     id: "home-hero",
     group: "home",
     name: "Home hero",
-    where: "Behind your names at the top of the home page, darkened so they stay clear.",
+    where: "Behind your names at the top of the home page, until the wedding weekend ends; darkened so they stay clear.",
     shape: "photo",
     maxWidth: 2880,
+    decorative: true,
   },
   {
     id: "invitation-band",
@@ -79,6 +82,7 @@ const FIXED_SLOTS: SlotDefinition[] = [
     where: "The band of flowers behind the letter to guests.",
     shape: "photo",
     maxWidth: 2880,
+    decorative: true,
   },
   {
     id: "story-met-arch",

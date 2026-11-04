@@ -363,7 +363,7 @@ export function SlotCard({ initial, onDirtyChange }: { initial: SlotView; onDirt
                   Describe the photo before saving.
                 </span>
               ) : (
-                <span className="admin-field-hint">Read aloud to guests who can&apos;t see the photo.</span>
+                <span className="admin-field-hint">{view.altHint}</span>
               )}
             </div>
 

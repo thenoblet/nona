@@ -235,7 +235,7 @@ describe("RSVP settings", () => {
     await closeRsvpsAction(0);
     expect(cards.redrawRsvpCard).not.toHaveBeenCalled();
     await afterResponse();
-    expect(cards.redrawRsvpCard).toHaveBeenCalledOnce();
+    expect(cards.redrawRsvpCard).toHaveBeenCalledExactlyOnceWith("couple@example.com");
     await saveRsvpSettingsAction(settingsForm({ replyBy: "2026-11-25", closedMessage: "Closed.", baseVersion: "1" }));
     await afterResponse();
     expect(cards.redrawRsvpCard).toHaveBeenCalledTimes(2);

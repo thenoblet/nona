@@ -3,12 +3,14 @@ import type { PgBoss } from "pg-boss";
 import { getBoss } from "@/lib/jobs/boss";
 import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { describeError } from "@/lib/log-error";
+import { previewPhotos } from "@/content/preview-photos";
+import { focalFromPosition } from "./focal";
 import { previewSlotId } from "./slots";
-import { readLiveSiteImage } from "./store";
+import { readLiveSiteImage, saveSiteImage } from "./store";
 
 /*
  * Sending the media worker a link preview card to draw (media.card, Ruling CJ): after a save or a
- * restore of a preview slot, and after the RSVP card's words change. The job's data is the saved
+ * restore of a preview slot, and after the RSVP card's words change. The web server never draws one. The job's data is the saved
  * row's id only; the worker draws only a slot's live row, so a job for an older one does nothing.
  * Sent after the response (in after()), never in the request's way: a send that fails is logged,
  * and the card stays as it was until the next save.
@@ -35,14 +37,22 @@ export async function sendCardJobOrLog(siteImageId: string, jobQueue: JobQueue =
 
 /**
  * After the RSVP settings change (the reply-by date, or replies opened or closed): the worker draws
- * the RSVP card again with the new words, when the couple changed its photo. While it shows the
- * built-in photo, the build-time card reads the words itself. Never throws.
+ * the RSVP card again with the new words. The build-time card has the built-in date, so a slot still
+ * on its built-in photo first gets a row of its own (the built-in photo, alt text and focal point,
+ * saved by `savedBy`), and the page's og:image points at the worker's card once it is drawn. A slot
+ * with a live row (the couple's photo, or their edit of the built-in) has it drawn again. Never
+ * throws: a failure is logged, and the next settings change or save of the card's photo tries again.
  */
-export async function redrawRsvpCard(jobQueue: JobQueue = getBoss): Promise<void> {
+export async function redrawRsvpCard(savedBy: string, jobQueue: JobQueue = getBoss): Promise<void> {
+  const slot = previewSlotId("rsvp");
   try {
-    const live = await readLiveSiteImage(previewSlotId("rsvp"));
-    if (live) await sendCardJob(live.id, jobQueue);
+    let live = await readLiveSiteImage(slot);
+    if (!live) {
+      const builtin = previewPhotos.rsvp;
+      live = await saveSiteImage({ slot, mediaId: null, alt: builtin.alt, focal: focalFromPosition(builtin.position), savedBy });
+    }
+    await sendCardJob(live.id, jobQueue);
   } catch (error) {
-    console.error("[site-images] could not queue the RSVP card's redraw; the next save of its photo sends it:", describeError(error));
+    console.error("[site-images] could not queue the RSVP card's redraw; the next settings change sends it:", describeError(error));
   }
 }

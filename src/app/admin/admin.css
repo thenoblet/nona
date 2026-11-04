@@ -589,10 +589,12 @@
   border-top: 1px solid var(--admin-soft); animation: admin-open-down 320ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .admin-focal-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; justify-items: start; align-content: start; min-width: 0; }
+/* A tap sets the point and the page still scrolls over the photo; a mouse or pen drag moves it. */
 .admin .admin-focal {
   position: relative; display: block; max-width: 100%; padding: 0; border: 0; border-radius: 6px; overflow: hidden;
-  background: var(--admin-soft); cursor: crosshair; touch-action: none;
+  background: var(--admin-soft); cursor: crosshair; touch-action: manipulation;
 }
+.admin .admin-focal.is-dragging { touch-action: none; }
 .admin-focal img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
 .admin-focal-dot {
   position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 999px; border: 2px solid #fff;

@@ -8,10 +8,10 @@ import { CARD_FONTS, cardElement, ogSize, type PreviewCard } from "@/lib/preview
 
 /*
  * The build-time link preview cards (the opengraph-image files): the layout in
- * lib/preview-cards/layout.tsx, which the media worker draws too once the couple change a card's
- * photo in the admin (a page's metadata then points og:image at the worker's card instead).
- * Rendered once at build time, or, for a card that shows text saved in the admin (the RSVP card's
- * reply-by date), once per text on its first request.
+ * lib/preview-cards/layout.tsx, with the built-in photos and words. Drawn once, at build time: the
+ * web server never draws a card (Ruling CJ). Every card that differs from the build's (the couple's
+ * photo or focal point, the RSVP card's date or closed replies) is the media worker's
+ * (worker/jobs/card.ts), and the page's metadata points og:image at it.
  */
 
 export { ogSize };
@@ -37,10 +37,14 @@ export async function previewCard(card: PreviewCard) {
   return new Response(await renderJpeg(card), { headers: { "Content-Type": ogContentType } });
 }
 
-/** Cached so the cards are still prerendered at build time despite the async conversion, and drawn once per text. */
+/**
+ * Cached so the cards are still prerendered at build time despite the async conversion. Kept for a
+ * year (the build table's 1y): the server would only draw one again past that, and every deploy
+ * prerenders them afresh.
+ */
 async function renderJpeg(card: PreviewCard) {
   "use cache";
-  cacheLife("max");
+  cacheLife({ revalidate: 365 * 24 * 60 * 60 });
   const png = await new ImageResponse(cardElement(card), { ...ogSize, fonts }).arrayBuffer();
   return new Uint8Array(await sharp(Buffer.from(png)).jpeg({ quality: 82, mozjpeg: true }).toBuffer());
 }
