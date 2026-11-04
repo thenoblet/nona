@@ -231,6 +231,14 @@ function TvDelayCard({ seconds, saved, defaultSeconds }: { seconds: number; save
   const inputId = useId();
   const hintId = useId();
   const [draft, setDraft] = useState(String(seconds));
+  // The saved delay the field last showed. When the page reads a new one (the other admin saved,
+  // and a switch or a save read the page again) and nothing has been typed over the last, the field
+  // follows it, so a Save without looking never puts the old delay back.
+  const [shownSeconds, setShownSeconds] = useState(seconds);
+  if (seconds !== shownSeconds) {
+    setShownSeconds(seconds);
+    if (draft.trim() === String(shownSeconds)) setDraft(String(seconds));
+  }
   const [notice, setNotice] = useState<Notice | null>(null);
   const [saving, startSaving] = useTransition();
   const [resetting, startResetting] = useTransition();
