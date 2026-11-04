@@ -47,8 +47,9 @@ import {
  * - a video that can't be played everywhere, or is long and heavy to stream (conversionWanted), is
  *   queued for a backlog conversion (media.convert, Task 11), sent once; one longer than the worker
  *   converts, or with more frames (tooLongToConvert: WORKER_CONVERT_MAX_SECONDS, and 60 frames a
- *   second of it, Ruling BG), has its conversion failed, `too-long`, at once, and none is sent. A conversion an unhide left queued is sent too (Task 12), at priority 20 when a guest
- *   is waiting for it (a highlight, or a phone's ask).
+ *   second of it, Ruling BG), has its conversion failed, `too-long`, at once, and none is sent. A
+ *   conversion an unhide left queued is sent too (Task 12), at priority 20 when a guest is waiting
+ *   for it (a highlight, or a phone's ask).
  *
  * Both tools run under a memory cap (WORKER_FFMPEG_MEMORY_BYTES) on WORKER_POSTER_THREADS and
  * WORKER_FFMPEG_FILTER_THREADS threads, and read through bounded reconnects. Over the network a

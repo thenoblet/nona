@@ -793,8 +793,8 @@ describe("the sweeper's queries", () => {
    * autoanalyze of a table full of one test's uploads) can sway the plan. The table's row and page
    * counts (pg_class's reltuples and relpages) do outlive it: ANALYZE writes those in place, and a
    * rollback doesn't undo them. They change only the planner's estimates for the tests after it,
-   * and every plan test, here and elsewhere, ANALYZEs its own data first. Sequential scans are put
-   * out of reach, as they would be on a full table.
+   * and every plan test in this file ANALYZEs its own data first. Sequential scans are put out of
+   * reach, as they would be on a full table.
    */
   async function genericPlan(query: { sql: string }): Promise<string> {
     try {
