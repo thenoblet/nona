@@ -13,8 +13,9 @@ import { readLiveSiteImages, type SitePhotoFile } from "./store";
  * database), cached under SITE_IMAGES_TAG. A save in the admin updates the tag (updateTag), so the
  * next request reads afresh. A preview card the worker draws a few seconds after a save reaches
  * pages when the admin, watching it drawn, updates the tag again. Otherwise (the RSVP card drawn
- * after a settings change, which no one watches) the cache's own lifetime brings it: see cachedRead. src/content/images.ts stays the default: a slot with no live row shows its built-in
- * photo, and so does every slot while the database can't be read.
+ * after a settings change, which no one watches) the cache's own lifetime brings it: see cachedRead.
+ * src/content/images.ts stays the default: a slot with no live row shows its built-in photo, and so
+ * does every slot while the database can't be read.
  */
 
 /** A slot's live row, as plain data the cache can keep. */
