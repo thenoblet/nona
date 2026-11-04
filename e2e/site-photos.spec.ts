@@ -218,7 +218,8 @@ test.describe("replacing the site's photos", () => {
 
     // A guest's home page: the photo behind the names, from the worker's sizes on the media domain.
     const guest = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    await guest.goto("/home");
+    // The invitation's version, whose hero this is, whatever today's date makes /home.
+    await guest.goto("/home?mode=before");
     const backdrop = guest.locator("#top img[data-site-photo]");
     await expect(backdrop).toHaveCount(1);
     const src = await backdrop.getAttribute("src");
