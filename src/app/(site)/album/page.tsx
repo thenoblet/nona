@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
 import { getSiteContent } from "@/lib/content/get";
 import { getSiteImages, storedCardImages } from "@/lib/site-images/get";
 import { findGuestById } from "@/lib/data/guests";
-import { ownGuestId, personalLink, readGuestIds } from "@/lib/guests/cookie";
+import type { Guest } from "@/lib/data/types";
+import { ownGuestId, personalLinkOf, readGuestIds } from "@/lib/guests/cookie";
 import type { OwnGuest } from "@/components/album/guestName";
 import { describeError } from "@/lib/log-error";
 import { albumStats, listAlbum } from "@/lib/media/album";
@@ -130,11 +131,19 @@ async function AlbumHead({ searchParams }: Pick<PageProps<"/album">, "searchPara
   return <AlbumHeadBody sharing={{ state: "open", cameraFirst: resolveMode(now, mode) === "day", ownGuest }} />;
 }
 
+/**
+ * The browser's own guest, read once a request (React's cache): the header's "Sharing as" and My
+ * uploads' personal link both need it.
+ */
+const ownGuestOfRequest = cache(async (): Promise<Guest | null> => {
+  const ownId = await ownGuestId();
+  return ownId ? findGuestById(ownId) : null;
+});
+
 /** The browser's own guest and its name, for "Sharing as"; null for none, or when it can't be read. */
 async function readOwnGuest(): Promise<OwnGuest | null> {
   try {
-    const ownId = await ownGuestId();
-    const guest = ownId ? await findGuestById(ownId) : null;
+    const guest = await ownGuestOfRequest();
     return guest ? { id: guest.id, displayName: guest.displayName } : null;
   } catch (error) {
     // The error's name and code only: a query error carries its parameters.
@@ -192,7 +201,7 @@ async function AlbumMedia({ searchParams }: Pick<PageProps<"/album">, "searchPar
     getSiteContent(),
     listAlbum({ viewerGuestIds: guestIds, mine }),
     albumStats(guestIds),
-    guestIds[0] ? personalLink(guestIds[0]) : Promise.resolve(null),
+    ownGuestOfRequest().then((guest) => (guest ? personalLinkOf(guest) : null)),
   ]).catch((error: unknown) => {
     console.error("[album] could not read the album:", describeError(error));
     return null;
