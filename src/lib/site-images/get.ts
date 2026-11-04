@@ -38,10 +38,11 @@ async function cachedRead(): Promise<SiteImages> {
   "use cache";
   cacheTag(SITE_IMAGES_TAG);
   // A card the worker draws with no admin watching (the RSVP card's new words) arrives without a
-  // save's updateTag. While pages are being read, a read at least 15 s old is served once more as
-  // it is and read again behind it, so the new card shows from the next request on; after a quiet
-  // minute the read has expired, and the first request reads afresh. At most one indexed read
-  // every 15 s per server process.
+  // save's updateTag. Next's in-memory cache handler (cache-handlers/default.js) drops an entry
+  // once its `revalidate` has passed and never hands out a stale copy in production (only next dev
+  // does), so the new card shows from the first request 15 s after the read before it: at most one
+  // indexed read every 15 s per server process. `expire` only has to be at least `revalidate`, as
+  // Next requires, and under 5 minutes, so the read is never prerendered; 60 does both, and is kept.
   cacheLife({ stale: 15, revalidate: 15, expire: 60 });
   const rows = await readLiveSiteImages();
   const images: SiteImages = {};
