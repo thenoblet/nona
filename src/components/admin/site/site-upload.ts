@@ -1,5 +1,6 @@
 import { createApiClient, type ApiClient } from "@/components/album/uploader/api";
 import { createPartPut, type PartPut } from "@/components/album/uploader/part-put";
+import { declaredType } from "@/components/album/uploader/state";
 import type { EditorPhoto } from "@/lib/site-images/admin";
 
 /*
@@ -27,12 +28,6 @@ export class SiteUploadError extends Error {
 }
 
 type Session = { mediaId: string; partSize: number; partCount: number };
-
-/** The content type to declare: the file's own, or HEIC by its name when the browser doesn't know it. */
-export function declaredType(file: Pick<File, "type" | "name">): string {
-  if (file.type) return file.type;
-  return /\.(heic|heif)$/i.test(file.name) ? "image/heic" : "application/octet-stream";
-}
 
 function messageOf(body: unknown, fallback: string): string {
   const message = (body as { message?: unknown } | null)?.message;
@@ -67,6 +62,7 @@ export async function uploadSitePhoto(
   const request = (path: string, body?: unknown) =>
     api.request(path, { method: "POST", body, timeoutMs: API_TIMEOUT_MILLISECONDS, signal });
 
+  // The album's own choice of type: an alias put right (image/pjpeg), or the name's when the browser gives none.
   const started = await request(BASE, { filename: file.name, size: file.size, contentType: declaredType(file) });
   if (started.status !== 200) throw new SiteUploadError(messageOf(started.body, "That photo couldn't be sent. Try again."));
   const session = started.body as Session;
