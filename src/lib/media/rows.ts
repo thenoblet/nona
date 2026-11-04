@@ -30,8 +30,12 @@ type UploadEventKind = (typeof UPLOAD_EVENT_KINDS)[number];
 
 /**
  * Whether anyone may see or fetch the item: it isn't hidden, deleted or removed by its uploader.
- * Every presign, download, playback and slideshow path checks this first. An unknown id, or one
- * that isn't a UUID, is not visible.
+ * An unknown id, or one that isn't a UUID, is not visible. No route calls it: each path that
+ * serves an item states the same condition in its own query (visibleItem below, visibleAlbumItems
+ * in album.ts, isVisibleUpload in uploads.ts, visibleRecording in data/wishes.ts,
+ * recordingVisible in admin-wishes.ts, findItemToWithdraw, and moderation's highlight and retry),
+ * so a change to what visible means changes every one of them. The media_removed_is_hidden check
+ * (removed implies hidden) keeps those that test only hidden_at in agreement.
  */
 export async function isVisible(mediaId: string): Promise<boolean> {
   if (!isUuid(mediaId)) return false;

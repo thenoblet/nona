@@ -10,16 +10,14 @@
  *
  * Each photo goes to the private bucket as an original, with its write-once metadata and its
  * manifest, and gets a media row marked uploaded: verified, and waiting for the media worker to
- * make its thumbnails. Until the worker exists the rows stay uploaded (the album shows them to
- * their own guest as "no preview yet"); once it runs, its sweeper picks them up.
+ * make its thumbnails. No job is queued for them: the worker's sweeper (`npm run worker`) queues
+ * them, as it does any row uploaded over 5 minutes ago, when it starts and every 10 minutes after;
+ * until then the album shows them to their own guest as "no preview yet".
  *
  * Running it again adds nothing new. It uses the POSTGRES_* and R2_* settings from the
  * environment, falling back to docker compose's for any that are unset, and refuses anything that
  * isn't on this machine. npm run seed runs it with --conditions=react-server, which lets the
  * server-only modules it shares with the app (the manifest's) load outside Next.
- *
- * Once the media worker exists, this will also queue the photos' processing, so they are ready
- * without waiting for the sweeper, and add sample videos and voice and video wishes.
  */
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";

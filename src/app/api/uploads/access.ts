@@ -6,7 +6,8 @@ import { findUpload, type UploadRow } from "@/lib/media/rows";
 import { UPLOADS_CLOSED_MESSAGE } from "@/lib/media/uploads";
 
 /*
- * What the upload routes share: who the browser is, whether it may touch an upload, and the
+ * What the guest routes share, the upload routes and the album's (album, media, download,
+ * playable, remove, wishes/media): who the browser is, whether it may touch an upload, and the
  * answers they give. Not a route itself (only route.ts files are).
  */
 
