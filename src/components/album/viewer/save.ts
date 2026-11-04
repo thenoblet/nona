@@ -11,6 +11,12 @@ import type { DownloadVariant, Savable } from "./downloads";
 
 /** A fetch that has sent nothing for this long is given up, and the save downloads instead. */
 export const STALL_MILLISECONDS = 30_000;
+/**
+ * The most Save to Photos reads into the page: the file is held whole in memory before the share
+ * menu takes it, and a long video's version (up to about 2 GB) could crash a phone's tab, and an
+ * upload running in it. A bigger file downloads the plain way instead, never read here.
+ */
+export const SAVE_AT_MOST_BYTES = 200 * 1024 * 1024;
 /** Progress is told at most this often: a 100 MB video arrives in thousands of chunks. */
 const PROGRESS_MILLISECONDS = 250;
 /** A HEIC's JPEG, while it is made: asked after every few seconds, for at most two minutes. */
@@ -38,12 +44,19 @@ export class StallError extends Error {
   override name = "StallError";
 }
 
+/** A file past what Save to Photos reads into the page (SAVE_AT_MOST_BYTES), given up unread. */
+export class TooBigToSaveError extends Error {
+  override name = "TooBigToSaveError";
+}
+
 type FetchImplementation = (url: string, init?: RequestInit) => Promise<Response>;
 
 /**
  * Fetches the file at `url` whole, saying how far it has got (a fraction, once its size is known).
  * A plain GET (no Range, no headers of its own, no cache mode), so the buckets' CORS for a simple GET
- * covers it. It gives up with a StallError after STALL_MILLISECONDS with no bytes.
+ * covers it. It gives up with a StallError after STALL_MILLISECONDS with no bytes, and with a
+ * TooBigToSaveError for a file past `maxBytes` (SAVE_AT_MOST_BYTES): at once when its length says
+ * so, or as soon as more than that has arrived.
  */
 export async function fetchWhole(
   url: string,
@@ -51,8 +64,10 @@ export async function fetchWhole(
     signal: AbortSignal;
     onProgress: (fraction: number | null, totalBytes: number | null) => void;
     fetchImplementation?: FetchImplementation;
+    maxBytes?: number;
   },
 ): Promise<Blob> {
+  const maxBytes = options.maxBytes ?? SAVE_AT_MOST_BYTES;
   const controller = new AbortController();
   const onAbort = () => controller.abort(options.signal.reason);
   if (options.signal.aborted) onAbort();
@@ -72,6 +87,10 @@ export async function fetchWhole(
     const response = await fetchFile(url, { signal: controller.signal });
     if (!response.ok) throw new Error(`The file answered ${response.status}`);
     const total = Number(response.headers.get("content-length")) || null;
+    if (total !== null && total > maxBytes) {
+      await response.body?.cancel().catch(() => {});
+      throw new TooBigToSaveError(`The file is ${total} bytes, more than ${maxBytes}`);
+    }
     options.onProgress(total ? 0 : null, total);
     if (!response.body) return await response.blob();
     const reader = response.body.getReader();
@@ -86,6 +105,10 @@ export async function fetchWhole(
       stillHearing();
       chunks.push(value as Uint8Array<ArrayBuffer>);
       received += value.length;
+      if (received > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new TooBigToSaveError(`More than ${maxBytes} bytes arrived`);
+      }
       if (Date.now() - toldAt >= PROGRESS_MILLISECONDS) {
         toldAt = Date.now();
         options.onProgress(total ? Math.min(1, received / total) : null, total);
@@ -149,7 +172,8 @@ export type PreparedSave =
 
 /**
  * Save to Photos' first tap: the file, fetched whole, or, when it won't fetch (no link, the bucket's
- * CORS, a stall), the download to start instead. Photos, HEICs' JPEGs and videos alike.
+ * CORS, a stall, or a file too big to hold in the page), the download to start instead. Photos,
+ * HEICs' JPEGs and videos alike.
  */
 export async function prepareSave(options: {
   mediaId: string;
