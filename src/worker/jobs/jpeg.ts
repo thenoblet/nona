@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
-import { Transform } from "node:stream";
+import { pipeline, Transform } from "node:stream";
 import { findPhotoForJpeg, markFullSizeJpeg, type PhotoForJpeg } from "@/lib/media/rows";
 import { derivedKey } from "@/lib/storage/keys";
 import { headOriginal, putPublicObject } from "@/lib/storage/objects";
@@ -74,8 +74,14 @@ async function makeIn(folder: string, job: MediaJob, photo: PhotoForJpeg, key: s
   const uploadStartedAt = performance.now();
   const counter = byteCounter();
   const source = createReadStream(decoded);
+  // A pipeline, never .pipe(): a stream that fails (a decoded file that isn't a JPEG, a header past
+  // its limit, a read error) destroys the others with its error, so the upload reading the last one
+  // fails, and the job with it. .pipe() forwards no error: it would be thrown with no listener, an
+  // uncaught exception that takes the whole worker down. The upload reports the error, so the
+  // pipeline's own callback has nothing to do.
+  const body = pipeline(source, keepOnlyCaptureTime(photo.capturedAt), counter, () => {});
   try {
-    await putPublicObject(key, source.pipe(keepOnlyCaptureTime(photo.capturedAt)).pipe(counter), "image/jpeg", { signal: job.signal });
+    await putPublicObject(key, body, "image/jpeg", { signal: job.signal });
   } finally {
     source.destroy();
   }
