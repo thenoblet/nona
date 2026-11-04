@@ -20,7 +20,9 @@ export const RATE_LIMITS = {
   album: { burst: 100, refillEveryMs: 500 },
   item: { burst: 100, refillEveryMs: 500 },
   wish: { burst: 100, refillEveryMs: 500 },
-  "text-wish": { burst: 5, refillEveryMs: 60_000 },
+  // Written wishes: 20 at once, then one every 10 s, so a phone passed round a table, or a family
+  // sharing one, never meets it, while a script can't fill the wall.
+  "text-wish": { burst: 20, refillEveryMs: 10_000 },
   link: { burst: 20, refillEveryMs: 1_000 },
   guest: { burst: 20, refillEveryMs: 1_000 },
 } as const satisfies Record<string, { burst: number; refillEveryMs: number }>;
@@ -87,6 +89,22 @@ export function takeToken(guestId: string, bucket: RateLimitBucket, now: number 
   }
   tracked.set(key, fullAt + refillEveryMs);
   return { allowed: true, retryAfterSeconds: 0 };
+}
+
+/**
+ * Gives back one request takeToken allowed, when the work it was for failed (a save the database
+ * refused), as if it had never been taken; a bucket never fills past full. Synchronous, as
+ * takeToken is, so requests running side by side can never take more than the bucket holds: each
+ * takes its turn before its work, and only a failed one gives it back.
+ */
+export function returnToken(guestId: string, bucket: RateLimitBucket, now: number = performance.now()): void {
+  const tracked = trackedBuckets();
+  const key = `${bucket}:${guestId}`;
+  const fullAt = tracked.get(key);
+  if (fullAt === undefined) return;
+  const givenBack = fullAt - RATE_LIMITS[bucket].refillEveryMs;
+  if (givenBack <= Math.floor(now)) tracked.delete(key);
+  else tracked.set(key, givenBack);
 }
 
 /** The 429 for a refused request. The uploader waits out Retry-After and tries again, unseen by the guest. */

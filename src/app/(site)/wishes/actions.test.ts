@@ -21,6 +21,17 @@ vi.mock("next/server", () => ({
   },
 }));
 
+// A save can be made to fail, as a database blip would.
+const saving = vi.hoisted(() => ({ fails: false }));
+vi.mock("@/lib/data/wishes", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/data/wishes")>();
+  return {
+    ...real,
+    addWish: (...args: Parameters<typeof real.addWish>) =>
+      saving.fails ? Promise.reject(Object.assign(new Error("connection lost"), { code: "57P01" })) : real.addWish(...args),
+  };
+});
+
 // The job queue, standing in for pg-boss: every job sent, by queue.
 const queue = vi.hoisted(() => ({ sent: [] as { name: string; data: unknown }[] }));
 vi.mock("@/lib/jobs/boss", async (importOriginal) => {
@@ -83,6 +94,7 @@ beforeEach(async () => {
   router.refresh.mockClear();
   afterTasks.length = 0;
   queue.sent.length = 0;
+  saving.fails = false;
   (globalThis as { __nonaRateLimits?: Map<string, number> }).__nonaRateLimits?.clear();
 });
 
@@ -110,11 +122,26 @@ describe("sendWish: a written wish", () => {
     expect(refused).toMatchObject({
       status: "error",
       values: { message: "One more", signedAs: "Ama" },
-      errors: { form: "You've sent a few wishes just now. Please wait a minute, then send this one." },
+      errors: { form: "You've sent a lot of wishes just now. Please wait a few seconds, then send this one." },
     });
     expect(await getDb().select().from(wishes).where(eq(wishes.message, "One more"))).toEqual([]);
     asGuests((await createGuest("Kofi")).id);
     expect((await sendWish(idle, form({ kind: "text", message: "Another browser", signedAs: "Kofi" }))).status).toBe("sent");
+  });
+
+  it("gives back the turn of a wish that didn't save, so a database blip never uses up the guest's wishes", async () => {
+    const guest = await createGuest("Ama");
+    asGuests(guest.id);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    saving.fails = true;
+    for (let tried = 0; tried < RATE_LIMITS["text-wish"].burst + 2; tried += 1) {
+      expect(await sendWish(idle, form({ kind: "text", message: "Long life!", signedAs: "Ama" }))).toMatchObject({
+        status: "error",
+        errors: { form: "Your wish didn't send. Please try again." },
+      });
+    }
+    saving.fails = false;
+    expect((await sendWish(idle, form({ kind: "text", message: "Long life!", signedAs: "Ama" }))).status).toBe("sent");
   });
 
   it("checks the words and the signature before anything else, so a mistake costs no turn", async () => {
