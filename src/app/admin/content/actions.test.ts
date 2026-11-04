@@ -4,6 +4,7 @@ import { fieldsInOrder, sectionSpecs } from "@/components/admin/content/fields";
 import { contentDefaults } from "@/lib/content/defaults";
 import { listVersions, readSiteContent, saveSection } from "@/lib/content/store";
 import { parseIssues, type SaveState } from "@/lib/admin/content";
+import { saveSiteImage } from "@/lib/site-images/store";
 import { resetDb } from "../../../../test/db";
 
 const cache = vi.hoisted(() => ({ updateTag: vi.fn(), refresh: vi.fn() }));
@@ -140,6 +141,14 @@ describe("saveSectionAction", () => {
 
     expect((await saveSectionAction("party", idle, editorForm(party))).status).toBe("saved");
     expect((await readSiteContent()).party[0]).toEqual({ id: "lilian", name: "Lily Mensah", role: "Maid of honour", lead: true });
+  });
+
+  it("never gives a new member the id of a former member whose portrait is saved in Site photos (Task 19)", async () => {
+    await saveSiteImage({ slot: "party-ama", mediaId: null, alt: "Ama, usher", focal: { x: 0.5, y: 0.4 }, savedBy: "a" });
+    const party = [...contentDefaults.party, { id: "", name: "Ama", role: "Usher" }];
+
+    expect((await saveSectionAction("party", idle, editorForm(party))).status).toBe("saved");
+    expect((await readSiteContent()).party.at(-1)).toEqual({ id: "ama-2", name: "Ama", role: "Usher" });
   });
 
   it("works out the weekday, day and month from the date, whatever was posted", async () => {

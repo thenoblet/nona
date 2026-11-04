@@ -110,7 +110,7 @@ describe("GET /api/media/[id]/download", () => {
     expect(download.headers.get("content-disposition")).toMatch(new RegExp(`^attachment; filename="NONA26-reception-${mediaId.slice(0, 8)}\\.jpg"`));
   });
 
-  it("answers 404 for a hidden, removed or deleted moment, one not ready, a wish, and an id that isn't one", async () => {
+  it("answers 404 for a hidden, removed or deleted moment, one not ready, a wish, a site photo, and an id that isn't one", async () => {
     const ids = [
       await addAlbumItem({ hiddenAt: new Date(), hiddenBy: "noblet" }),
       await addAlbumItem({ hiddenAt: new Date(), hiddenBy: "guest", removedByUploader: true }),
@@ -118,6 +118,8 @@ describe("GET /api/media/[id]/download", () => {
       await addAlbumItem({ status: "uploaded" }),
       await addAlbumItem({ status: "failed", failureReason: "corrupt" }),
       await addAlbumItem({ purpose: "wish", kind: "video" }),
+      // The couple's own site photo (Task 19): its id is in its public sizes' URLs, but its original stays private.
+      await addAlbumItem({ purpose: "site", uploaderName: null }),
       randomUUID(),
       "not-an-id",
     ];

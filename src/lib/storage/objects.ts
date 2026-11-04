@@ -402,3 +402,27 @@ export async function readOriginalStream(key: string, options: CallOptions = {})
   }
   return cutOffWhenIdle(response.Body, DOWNLOAD_IDLE_MILLISECONDS);
 }
+
+/** The most readPublicObject takes into memory: a site photo's largest size is a few MB. */
+const MAX_PUBLIC_READ_BYTES = 32 * 1024 * 1024;
+
+/**
+ * A derived file's bytes from the public bucket, for the worker to draw from (a site photo's size,
+ * for its preview card). Within the 15 s deadline (withDeadline) and at most 32 MB; null when the
+ * file isn't there.
+ */
+export async function readPublicObject(key: string, options?: CallOptions): Promise<Buffer | null> {
+  let response;
+  try {
+    response = await storageClient().send(new GetObjectCommand({ Bucket: publicBucket(), Key: assertDerivedKey(key) }), withDeadline(options));
+  } catch (error) {
+    if (errorName(error) === "NoSuchKey") return null;
+    throw error;
+  }
+  if ((response.ContentLength ?? 0) > MAX_PUBLIC_READ_BYTES) {
+    throw new Error(`The public file ${key} is ${response.ContentLength} bytes, more than readPublicObject takes`);
+  }
+  const bytes = await response.Body?.transformToByteArray();
+  if (!bytes) throw new Error(`The public file ${key} came back with no body`);
+  return Buffer.from(bytes);
+}

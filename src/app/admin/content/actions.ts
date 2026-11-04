@@ -17,6 +17,7 @@ import { contentDefaults } from "@/lib/content/defaults";
 import { CONTENT_TAG } from "@/lib/content/get";
 import type { SectionKey } from "@/lib/content/schema";
 import { restoreVersion, saveSection, type SaveResult } from "@/lib/content/store";
+import { readPortraitMemberIds } from "@/lib/site-images/store";
 
 // Reached by a direct POST as well as from the editor, so each action checks the couple first
 // and trusts nothing it is sent. Both carry the version the page was showing as live: if anyone
@@ -62,7 +63,11 @@ export async function saveSectionAction(key: SectionKey, _previous: SaveState, f
     return refused(RELOAD);
   }
 
-  const result = await saveSection(key, prepareSection(key, value), admin.email, { baseVersion: Number(baseVersion) });
+  // New wedding-party members never take the id of one with a portrait saved in Site photos.
+  const portraitIds = key === "party" ? await readPortraitMemberIds() : [];
+  const result = await saveSection(key, prepareSection(key, value, { portraitIds }), admin.email, {
+    baseVersion: Number(baseVersion),
+  });
   if (!result.ok) return notSaved(result, admin.email);
   return saved(result);
 }

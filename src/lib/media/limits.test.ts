@@ -153,6 +153,21 @@ describe("checkUpload", () => {
     expect(refusal(check({ purpose: "wish" })).error).toBe("unsupported-type");
   });
 
+  it("takes a site photo (the admin's own route, Task 19) as a photo up to 50 MB, and nothing else", () => {
+    expect(check({ purpose: "site", contentType: "image/heic", filename: "IMG_0001.HEIC" })).toMatchObject({
+      ok: true,
+      kind: "photo",
+      contentType: "image/heic",
+      extension: "heic",
+    });
+    expect(refusal(check({ purpose: "site", contentType: "video/mp4", filename: "clip.mp4" }))).toEqual({
+      error: "unsupported-type",
+      message: "Only photos can be used here.",
+    });
+    expect(refusal(check({ purpose: "site", contentType: "image/svg+xml", filename: "logo.svg" })).error).toBe("unsupported-type");
+    expect(refusal(check({ purpose: "site", size: 51 * 1024 * 1024 })).error).toBe("too-large");
+  });
+
   it("Review Focus 5: refuses a PDF, an SVG, text, an empty type and anything else not on the list", () => {
     for (const [contentType, filename] of [
       ["application/pdf", "invitation.pdf"],

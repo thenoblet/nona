@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { couple } from "@/content/wedding";
 import { shareDefaults } from "@/lib/share";
 import { getSiteContent } from "@/lib/content/get";
+import { getSiteImages, storedCardImages } from "@/lib/site-images/get";
 import { findGuestById } from "@/lib/data/guests";
 import { ownGuestId, personalLink, readGuestIds } from "@/lib/guests/cookie";
 import type { OwnGuest } from "@/components/album/guestName";
@@ -21,16 +22,25 @@ import { ShareButtons, ShareButtonsSkeleton, UploadProgress, UploadProvider } fr
 import { SharingClosed } from "@/components/album/SharingClosed";
 import { UploadsClosed } from "@/components/album/UploadsClosed";
 
-export const metadata: Metadata = {
-  title: "Album",
-  description: "The shared photo and video album for Noblet and Nancy's wedding. No app, no sign-up.",
-  openGraph: {
-    ...shareDefaults,
-    title: "Capture it with us · Noblet & Nancy",
-    description: "Share your photos and videos from the wedding, straight from your phone. No app, no sign-up.",
-    url: "/album",
-  },
-};
+/**
+ * Read at request time (as the root layout's metadata already is): once the couple change the album
+ * card's photo in the admin and the worker has drawn it, og:image is that card; until then, the
+ * build-time one from opengraph-image.tsx.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  await connection();
+  return {
+    title: "Album",
+    description: "The shared photo and video album for Noblet and Nancy's wedding. No app, no sign-up.",
+    openGraph: {
+      ...shareDefaults,
+      title: "Capture it with us · Noblet & Nancy",
+      description: "Share your photos and videos from the wedding, straight from your phone. No app, no sign-up.",
+      url: "/album",
+      ...storedCardImages(await getSiteImages(), "album"),
+    },
+  };
+}
 
 /**
  * The shared album the table QR codes open. Phone layout first; the grid widens on larger screens.

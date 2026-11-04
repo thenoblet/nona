@@ -415,6 +415,14 @@ describe("an upload, start to finish", () => {
     expect(await mediaCount()).toBe(0);
   });
 
+  it("refuses purpose site: only the admin's own route makes the site's photos (Task 19)", async () => {
+    await signIn();
+    const response = await start(smallFile({ purpose: "site" as StartBody["purpose"] }));
+    expect(response.status).toBe(400);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await mediaCount()).toBe(0);
+  });
+
   it("names an upload from uploaderName without renaming the browser's guest", async () => {
     const guest = await signIn(browserCookies, "Ama Owusu");
     const session = await startSession(smallFile({ uploaderName: " Ama O. " }));

@@ -16,6 +16,18 @@ vi.mock("next/cache", () => ({
   cacheLife: vi.fn(),
 }));
 
+// after() runs its task once the response is sent: here, when a test says so.
+const afterTasks = vi.hoisted(() => [] as (() => unknown)[]);
+vi.mock("next/server", () => ({ after: (task: () => unknown) => void afterTasks.push(task), connection: async () => {} }));
+
+// The RSVP link preview's redraw (Task 19), watched: the worker's queue is its own module's to test.
+const cards = vi.hoisted(() => ({ redrawRsvpCard: vi.fn(async () => {}) }));
+vi.mock("@/lib/site-images/cards", () => cards);
+
+async function afterResponse(): Promise<void> {
+  await Promise.all(afterTasks.splice(0).map((task) => task()));
+}
+
 const admin = vi.hoisted(() => ({ allowed: false }));
 vi.mock("@/lib/admin/access", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/admin/access")>();
@@ -51,6 +63,8 @@ async function flagged() {
 
 beforeEach(async () => {
   await resetDb();
+  afterTasks.length = 0;
+  cards.redrawRsvpCard.mockClear();
   admin.allowed = false;
   cache.refresh.mockClear();
   cache.updateTag.mockClear();
@@ -215,6 +229,20 @@ describe("RSVP settings", () => {
     expect(cache.updateTag).toHaveBeenCalledOnce();
     expect(cache.updateTag).toHaveBeenCalledWith("site-content");
     expect(cache.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("has the worker draw the RSVP link preview again after the response, its words being the date or 'closed' (Task 19)", async () => {
+    await closeRsvpsAction(0);
+    expect(cards.redrawRsvpCard).not.toHaveBeenCalled();
+    await afterResponse();
+    expect(cards.redrawRsvpCard).toHaveBeenCalledExactlyOnceWith("couple@example.com");
+    await saveRsvpSettingsAction(settingsForm({ replyBy: "2026-11-25", closedMessage: "Closed.", baseVersion: "1" }));
+    await afterResponse();
+    expect(cards.redrawRsvpCard).toHaveBeenCalledTimes(2);
+    // A refused save changes nothing, so nothing is redrawn.
+    await closeRsvpsAction(0);
+    await afterResponse();
+    expect(cards.redrawRsvpCard).toHaveBeenCalledTimes(2);
   });
 
   it("reopening saves a new version with replies open, and updates the site's cache", async () => {

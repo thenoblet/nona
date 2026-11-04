@@ -1,0 +1,2 @@
+ALTER TABLE "site_images" ALTER COLUMN "media_id" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "site_images" ADD CONSTRAINT "site_images_alt_length" CHECK (char_length(btrim("site_images"."alt")) between 1 and 300);

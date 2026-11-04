@@ -1,6 +1,8 @@
 /**
  * Bundles the media worker for its image: src/worker/main.ts into dist/worker/main.mjs, with the
- * Drizzle journal and migrations copied beside it (the worker waits until the database has them).
+ * Drizzle journal and migrations copied beside it (the worker waits until the database has them),
+ * and the link preview cards' fonts and built-in photos in card-assets/ (media.card draws with them,
+ * fetching nothing).
  *
  *   npm run build:worker
  *
@@ -12,7 +14,7 @@
  */
 import { builtinModules } from "node:module";
 import { copyFile, mkdir, readdir, readFile, rm } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
@@ -82,6 +84,25 @@ async function copyMigrations(folder) {
 }
 
 /**
+ * Copies what media.card draws with into `folder`/card-assets: the cards' TTF fonts (src/fonts/og)
+ * as fonts/, and each built-in preview photo under public/ at its own path (src/content/preview-photos.ts).
+ */
+async function copyCardAssets(folder) {
+  const target = join(folder, "card-assets");
+  const fontsSource = join(projectRoot, "src", "fonts", "og");
+  await mkdir(join(target, "fonts"), { recursive: true });
+  const fonts = (await readdir(fontsSource)).filter((name) => name.endsWith(".ttf"));
+  await Promise.all(fonts.map((name) => copyFile(join(fontsSource, name), join(target, "fonts", name))));
+  const source = await readFile(join(projectRoot, "src", "content", "preview-photos.ts"), "utf8");
+  const files = [...source.matchAll(/file: "([a-z0-9/_.-]+\.jpg)"/g)].map((match) => match[1]);
+  if (files.length === 0) throw new Error("Found no built-in preview photos in src/content/preview-photos.ts");
+  for (const file of files) {
+    await mkdir(dirname(join(target, "public", file)), { recursive: true });
+    await copyFile(join(projectRoot, "public", file), join(target, "public", file));
+  }
+}
+
+/**
  * Builds the bundle into `outdir` (emptied first) and returns esbuild's result. Tests pass other
  * entry points (a harness) and folders; the image builds the defaults.
  *
@@ -115,6 +136,7 @@ export async function buildWorker({ entryPoints = { main: "src/worker/main.ts" }
     throw error;
   }
   await copyMigrations(output);
+  await copyCardAssets(output);
   return result;
 }
 

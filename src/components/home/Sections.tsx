@@ -2,11 +2,13 @@ import Image from "next/image";
 import { colours, couple, wedding } from "@/content/wedding";
 import { accraDayAndFullMonth } from "@/lib/accra";
 import type { FaqItem, GiftItem, PartyMember, RsvpSettings, TravelItem } from "@/lib/content/schema";
-import { partyPhotos, photos } from "@/content/images";
+import { photos } from "@/content/images";
+import { portraitOf, type SlotPhoto, type SlotPhotos } from "@/lib/site-images/photos";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { Icon } from "@/components/ui/Icon";
 import { Reveal } from "@/components/ui/Reveal";
+import { SitePhoto } from "@/components/ui/SitePhoto";
 import { SwipeRow } from "@/components/ui/SwipeRow";
 import { Eyebrow, Motto, SectionHeading } from "@/components/ui/Typography";
 import { QrCode } from "@/components/ui/QrCode";
@@ -45,8 +47,7 @@ export function Colours() {
   );
 }
 
-function Portrait({ id, name, role, large }: { id: string; name: string; role: string; large?: boolean }) {
-  const photo = partyPhotos[id];
+function Portrait({ photo, name, role, large }: { photo: SlotPhoto | null; name: string; role: string; large?: boolean }) {
   const box = large ? "h-[200px] w-[150px] sm:h-[234px] sm:w-[176px]" : "h-[160px] w-[120px] sm:h-[186px] sm:w-[140px]";
   return (
     <figure className="m-0 flex flex-col items-center gap-2.5 text-center">
@@ -54,18 +55,10 @@ function Portrait({ id, name, role, large }: { id: string; name: string; role: s
         <div aria-hidden className="oval-ring absolute top-[-8px] left-2 h-full w-full rounded-[50%] border border-ember" />
         {photo ? (
           <div className="absolute inset-0 overflow-hidden rounded-[50%] bg-tile">
-            <Image
-              src={photo.src}
-              alt={photo.alt}
-              fill
-              sizes={large ? "176px" : "140px"}
-              placeholder="blur"
-              className="object-cover"
-              style={{ objectPosition: photo.position }}
-            />
+            <SitePhoto photo={photo} fill blur sizes={large ? "176px" : "140px"} className="object-cover" />
           </div>
         ) : (
-          /* TODO: add the rest of the wedding party's portraits to partyPhotos. */
+          /* Until the couple add this member's portrait in the admin (Site photos). */
           <div role="img" aria-label={`Portrait of ${name}, coming soon`} className="absolute inset-0 rounded-[50%] bg-tile" />
         )}
       </div>
@@ -77,7 +70,7 @@ function Portrait({ id, name, role, large }: { id: string; name: string; role: s
   );
 }
 
-export function Party({ party }: { party: PartyMember[] }) {
+export function Party({ party, photos: slotPhotos }: { party: PartyMember[]; photos: SlotPhotos }) {
   const leads = party.filter((member) => member.lead);
   const rest = party.filter((member) => !member.lead);
   return (
@@ -88,12 +81,12 @@ export function Party({ party }: { party: PartyMember[] }) {
         </Reveal>
         <div className="flex flex-wrap justify-center gap-x-10 gap-y-10 sm:gap-x-18">
           {leads.map((member) => (
-            <Portrait key={member.id} id={member.id} name={member.name} role={member.role} large />
+            <Portrait key={member.id} photo={portraitOf(slotPhotos, member.id)} name={member.name} role={member.role} large />
           ))}
         </div>
         <div className="grid grid-cols-2 justify-items-center gap-x-4 gap-y-10 sm:flex sm:flex-wrap sm:justify-center sm:gap-x-9">
           {rest.map((member) => (
-            <Portrait key={member.id} id={member.id} name={member.name} role={member.role} />
+            <Portrait key={member.id} photo={portraitOf(slotPhotos, member.id)} name={member.name} role={member.role} />
           ))}
         </div>
       </div>

@@ -1,24 +1,16 @@
-import Image from "next/image";
 import { couple } from "@/content/wedding";
 import { accraDayAndFullMonth } from "@/lib/accra";
 import type { RsvpSettings, Story as StoryContent } from "@/lib/content/schema";
-import { photos, type Photo } from "@/content/images";
+import type { SlotPhoto, SlotPhotos } from "@/lib/site-images/photos";
 import { Reveal } from "@/components/ui/Reveal";
+import { SitePhoto } from "@/components/ui/SitePhoto";
 import { Eyebrow, Motto, Ornament } from "@/components/ui/Typography";
 
-/** The letter to guests, floating on a band of white chrysanthemums. */
-export function InvitationLetter({ rsvp }: { rsvp: RsvpSettings }) {
+/** The letter to guests, floating on a band of white chrysanthemums (the admin's "Invitation band"). */
+export function InvitationLetter({ rsvp, band }: { rsvp: RsvpSettings; band: SlotPhoto | null }) {
   return (
     <section aria-label="Your invitation" className="relative overflow-hidden bg-blush px-4 py-20 sm:px-6 sm:py-30">
-      <Image
-        src={photos.chrysanthemumsWide.src}
-        alt=""
-        fill
-        sizes="100vw"
-        placeholder="blur"
-        className="object-cover"
-        style={{ objectPosition: photos.chrysanthemumsWide.position }}
-      />
+      {band ? <SitePhoto photo={band} fill blur decorative sizes="100vw" className="object-cover" /> : null}
       <Reveal className="relative mx-auto flex max-w-[720px] flex-col items-center gap-4.5 rounded-[var(--radius-paper)] bg-white/95 px-6 pt-14 pb-12 text-center shadow-[0_1px_2px_rgb(61_41_39/0.06),0_18px_44px_rgb(61_41_39/0.12)] outline outline-1 -outline-offset-[12px] outline-ember/45 sm:px-11 sm:pt-16 sm:pb-14">
         <p className="m-0 font-serif text-[32px] leading-tight italic sm:text-[40px]">To our dearest family &amp; friends,</p>
         <p className="m-0 text-base leading-[1.75] font-light text-mocha sm:text-[17px]">
@@ -37,21 +29,14 @@ export function InvitationLetter({ rsvp }: { rsvp: RsvpSettings }) {
   );
 }
 
-function Arch({ photo, priority }: { photo: Photo; priority?: boolean }) {
-  return (
-    <Image
-      src={photo.src}
-      alt={photo.alt}
-      sizes="(min-width: 1024px) 320px, 80vw"
-      placeholder="blur"
-      priority={priority}
-      className="arch-photo block aspect-[3/4] h-auto w-full rounded-t-[160px] object-cover"
-      style={{ objectPosition: photo.position }}
-    />
-  );
+function Arch({ photo }: { photo: SlotPhoto | null }) {
+  const arch = "arch-photo block aspect-[3/4] h-auto w-full rounded-t-[160px] object-cover";
+  if (!photo) return <div className={`${arch} bg-tile`} />;
+  return <SitePhoto photo={photo} blur sizes="(min-width: 1024px) 320px, 80vw" className={arch} />;
 }
 
-function SmallPrint({ photo, caption, side }: { photo: Photo; caption: string; side: "left" | "right" }) {
+function SmallPrint({ photo, caption, side }: { photo: SlotPhoto | null; caption: string; side: "left" | "right" }) {
+  if (!photo) return null;
   return (
     <div
       className={`print absolute -bottom-7 w-[110px] bg-white p-1.5 pb-6 shadow-[0_10px_24px_rgb(61_41_39/0.2)] sm:w-[120px] ${
@@ -59,13 +44,7 @@ function SmallPrint({ photo, caption, side }: { photo: Photo; caption: string; s
       }`}
       style={{ transform: `rotate(${side === "left" ? -6 : 6}deg)` }}
     >
-      <Image
-        src={photo.src}
-        alt={photo.alt}
-        sizes="120px"
-        className="block h-[120px] w-full object-cover sm:h-[130px]"
-        style={{ objectPosition: photo.position }}
-      />
+      <SitePhoto photo={photo} sizes="120px" className="block h-[120px] w-full object-cover sm:h-[130px]" />
       <span className="absolute inset-x-0 bottom-1 text-center font-script text-[15px]">{caption}</span>
     </div>
   );
@@ -94,7 +73,7 @@ function Chapter({
   );
 }
 
-export function Story({ story }: { story: StoryContent }) {
+export function Story({ story, photos }: { story: StoryContent; photos: SlotPhotos }) {
   return (
     <section id="story" className="overflow-x-clip bg-white px-5 py-20 sm:px-6 sm:py-26">
       <div className="mx-auto flex max-w-[1200px] flex-col gap-14 sm:gap-16">
@@ -109,8 +88,8 @@ export function Story({ story }: { story: StoryContent }) {
             title={story.met.title}
             photo={
               <>
-                <Arch photo={photos.howWeMetBw} />
-                <SmallPrint photo={photos.earlyDays} caption="the early days" side="left" />
+                <Arch photo={photos["story-met-arch"]} />
+                <SmallPrint photo={photos["story-met-print"]} caption="the early days" side="left" />
               </>
             }
           >
@@ -122,8 +101,8 @@ export function Story({ story }: { story: StoryContent }) {
             title={story.asked.title}
             photo={
               <>
-                <Arch photo={photos.embraceBw} />
-                <SmallPrint photo={photos.bouquet} caption="yes!" side="right" />
+                <Arch photo={photos["story-asked-arch"]} />
+                <SmallPrint photo={photos["story-asked-print"]} caption="yes!" side="right" />
               </>
             }
           >
@@ -137,7 +116,7 @@ export function Story({ story }: { story: StoryContent }) {
           <Chapter
             when={story.forever.when}
             title={story.forever.title}
-            photo={<Arch photo={photos.daisiesWrapped} />}
+            photo={<Arch photo={photos["story-forever-arch"]} />}
           >
             <p className="m-0 max-w-[320px] font-serif text-xl leading-relaxed text-mocha">{story.forever.text}</p>
             <p className="m-0 text-[30px] leading-tight">
@@ -151,8 +130,13 @@ export function Story({ story }: { story: StoryContent }) {
   );
 }
 
+const galleryPrint = "block h-[250px] w-full object-cover sm:h-[290px]";
+
 /** Tilted prints and a black-and-white arch between sections. */
-export function Gallery() {
+export function Gallery({ photos }: { photos: SlotPhotos }) {
+  const left = photos["gallery-left"];
+  const centre = photos["gallery-centre"];
+  const right = photos["gallery-right"];
   return (
     <section aria-label="Gallery" className="overflow-hidden px-5 pt-6 pb-24 sm:px-6 sm:pb-30">
       <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-center gap-7">
@@ -160,21 +144,21 @@ export function Gallery() {
           className="print relative w-[200px] bg-white p-2.5 pb-10 shadow-[var(--shadow-print)] sm:w-[230px]"
           style={{ transform: "rotate(-5deg)" }}
         >
-          <Image src={photos.bouquet.src} alt="Nancy holds her bouquet as they hug" sizes="230px" placeholder="blur" className="block h-[250px] w-full object-cover sm:h-[290px]" style={{ objectPosition: photos.bouquet.position }} />
+          {left ? <SitePhoto photo={left} sizes="230px" blur className={galleryPrint} /> : <div className={`${galleryPrint} bg-tile`} />}
           <span className="absolute inset-x-0 bottom-2 text-center font-script text-[22px]">she said yes</span>
         </Reveal>
-        <Image
-          src={photos.embraceBw.src}
-          alt="Noblet and Nancy embrace, in black and white"
-          sizes="300px"
-          className="arch-photo hidden h-[420px] w-[300px] rounded-t-[150px] object-cover md:block"
-          style={{ objectPosition: photos.embraceBw.position }}
-        />
+        {centre ? (
+          <SitePhoto
+            photo={centre}
+            sizes="300px"
+            className="arch-photo hidden h-[420px] w-[300px] rounded-t-[150px] object-cover md:block"
+          />
+        ) : null}
         <Reveal
           className="print relative w-[200px] bg-white p-2.5 pb-10 shadow-[var(--shadow-print)] sm:w-[230px]"
           style={{ transform: "rotate(4deg)" }}
         >
-          <Image src={photos.kiss.src} alt="Noblet and Nancy share a kiss" sizes="230px" placeholder="blur" className="block h-[250px] w-full object-cover sm:h-[290px]" style={{ objectPosition: photos.kiss.position }} />
+          {right ? <SitePhoto photo={right} sizes="230px" blur className={galleryPrint} /> : <div className={`${galleryPrint} bg-tile`} />}
           <span className="absolute inset-x-0 bottom-2 text-center font-script text-[22px]">under the roses</span>
         </Reveal>
       </div>

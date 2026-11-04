@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import { errorMessage } from "@/lib/log-error";
 import { PLACEHOLDER_MAX_EDGE, placeholderOf, type Placeholder } from "@/lib/media/thumbhash";
+import { ALBUM_LONG_EDGES, SITE_EXTRA_QUALITY, SITE_EXTRA_WIDTHS } from "@/lib/site-images/sizes";
 import { PermanentJobError } from "../queues";
 
 /*
@@ -11,8 +12,8 @@ import { PermanentJobError } from "../queues";
  * - the ThumbHash and average colour, from a copy at most 100 px on its long edge.
  */
 
-export const VIEW = { longEdge: 1600, quality: 80 };
-export const THUMB = { longEdge: 480, quality: 70 };
+export const VIEW = { longEdge: ALBUM_LONG_EDGES.view, quality: 80 };
+export const THUMB = { longEdge: ALBUM_LONG_EDGES.thumb, quality: 70 };
 
 /** A picture sharp can decode, and how. */
 export type StillSource = {
@@ -109,4 +110,32 @@ export async function deriveStills(source: StillSource): Promise<Stills> {
     height: upright.height,
     placeholder: placeholderOf(small.info.width, small.info.height, small.data),
   };
+}
+
+/** A site photo's two extra sizes (Task 19), WebP like the rest. */
+export type SiteSizes = { medium: Buffer; large: Buffer };
+
+/**
+ * A site photo's extra sizes, by width (SITE_EXTRA_WIDTHS): `large`, at most 2400 px wide, so a
+ * full-width photo is sharp on a big screen, and `medium`, 960 px, between the album's two. One
+ * decode, to the large size, upright, and medium from that copy; nothing is ever enlarged. Only the
+ * couple's site photos come here, after deriveStills has checked the picture decodes.
+ */
+export async function deriveSiteSizes(source: StillSource): Promise<SiteSizes> {
+  const pixels = await decoding(source.kind, async () => {
+    const opened = decoder(source.path, source.maxPixels);
+    const upright = source.autoOrient ? opened.autoOrient() : opened;
+    return upright
+      .resize({ width: SITE_EXTRA_WIDTHS.large, withoutEnlargement: true })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+  });
+  const fromLarge = () =>
+    sharp(pixels.data, { raw: { width: pixels.info.width, height: pixels.info.height, channels: pixels.info.channels } });
+  const large = await fromLarge().webp({ quality: SITE_EXTRA_QUALITY }).toBuffer();
+  const medium = await fromLarge()
+    .resize({ width: SITE_EXTRA_WIDTHS.medium, withoutEnlargement: true })
+    .webp({ quality: SITE_EXTRA_QUALITY })
+    .toBuffer();
+  return { medium, large };
 }

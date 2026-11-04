@@ -4,6 +4,7 @@ import { getBoss, JOB_QUEUE_SCHEMA } from "@/lib/jobs/boss";
 import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
 import { errorMessage } from "@/lib/log-error";
 import { workerConfig, type WorkerConfig } from "./config";
+import { cardHandler } from "./jobs/card";
 import { convertHandler } from "./jobs/convert";
 import { jpegHandler } from "./jobs/jpeg";
 import { photoHandler } from "./jobs/photo";
@@ -37,10 +38,11 @@ const jobQueue = () => getBoss(config.queuePoolSize);
  * media.playable, a clean copy of a video's own streams, which the album plays an H.264 video from;
  * media.convert, an H.264 version of a video every phone can play (on demand at once, the backlog
  * while its switch is on); media.wish, a voice or video wish's recording made into what the wishes
- * wall plays (Task 16); and media.visibility, deleting a hidden item's public files and purging them
- * from Cloudflare (CF_PURGE_TOKEN and CF_ZONE_ID). A queue with none yet keeps its jobs waiting,
- * unfailed (Ruling AA), until the release that brings its handler:
- * - media.card: Task 19, a site photo's link-preview card.
+ * wall plays (Task 16); media.visibility, deleting a hidden item's public files and purging them
+ * from Cloudflare (CF_PURGE_TOKEN and CF_ZONE_ID); and media.card, a link preview card drawn once the
+ * couple change its photo (Task 19), with the fonts and built-in photos in the image beside this
+ * file (card-assets/, which scripts/build-worker.mjs copies). A queue with no handler would keep its
+ * jobs waiting, unfailed (Ruling AA), until the release that brings one.
  */
 const handlers: MediaHandlers = {
   [MEDIA_QUEUES.photo]: photoHandler({ heifMemoryBytes: config.heifMemoryBytes, heifThreads: config.threads.heif, jobQueue }),
@@ -76,6 +78,10 @@ const handlers: MediaHandlers = {
     jobQueue,
   }),
   [MEDIA_QUEUES.visibility]: visibilityHandler({}),
+  [MEDIA_QUEUES.card]: cardHandler({
+    fontsFolder: fileURLToPath(new URL("./card-assets/fonts", import.meta.url)),
+    publicFolder: fileURLToPath(new URL("./card-assets/public", import.meta.url)),
+  }),
 };
 
 // libvips' threads for each image, from WORKER_SHARP_THREADS, never the host's core count (Ruling

@@ -1,8 +1,10 @@
-import { couple } from "@/content/wedding";
 import { previewPhotos } from "@/content/images";
+import { contentDefaults } from "@/lib/content/defaults";
 import { loadPhoto, ogContentType, ogSize, previewCard } from "@/lib/og";
+import { PREVIEW_CARD_ALT, previewCardText } from "@/lib/preview-cards/text";
 
-export const alt = `Share your photos and videos in ${couple.groom} and ${couple.bride}'s wedding album`;
+/** The album's built-in card; once the couple change its photo, the page points og:image at the worker's card. */
+export const alt = PREVIEW_CARD_ALT.album;
 export const size = ogSize;
 export const contentType = ogContentType;
 
@@ -10,10 +12,7 @@ const photo = await loadPhoto(previewPhotos.album.file);
 
 export default function Image() {
   return previewCard({
-    eyebrow: `Our shared album · ${couple.hashtag}`,
-    title: ["Capture it", "with us"],
-    line: "Share your photos & videos",
-    sub: "No app · no sign-up",
+    ...previewCardText("album", contentDefaults.rsvp),
     photo,
     position: previewPhotos.album.position,
   });

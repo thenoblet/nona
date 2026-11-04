@@ -1,8 +1,10 @@
-import { couple } from "@/content/wedding";
 import { previewPhotos } from "@/content/images";
+import { contentDefaults } from "@/lib/content/defaults";
 import { loadPhoto, ogContentType, ogSize, previewCard } from "@/lib/og";
+import { PREVIEW_CARD_ALT, previewCardText } from "@/lib/preview-cards/text";
 
-export const alt = `Leave ${couple.groom} and ${couple.bride} a wish`;
+/** The wishes' built-in card; once the couple change its photo, the page points og:image at the worker's card. */
+export const alt = PREVIEW_CARD_ALT.wishes;
 export const size = ogSize;
 export const contentType = ogContentType;
 
@@ -10,10 +12,7 @@ const photo = await loadPhoto(previewPhotos.wishes.file);
 
 export default function Image() {
   return previewCard({
-    eyebrow: "Our guestbook",
-    title: ["Leave us a wish"],
-    line: "Words, a voice note or a short video",
-    sub: `${couple.groom} & ${couple.bride}`,
+    ...previewCardText("wishes", contentDefaults.rsvp),
     photo,
     position: previewPhotos.wishes.position,
   });

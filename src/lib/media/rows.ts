@@ -324,6 +324,8 @@ function awaitsProcessing(mediaId: string, derivedGeneration?: number) {
 /** What a processing job reads of its item before it starts. */
 export type ItemToProcess = {
   id: string;
+  /** The album's, or one of the site's own photos, which get two sizes more (Task 19). */
+  purpose: MediaPurpose;
   originalKey: string;
   startedAt: Date;
   /** The time the phone sent, if any: the fallback when the file has none of its own. */
@@ -344,6 +346,7 @@ export async function findItemToProcess(mediaId: string): Promise<ItemToProcess 
   const [row] = await getDb()
     .select({
       id: media.id,
+      purpose: media.purpose,
       originalKey: media.originalKey,
       startedAt: media.startedAt,
       capturedAt: media.capturedAt,
@@ -529,6 +532,7 @@ export async function findWishToProcess(mediaId: string): Promise<WishToProcess 
   const [row] = await getDb()
     .select({
       id: media.id,
+      purpose: media.purpose,
       kind: media.kind,
       originalKey: media.originalKey,
       startedAt: media.startedAt,

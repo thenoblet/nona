@@ -395,18 +395,23 @@ export const wishes = pgTable(
   ],
 );
 
+/** The longest a site photo's alt text may be, in characters. */
+export const SITE_IMAGE_ALT_MAX_CHARACTERS = 300;
+
 /**
  * The site's own photos, by slot (the home hero, each story photo, each preview card…). Every save
- * adds a row; the newest row per slot is live, and an older one can be restored.
+ * adds a row; the newest row per slot is live, and an older one can be restored (as a new row).
  */
 export const siteImages = pgTable(
   "site_images",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     slot: text("slot").notNull(),
-    mediaId: uuid("media_id")
-      .notNull()
-      .references(() => media.id),
+    /**
+     * The couple's photo, a media row of purpose "site"; null for the slot's built-in photo (from
+     * src/content/images.ts), whose alt text and focal point the couple edited.
+     */
+    mediaId: uuid("media_id").references(() => media.id),
     alt: text("alt").notNull(),
     /** The focal point, 0–1 from the left and the top, used as object-position. */
     focalX: real("focal_x").notNull().default(0.5),
@@ -426,6 +431,8 @@ export const siteImages = pgTable(
       "site_images_focal_point_inside",
       sql`${table.focalX} between 0 and 1 and ${table.focalY} between 0 and 1`,
     ),
+    // Alt text is required to save (Gate B), and short.
+    check("site_images_alt_length", sql`char_length(btrim(${table.alt})) between 1 and ${sql.raw(String(SITE_IMAGE_ALT_MAX_CHARACTERS))}`),
   ],
 );
 

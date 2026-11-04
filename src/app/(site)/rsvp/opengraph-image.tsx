@@ -1,32 +1,24 @@
-import { connection } from "next/server";
-import { couple, wedding } from "@/content/wedding";
 import { previewPhotos } from "@/content/images";
-import { accraDayAndFullMonth } from "@/lib/accra";
-import { getSiteContent } from "@/lib/content/get";
+import { contentDefaults } from "@/lib/content/defaults";
 import { loadPhoto, ogContentType, ogSize, previewCard } from "@/lib/og";
+import { PREVIEW_CARD_ALT, previewCardText } from "@/lib/preview-cards/text";
 
-// The alt text is fixed when the site is built, so it leaves out the date the couple can change.
-export const alt = `Kindly respond to ${couple.groom} and ${couple.bride}'s wedding`;
+// The alt text leaves out the date the couple can change.
+export const alt = PREVIEW_CARD_ALT.rsvp;
 export const size = ogSize;
 export const contentType = ogContentType;
 
 const photo = await loadPhoto(previewPhotos.rsvp.file);
 
 /**
- * Read at request time, so the card shows the reply-by date set in the admin, or that replies have
- * closed. Drawing a card is CPU work that would otherwise belong in the media worker, but it
- * happens in the web server on purpose: the card must change without a deploy, and the build has
- * no database to draw it from. Each wording is drawn once per server process and then served from
- * renderJpeg's cache (see lib/og.tsx), so a crawler's request costs a cache read, not a drawing.
+ * The RSVP card as built, with the built-in reply-by date. Drawn once at build time, like the other
+ * three: the web server never draws a card (Ruling CJ). Once the couple change the RSVP settings (the
+ * date, or closing replies) or the card's photo, the media worker draws the card with the words as
+ * they are (lib/site-images/cards.ts), and the page's og:image points at that one instead.
  */
-export default async function Image() {
-  await connection();
-  const { rsvp } = await getSiteContent();
+export default function Image() {
   return previewCard({
-    eyebrow: "Répondez s'il vous plaît",
-    title: ["Kindly respond"],
-    line: rsvp.open ? `Please reply by ${accraDayAndFullMonth(rsvp.replyBy)}` : "Replies have closed",
-    sub: `${couple.groom} & ${couple.bride} · ${wedding.dateShort}`,
+    ...previewCardText("rsvp", contentDefaults.rsvp),
     photo,
     position: previewPhotos.rsvp.position,
   });

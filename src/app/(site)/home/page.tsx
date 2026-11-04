@@ -5,6 +5,8 @@ import { couple } from "@/content/wedding";
 import { getSiteContent } from "@/lib/content/get";
 import { scheduleItemPlace } from "@/lib/content/place";
 import { liveStreamState, visibleFaq } from "@/lib/content/live";
+import { getSiteImages } from "@/lib/site-images/get";
+import { slotPhotos } from "@/lib/site-images/photos";
 import { isSecondDay, resolveMode, type Mode } from "@/lib/mode";
 import { Autoplay } from "@/components/music/Autoplay";
 import { DockItem } from "@/components/music/Dock";
@@ -40,8 +42,10 @@ export default function HomePage({ searchParams }: PageProps<"/home">) {
 
 async function Home({ searchParams }: { searchParams: PageProps<"/home">["searchParams"] }) {
   await connection();
-  const content = await getSiteContent();
+  const [content, siteImages] = await Promise.all([getSiteContent(), getSiteImages()]);
   const { celebrations, schedule, venues, landmarks, story, party, travel, gifts, rsvp } = content;
+  // The couple's photos where they replaced one (Site photos), the built-in ones elsewhere.
+  const photos = slotPhotos(siteImages, party);
   const faq = visibleFaq(content);
   const params = await searchParams;
   // One moment for the whole page, so the version, the schedule and the live stream agree.
@@ -58,14 +62,14 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
       <main>
         {mode === "before" ? (
           <>
-            <HeroBefore />
-            <InvitationLetter rsvp={rsvp} />
-            <Story story={story} />
+            <HeroBefore photo={photos["home-hero"]} />
+            <InvitationLetter rsvp={rsvp} band={photos["invitation-band"]} />
+            <Story story={story} photos={photos} />
             <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Colours />
-            <Party party={party} />
-            <Gallery />
+            <Party party={party} photos={photos} />
+            <Gallery photos={photos} />
             <Travel travel={travel} />
             <RsvpBand rsvp={rsvp} />
             <Gifts gifts={gifts} />
@@ -79,6 +83,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <HeroDay
               todayLabel={todayLabel}
               now={current ? { title: current.title, place: scheduleItemPlace(current, venues).replace(", Tepa", "") } : null}
+              photo={photos["home-hero"]}
             />
             <LiveAlbum now={now.getTime()} />
             <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule}
@@ -87,9 +92,9 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             />
             <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
-            <Story story={story} />
-            <Party party={party} />
-            <Gallery />
+            <Story story={story} photos={photos} />
+            <Party party={party} photos={photos} />
+            <Gallery photos={photos} />
             <Gifts gifts={gifts} />
             <Faq faq={faq} />
             <DockItem>
@@ -103,8 +108,8 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <HeroAfter />
             <AfterAlbum celebrations={celebrations} />
             <WishesWall />
-            <Story story={story} />
-            <Party party={party} />
+            <Story story={story} photos={photos} />
+            <Party party={party} photos={photos} />
             <Gifts gifts={gifts} />
           </>
         ) : null}

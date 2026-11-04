@@ -40,14 +40,10 @@ export const partyPhotos: Partial<Record<string, Photo>> = {
   dennis: { src: dennis, alt: "Dennis, groomsman", position: "center 30%" },
 };
 
-/**
- * Photos behind the link preview cards (the opengraph-image.tsx files), as paths in
- * public/ because the cards are drawn from the file itself. Swap in the pre-wedding
- * shoot here when the photographer sends it.
+/*
+ * These are the built-in photos. The couple replace any of them from the admin (Site photos,
+ * src/lib/site-images/), and the site shows these until they do.
  */
-export const previewPhotos = {
-  invitation: { file: "images/story/embrace-bw.jpg", position: "center 45%" },
-  rsvp: { file: "images/story/bouquet.jpg", position: "center 20%" },
-  album: { file: "images/story/kiss.jpg", position: "center 30%" },
-  wishes: { file: "images/story/nancy-smile.jpg", position: "center 25%" },
-} satisfies Record<string, { file: string; position: string }>;
+
+/** Photos behind the link preview cards: plain paths in public/, in their own file so the media worker can bundle it. */
+export { previewPhotos } from "./preview-photos";

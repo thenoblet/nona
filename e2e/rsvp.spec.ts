@@ -3,7 +3,7 @@ import { expect, test, type APIRequestContext, type Browser, type BrowserContext
 import postgres from "postgres";
 import sharp from "sharp";
 import { rsvp as builtInRsvp } from "../src/content/wedding";
-import { TEST_DB_ENV } from "../test/env";
+import { TEST_DB_ENV, TEST_STORAGE_ENV } from "../test/env";
 import { TAKE_OVER_LINE } from "./personal-link";
 import { ACCESS_HEADER, accessToken } from "./cloudflare-access";
 
@@ -406,11 +406,57 @@ async function openInvitation(page: Page) {
   await page.getByRole("button", { name: "Break the seal to open your invitation" }).click({ force: true });
 }
 
-async function previewImage(request: APIRequestContext, url: string | undefined): Promise<Buffer> {
-  expect(url).toBeTruthy();
-  const response = await request.get(new URL(url!).pathname + new URL(url!).search);
-  expect(response.headers()["content-type"]).toBe("image/jpeg");
-  return response.body();
+/** The RSVP card's state: card jobs waiting or running, and the card its live row stores. */
+async function rsvpCardState(): Promise<{ pending: number; key: string | null }> {
+  const sql = testDb();
+  try {
+    const [{ pending }] = await sql<{ pending: number }[]>`
+      SELECT count(*)::int AS pending FROM pgboss.job WHERE name = 'media.card' AND state IN ('created', 'retry', 'active')`;
+    const [live] = await sql<{ card_key: string | null }[]>`
+      SELECT card_key FROM site_images WHERE slot = 'preview-rsvp' ORDER BY saved_at DESC, id DESC LIMIT 1`;
+    return { pending, key: live?.card_key ?? null };
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * The RSVP card as it stands before this test changes anything: once no card job is waiting or
+ * running (an earlier test's redraw may still be on its way), the card the live row stores, or null.
+ */
+async function settledRsvpCard(): Promise<string | null> {
+  let previous: string | null | undefined;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const { pending, key } = await rsvpCardState();
+    if (pending === 0 && key === previous) return key;
+    previous = pending === 0 ? key : undefined;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("The RSVP card's jobs never settled");
+}
+
+/**
+ * The card the media worker draws for this test's new words (Ruling CJ: the web server never draws
+ * one): the live row's card once no job is left and it differs from `keyBefore`. Card keys are
+ * content-hashed, so new words always give a new key. The RSVP page's og:image then becomes that
+ * card, once the pages' cached read of the site photos refreshes.
+ */
+async function expectNewRsvpCard(request: APIRequestContext, keyBefore: string | null): Promise<void> {
+  let key: string | null = null;
+  await expect
+    .poll(
+      async () => {
+        const state = await rsvpCardState();
+        key = state.key;
+        return state.pending === 0 && key !== null && key !== keyBefore;
+      },
+      { timeout: 60_000, intervals: [500] },
+    )
+    .toBe(true);
+  expect(key).toMatch(/^derived\/site-preview-rsvp\/[0-9a-f]{16}\/card\.jpg$/);
+  await expect
+    .poll(async () => (await previewTags(request, "/rsvp")).image, { timeout: 90_000, intervals: [1_000] })
+    .toBe(`${TEST_STORAGE_ENV.MEDIA_BASE_URL}/${key}`);
 }
 
 test.describe("the couple's RSVP switch", () => {
@@ -428,7 +474,8 @@ test.describe("the couple's RSVP switch", () => {
     baseURL,
     request,
   }) => {
-    const openCard = await previewImage(request, (await previewTags(request, "/rsvp")).image);
+    test.setTimeout(180_000);
+    const cardBefore = await settledRsvpCard();
     await page.goto("/rsvp");
     await fillReply(page, "E2E Too Late", "e2e-too-late@example.com");
 
@@ -481,7 +528,8 @@ test.describe("the couple's RSVP switch", () => {
     const rsvpPreview = await previewTags(request, "/rsvp");
     expect(rsvpPreview.description).toBe("Replies have closed.");
     expect((await previewTags(request, "/")).description).toMatch(/Tepa, Ashanti\. Replies have closed\.$/);
-    expect((await previewImage(request, rsvpPreview.image)).equals(openCard)).toBe(false);
+    // The card with "Replies have closed" is the worker's, on the media domain.
+    await expectNewRsvpCard(request, cardBefore);
   });
 
   test("reopening: the form is back and a reply is saved", async ({ page, browser, baseURL }) => {
@@ -507,10 +555,11 @@ test.describe("the couple's RSVP switch", () => {
     baseURL,
     request,
   }) => {
+    test.setTimeout(180_000);
     expect((await previewTags(request, "/")).description).toMatch(/Kindly reply by 20 November\.$/);
     const before = await previewTags(request, "/rsvp");
     expect(before.description).toContain("Please reply by 20 November;");
-    const cardBefore = await previewImage(request, before.image);
+    const cardBefore = await settledRsvpCard();
 
     const { panel, done } = await rsvpSettings(browser, baseURL);
     await saveReplyBy(panel, "2026-11-27");
@@ -529,7 +578,8 @@ test.describe("the couple's RSVP switch", () => {
     expect((await previewTags(request, "/", SNAPCHAT)).description).toMatch(/Kindly reply by 27 November\.$/);
     const after = await previewTags(request, "/rsvp");
     expect(after.description).toContain("Please reply by 27 November;");
-    expect((await previewImage(request, after.image)).equals(cardBefore)).toBe(false);
+    // The card with the new date is the worker's, on the media domain.
+    await expectNewRsvpCard(request, cardBefore);
   });
 
   test("a page that saw an older version is told who saved since, and nothing changes", async ({ page, browser, baseURL }) => {

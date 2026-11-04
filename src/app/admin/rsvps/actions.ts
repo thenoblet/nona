@@ -1,12 +1,14 @@
 "use server";
 
 import { refresh, updateTag } from "next/cache";
+import { after } from "next/server";
 import * as zod from "zod";
 import { requireAdmin } from "@/lib/admin/access";
 import { isVersionNumber, newerVersionMessage, RELOAD, type SaveState } from "@/lib/admin/content";
 import { CONTENT_TAG } from "@/lib/content/get";
 import { readSection, saveSection, type SaveResult } from "@/lib/content/store";
 import { keepBoth, keepReply, REPLY_NOT_FOUND, type KeepResult } from "@/lib/data/rsvp";
+import { redrawRsvpCard } from "@/lib/site-images/cards";
 
 // Reached by a direct POST as well as from the page, so each action checks the couple first.
 const replyId = zod.uuid();
@@ -46,12 +48,17 @@ export async function keepBothAction(
 // The RSVP settings. Each change carries the version the page showed: if anyone saved after it,
 // nothing changes and the couple are told who did and when, as on the Site text pages.
 
-/** After a save, guests' pages and the reply action read the new settings at once, and this page re-renders. */
+/**
+ * After a save, guests' pages and the reply action read the new settings at once, and this page
+ * re-renders. The RSVP link preview shows the reply-by date or that replies closed, so the worker
+ * draws it again with the new words (after the response).
+ */
 function settingsSaved(result: SaveResult, adminEmail: string): SaveState {
   if (!result.ok) {
     return { status: "error", errors: result.newer ? [newerVersionMessage(result.newer, adminEmail)] : result.errors };
   }
   updateTag(CONTENT_TAG);
+  after(() => redrawRsvpCard(adminEmail));
   refresh();
   return { status: "saved", errors: [], version: result.version };
 }
