@@ -137,9 +137,35 @@ export async function readSiteImages(slot: string): Promise<SiteImageRow[]> {
   return rows.map(toRow);
 }
 
-/** The slot's live row, or null while it shows its built-in photo unedited. */
-export async function readLiveSiteImage(slot: string): Promise<SiteImageRow | null> {
-  const [row] = await getDb()
+type Database = ReturnType<typeof getDb>;
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+/** The text a slot's advisory lock is keyed by (hashtextextended of it): exported for its test. */
+export function slotLockName(slot: string): string {
+  return `site_images:${slot}`;
+}
+
+/**
+ * Runs `work` in a short transaction holding the slot's lock, so writes to one slot happen one at a
+ * time: each row's saved_at is the clock once the lock is held, so the newest row is the last
+ * written, and a "save only if none" decision can't be overtaken by a save in between. Nothing but
+ * database statements runs inside.
+ */
+async function underSlotLock<TResult>(slot: string, work: (transaction: Transaction) => Promise<TResult>): Promise<TResult> {
+  return getDb().transaction(async (transaction) => {
+    await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${slotLockName(slot)}, 0))`);
+    return work(transaction);
+  });
+}
+
+/** The saved time of a row written under its slot's lock: the test's own, or the clock now. */
+function savedAtOf(now: Date | undefined) {
+  return now ?? sql`clock_timestamp()`;
+}
+
+/** The slot's live row, read with these queries (a transaction's, or the pool's). */
+async function liveRowOf(queries: Database | Transaction, slot: string): Promise<SiteImageRow | null> {
+  const [row] = await queries
     .select(rowColumns)
     .from(siteImages)
     .leftJoin(media, eq(media.id, siteImages.mediaId))
@@ -147,6 +173,11 @@ export async function readLiveSiteImage(slot: string): Promise<SiteImageRow | nu
     .orderBy(desc(siteImages.savedAt), desc(siteImages.id))
     .limit(1);
   return row ? toRow(row) : null;
+}
+
+/** The slot's live row, or null while it shows its built-in photo unedited. */
+export async function readLiveSiteImage(slot: string): Promise<SiteImageRow | null> {
+  return liveRowOf(getDb(), slot);
 }
 
 /** A row by its id. */
@@ -170,17 +201,12 @@ export type NewSiteImage = {
   savedBy: string;
 };
 
-/**
- * Saves a slot: a new row, live at once. A save that keeps the live row's photo and focal point
- * (an edit of its alt text) keeps its preview card too, so the card never drops back to the
- * built-in one while the worker would draw the same picture again. `now` defaults to the
- * database's clock; a test passes its own to order saves.
- */
-export async function saveSiteImage(image: NewSiteImage, now?: Date): Promise<SiteImageRow> {
+/** Inserts a slot's new row, inside its lock: returns the row's id. */
+async function insertRow(transaction: Transaction, image: NewSiteImage, now: Date | undefined): Promise<string> {
   const focal = { x: clampFraction(image.focal.x), y: clampFraction(image.focal.y) };
-  const live = await readLiveSiteImage(image.slot);
+  const live = await liveRowOf(transaction, image.slot);
   const samePicture = live !== null && live.mediaId === image.mediaId && live.focal.x === focal.x && live.focal.y === focal.y;
-  const [inserted] = await getDb()
+  const [inserted] = await transaction
     .insert(siteImages)
     .values({
       slot: image.slot,
@@ -190,12 +216,40 @@ export async function saveSiteImage(image: NewSiteImage, now?: Date): Promise<Si
       focalY: focal.y,
       cardKey: samePicture ? live.cardKey : null,
       savedBy: image.savedBy,
-      ...(now ? { savedAt: now } : {}),
+      savedAt: savedAtOf(now),
     })
     .returning({ id: siteImages.id });
-  const saved = await readSiteImage(inserted.id);
+  return inserted.id;
+}
+
+async function readSaved(id: string): Promise<SiteImageRow> {
+  const saved = await readSiteImage(id);
   if (!saved) throw new Error("A saved site image wasn't there to read back");
   return saved;
+}
+
+/**
+ * Saves a slot: a new row, live at once, under the slot's lock. A save that keeps the live row's
+ * photo and focal point (an edit of its alt text) keeps its preview card too, so the card never
+ * drops back to the built-in one while the worker would draw the same picture again. `now` defaults
+ * to the database's clock once the lock is held; a test passes its own to order saves.
+ */
+export async function saveSiteImage(image: NewSiteImage, now?: Date): Promise<SiteImageRow> {
+  return readSaved(await underSlotLock(image.slot, (transaction) => insertRow(transaction, image, now)));
+}
+
+/**
+ * Saves the row only if the slot has none at all, deciding under the slot's lock, so a save of the
+ * couple's own photo landing at the same moment is never overtaken: whichever comes second is
+ * newer. Returns the slot's live row, this one or the one already there (the RSVP card's redraw
+ * gives a slot still on its built-in photo a row of its own this way).
+ */
+export async function saveSiteImageUnlessSaved(image: NewSiteImage): Promise<SiteImageRow> {
+  const id = await underSlotLock(image.slot, async (transaction) => {
+    const live = await liveRowOf(transaction, image.slot);
+    return live ? live.id : insertRow(transaction, image, undefined);
+  });
+  return readSaved(id);
 }
 
 /**
@@ -205,20 +259,23 @@ export async function saveSiteImage(image: NewSiteImage, now?: Date): Promise<Si
 export async function restoreSiteImage(id: string, savedBy: string, now?: Date): Promise<SiteImageRow | null> {
   const earlier = await readSiteImage(id);
   if (!earlier) return null;
-  const [inserted] = await getDb()
-    .insert(siteImages)
-    .values({
-      slot: earlier.slot,
-      mediaId: earlier.mediaId,
-      alt: earlier.alt,
-      focalX: earlier.focal.x,
-      focalY: earlier.focal.y,
-      cardKey: earlier.cardKey,
-      savedBy,
-      ...(now ? { savedAt: now } : {}),
-    })
-    .returning({ id: siteImages.id });
-  return readSiteImage(inserted.id);
+  const insertedId = await underSlotLock(earlier.slot, async (transaction) => {
+    const [inserted] = await transaction
+      .insert(siteImages)
+      .values({
+        slot: earlier.slot,
+        mediaId: earlier.mediaId,
+        alt: earlier.alt,
+        focalX: earlier.focal.x,
+        focalY: earlier.focal.y,
+        cardKey: earlier.cardKey,
+        savedBy,
+        savedAt: savedAtOf(now),
+      })
+      .returning({ id: siteImages.id });
+    return inserted.id;
+  });
+  return readSiteImage(insertedId);
 }
 
 /** Whether the row is its slot's newest: only the live row's card is drawn (a newer save sends its own job). */

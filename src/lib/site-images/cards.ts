@@ -6,7 +6,7 @@ import { describeError } from "@/lib/log-error";
 import { previewPhotos } from "@/content/preview-photos";
 import { focalFromPosition } from "./focal";
 import { previewSlotId } from "./slots";
-import { readLiveSiteImage, saveSiteImage } from "./store";
+import { saveSiteImageUnlessSaved } from "./store";
 
 /*
  * Sending the media worker a link preview card to draw (media.card, Ruling CJ): after a save or a
@@ -46,11 +46,16 @@ export async function sendCardJobOrLog(siteImageId: string, jobQueue: JobQueue =
 export async function redrawRsvpCard(savedBy: string, jobQueue: JobQueue = getBoss): Promise<void> {
   const slot = previewSlotId("rsvp");
   try {
-    let live = await readLiveSiteImage(slot);
-    if (!live) {
-      const builtin = previewPhotos.rsvp;
-      live = await saveSiteImage({ slot, mediaId: null, alt: builtin.alt, focal: focalFromPosition(builtin.position), savedBy });
-    }
+    // The built-in row only if the slot has none: decided under the slot's lock, so the couple's own
+    // photo, saved at the same moment, is never overtaken by it.
+    const builtin = previewPhotos.rsvp;
+    const live = await saveSiteImageUnlessSaved({
+      slot,
+      mediaId: null,
+      alt: builtin.alt,
+      focal: focalFromPosition(builtin.position),
+      savedBy,
+    });
     await sendCardJob(live.id, jobQueue);
   } catch (error) {
     console.error("[site-images] could not queue the RSVP card's redraw; the next settings change sends it:", describeError(error));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { restoreSlotAction, saveSlotAction, slotStateAction, type SlotActionResult } from "@/app/admin/photos/site/actions";
 import type { EditorPhoto, SlotView } from "@/lib/site-images/admin";
 import { clampFraction, objectPosition, type Focal } from "@/lib/site-images/focal";
@@ -63,6 +63,8 @@ export function SlotCard({ initial, onDirtyChange }: { initial: SlotView; onDirt
   const [upload, setUpload] = useState<Upload>(null);
   const [drawing, setDrawing] = useState(false);
   const [dragging, setDragging] = useState(false);
+  /** A finger went down on the picker: its tap's click sets the point, unless a scroll takes the gesture over. */
+  const touchTap = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const altField = useRef<HTMLTextAreaElement>(null);
   const toggleButton = useRef<HTMLButtonElement>(null);
@@ -122,9 +124,29 @@ export function SlotCard({ initial, onDirtyChange }: { initial: SlotView; onDirt
     markDirty();
   }
 
-  function focalFromPointer(event: PointerEvent<HTMLButtonElement>) {
+  function focalFromPointer(event: PointerEvent<HTMLButtonElement> | MouseEvent<HTMLButtonElement>) {
     const box = event.currentTarget.getBoundingClientRect();
     placeFocal({ x: (event.clientX - box.left) / box.width, y: (event.clientY - box.top) / box.height });
+  }
+
+  /*
+   * A mouse or pen sets the point as it goes down and drags it. A finger sets it only on a tap (the
+   * click a tap ends in), never as it goes down: on a phone the page scrolls over the photo, and a
+   * scroll that starts on it fires a pointerdown, then a pointercancel and no click.
+   */
+  function onFocalPointerDown(event: PointerEvent<HTMLButtonElement>) {
+    touchTap.current = event.pointerType === "touch";
+    if (touchTap.current) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+    focalFromPointer(event);
+  }
+
+  function onFocalClick(event: MouseEvent<HTMLButtonElement>) {
+    // A click that no finger began (a mouse's, already handled, or the keyboard's Enter) sets nothing.
+    if (!touchTap.current) return;
+    touchTap.current = false;
+    focalFromPointer(event);
   }
 
   function onFocalKey(event: KeyboardEvent<HTMLButtonElement>) {
@@ -323,16 +345,16 @@ export function SlotCard({ initial, onDirtyChange }: { initial: SlotView; onDirt
               className={`admin-focal${dragging ? " is-dragging" : ""}`}
               style={{ width: focalWidth, aspectRatio: ratio }}
               aria-label={focalLabel(focal)}
-              onPointerDown={(event) => {
-                event.currentTarget.setPointerCapture(event.pointerId);
-                setDragging(true);
-                focalFromPointer(event);
-              }}
+              onPointerDown={onFocalPointerDown}
               onPointerMove={(event) => {
                 if (dragging) focalFromPointer(event);
               }}
               onPointerUp={() => setDragging(false)}
-              onPointerCancel={() => setDragging(false)}
+              onPointerCancel={() => {
+                setDragging(false);
+                touchTap.current = false;
+              }}
+              onClick={onFocalClick}
               onKeyDown={onFocalKey}
             >
               {/* eslint-disable-next-line @next/next/no-img-element -- the worker's own size, never Next's optimiser */}

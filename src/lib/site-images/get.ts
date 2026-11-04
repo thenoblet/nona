@@ -12,8 +12,8 @@ import { readLiveSiteImages, type SitePhotoFile } from "./store";
  * The site photos as guest pages read them: getSiteImages(), after connection() (the build has no
  * database), cached under SITE_IMAGES_TAG. A save in the admin updates the tag (updateTag), so the
  * next request reads afresh. A preview card the worker draws a few seconds after a save reaches
- * pages when the admin, watching it drawn, updates the tag again, or within the cache's 15 seconds
- * otherwise (the RSVP card drawn after a settings change, which no one watches). src/content/images.ts stays the default: a slot with no live row shows its built-in
+ * pages when the admin, watching it drawn, updates the tag again. Otherwise (the RSVP card drawn
+ * after a settings change, which no one watches) the cache's own lifetime brings it: see cachedRead. src/content/images.ts stays the default: a slot with no live row shows its built-in
  * photo, and so does every slot while the database can't be read.
  */
 
@@ -36,9 +36,12 @@ export type SiteImages = Record<string, LiveSlot>;
 async function cachedRead(): Promise<SiteImages> {
   "use cache";
   cacheTag(SITE_IMAGES_TAG);
-  // 15 s, so a card the worker draws with no admin watching (the RSVP card's new words) arrives soon:
-  // one indexed read every 15 s per server process at most.
-  cacheLife({ stale: 15, revalidate: 15, expire: 24 * 60 * 60 });
+  // A card the worker draws with no admin watching (the RSVP card's new words) arrives without a
+  // save's updateTag. While pages are being read, a read at least 15 s old is served once more as
+  // it is and read again behind it, so the new card shows from the next request on; after a quiet
+  // minute the read has expired, and the first request reads afresh. At most one indexed read
+  // every 15 s per server process.
+  cacheLife({ stale: 15, revalidate: 15, expire: 60 });
   const rows = await readLiveSiteImages();
   const images: SiteImages = {};
   for (const row of rows) {

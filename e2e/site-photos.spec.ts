@@ -145,6 +145,38 @@ test("with nothing replaced, the landing cover and print render exactly as befor
   await guest.close();
 });
 
+test("on a phone, a tap sets the focal point, and a scroll that starts on the photo leaves it", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    extraHTTPHeaders: { [ACCESS_HEADER]: await accessToken() },
+  });
+  const page = await context.newPage();
+  await page.goto("/admin/photos/site");
+  const cover = slotOf(page, "Landing cover");
+  await cover.getByRole("button", { name: "Edit Landing cover" }).tap();
+  const picker = cover.getByRole("button", { name: /^Focal point/ });
+  await picker.scrollIntoViewIfNeeded();
+  const box = (await picker.boundingBox())!;
+  await picker.tap({ position: { x: box.width * 0.2, y: box.height * 0.2 } });
+  await expect(picker).toHaveAttribute("aria-label", /20% across and 20% down/);
+
+  // A finger drags up from the middle of the photo: the page scrolls, and the point stays put.
+  const session = await context.newCDPSession(page);
+  const scrolledBefore = await page.evaluate(() => window.scrollY);
+  const start = { x: box.x + box.width * 0.6, y: box.y + box.height * 0.7 };
+  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
+  for (let step = 1; step <= 10; step += 1) {
+    await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: start.x, y: start.y - step * 25 }] });
+  }
+  await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(scrolledBefore);
+  await expect(picker).toHaveAttribute("aria-label", /20% across and 20% down/);
+  await context.close();
+});
+
 test.describe("replacing the site's photos", () => {
   test.describe.configure({ timeout: 180_000 });
 
