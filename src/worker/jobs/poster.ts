@@ -46,8 +46,8 @@ import {
  *   video from;
  * - a video that can't be played everywhere, or is long and heavy to stream (conversionWanted), is
  *   queued for a backlog conversion (media.convert, Task 11), sent once; one longer than the worker
- *   converts (WORKER_CONVERT_MAX_SECONDS) has its conversion failed, `too-long`, at once, and none
- *   is sent. A conversion an unhide left queued is sent too (Task 12), at priority 20 when a guest
+ *   converts, or with more frames (tooLongToConvert: WORKER_CONVERT_MAX_SECONDS, and 60 frames a
+ *   second of it, Ruling BG), has its conversion failed, `too-long`, at once, and none is sent. A conversion an unhide left queued is sent too (Task 12), at priority 20 when a guest
  *   is waiting for it (a highlight, or a phone's ask).
  *
  * Both tools run under a memory cap (WORKER_FFMPEG_MEMORY_BYTES) on WORKER_POSTER_THREADS and
@@ -109,7 +109,7 @@ export type PosterOptions = {
   filterThreads: number;
   /** The job queue the video's conversion is sent to. */
   jobQueue: () => Promise<Pick<PgBoss, "send">>;
-  /** The longest video converted (WORKER_CONVERT_MAX_SECONDS): a longer one's conversion is failed, `too-long`, and never queued. */
+  /** The longest video converted (WORKER_CONVERT_MAX_SECONDS): a longer one's conversion, or one with more frames (Ruling BG), is failed, `too-long`, and never queued. */
   convertMaxSeconds: number;
 };
 
@@ -261,8 +261,8 @@ export function conversionWanted(facts: Pick<VideoFacts, "browserPlayable" | "du
  * Sends the video's clean copy's job (media.playable) once it is ready, naming the generation its
  * files are for (sweeper step 5 tells a job of this generation from an earlier one's by it). Never
  * throws: a copy whose job can't be sent leaves the video ready with its poster (and its
- * conversion, where it has one), and the sweeper's step 5 sends it within 10 minutes; the failure
- * is logged, with ids only.
+ * conversion, where it has one), and the sweeper's step 5 sends it within 15 minutes (once it is
+ * 5 minutes old, at the next of its 10-minute sweeps); the failure is logged, with ids only.
  */
 async function sendPlayableCopy(mediaId: string, generation: number, options: PosterOptions): Promise<void> {
   try {
