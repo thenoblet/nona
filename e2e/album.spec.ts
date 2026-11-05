@@ -485,7 +485,8 @@ test.describe("a viewer whose script can't be fetched", () => {
       const page = await context.newPage();
       const refused = await refuseViewerScript(page, () => true);
       await page.goto("/home?mode=after");
-      const album = page.locator("#album");
+      // Visible only: until the streamed section swaps in, a hidden copy of it can sit beside it.
+      const album = page.locator("#album").filter({ visible: true });
       await expect(album.getByRole("heading", { name: "Every moment" })).toBeVisible();
       await page.evaluate(() => ((window as unknown as { samePage: boolean }).samePage = true));
 
