@@ -16,7 +16,8 @@
     "test:worker": "vitest run --config vitest.worker.config.ts",
     "email:preview": "email dev --dir src/emails --port 3030",
     "storage:init": "tsx scripts/storage-init.ts",
-    "seed": "tsx --conditions=react-server scripts/seed-local.ts"
+    "seed": "tsx --conditions=react-server scripts/seed-local.ts",
+    "portrait": "tsx scripts/party-portrait.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1160.0",
