@@ -220,7 +220,8 @@ test.describe("replacing the site's photos", () => {
     const guest = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     // The invitation's version, whose hero this is, whatever today's date makes /home.
     await guest.goto("/home?mode=before");
-    const backdrop = guest.locator("#top img[data-site-photo]");
+    // Visible only: until the streamed page swaps in, a hidden copy of it can sit beside it.
+    const backdrop = guest.locator("#top img[data-site-photo]").filter({ visible: true });
     await expect(backdrop).toHaveCount(1);
     const src = await backdrop.getAttribute("src");
     expect(src?.startsWith(`${TEST_STORAGE_ENV.MEDIA_BASE_URL}/derived/${row.media_id}/`)).toBe(true);
