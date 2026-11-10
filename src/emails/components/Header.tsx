@@ -3,12 +3,13 @@ import { colours, fonts } from "./theme";
 
 /** The banner's size as shown; the file is twice that for sharp screens. */
 const WIDTH = 600;
-const HEIGHT = 360;
+const HEIGHT = 430;
 
 /**
- * The header: the pre-wedding shoot with "Sat 5 Dec" and 05·12 in glass behind the couple, from
- * `design/email-header` and served from the site. Where images are blocked, the blush ground and
- * the alt text stand in for it. Left out of the plain-text part.
+ * The header: the pre-wedding shoot with "Sat 5 Dec" and 05·12 in glass behind the couple, fading
+ * into the blush page at its sides and bottom, from `design/email-header` and served from the site.
+ * Where images are blocked, the blush ground and the alt text stand in for it. Left out of the
+ * plain-text part.
  */
 export function Header({ siteUrl }: { siteUrl: string }) {
   return (
