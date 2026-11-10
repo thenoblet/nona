@@ -4,7 +4,7 @@
 // The header is the first thing a guest's phone downloads, often on mobile data, so it is kept
 // small: a lossless capture, then a progressive JPEG (it draws in full at low detail first and
 // sharpens as it arrives) at the quality of the original capture, with mozjpeg doing the
-// shrinking. About 80 KB at 1200 x 1040, twice the size it is shown at for sharp screens.
+// shrinking. 1200 x 860, twice the size it is shown at for sharp screens.
 import { chromium } from "playwright";
 import sharp from "sharp";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,7 @@ const output = `${here}../../public/email/header.jpg`;
 mkdirSync(`${here}../../public/email`, { recursive: true });
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1200, height: 1080 } });
+const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
 await page.goto(`file://${here}header.html`);
 await page.evaluate(() => document.fonts.ready);
 const capture = await page.locator(".header").screenshot({ type: "png" });

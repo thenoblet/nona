@@ -11,6 +11,7 @@ import lilian from "../../public/images/party/lilian.jpg";
 import james from "../../public/images/party/james.jpg";
 import dennis from "../../public/images/party/dennis.jpg";
 import afrifa from "../../public/images/party/afrifa.jpg";
+import homeHero from "../../public/images/home/hero.jpg";
 
 export type Photo = { src: StaticImageData; alt: string; position?: string };
 
@@ -33,6 +34,19 @@ export const photos = {
     position: "center 45%",
   },
 } satisfies Record<string, Photo>;
+
+/**
+ * The photo behind the names at the top of the home page. To change it, replace
+ * public/images/home/hero.jpg with the new photo under the same name: nothing else to edit.
+ *
+ * - A landscape JPEG, about 2000 to 3000 px wide and under 3 MB, so it loads quickly on a phone.
+ * - Faces in the upper middle: phones show a tall slice from the centre, cropped from the
+ *   `position` below (across, then down). If a new photo needs a different crop, set its focal
+ *   point in Admin › Site photos › Home hero ("Using the built-in photo", then the focal point);
+ *   no code needed. A photo uploaded there instead replaces this one without a deploy.
+ * - It sits under a cocoa wash with the names over it, so it is never read aloud.
+ */
+export const homeHeroPhoto: Photo = { src: homeHero, alt: "Noblet and Nancy", position: "center 28%" };
 
 /** Wedding party portraits, keyed by the member `id` in `party` (src/content/wedding.ts). */
 export const partyPhotos: Partial<Record<string, Photo>> = {

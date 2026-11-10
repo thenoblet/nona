@@ -186,10 +186,11 @@ test.describe("replacing the site's photos", () => {
     await page.goto("/admin/photos/site");
     await expect(page.getByRole("link", { name: "Site photos" })).toHaveAttribute("aria-current", "page");
     const hero = slotOf(page, "Home hero");
-    await expect(hero.getByText("No photo yet", { exact: true })).toBeVisible();
+    // The pre-wedding shoot until the couple choose another.
+    await expect(hero.getByText("Using the built-in photo")).toBeVisible();
 
     const chooser = page.waitForEvent("filechooser");
-    await hero.getByRole("button", { name: "Add a photo for Home hero" }).click();
+    await hero.getByRole("button", { name: "Replace Home hero" }).click();
     await (await chooser).setFiles({ name: "pre-wedding-lake.jpg", mimeType: "image/jpeg", buffer: await lakePhoto() });
     // Sent straight to storage, then made ready by the worker: the editor opens on it, not yet saved.
     const alt = hero.getByLabel("Alt text");

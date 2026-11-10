@@ -3,12 +3,13 @@ import { colours, fonts } from "./theme";
 
 /** The banner's size as shown; the file is twice that for sharp screens. */
 const WIDTH = 600;
-const HEIGHT = 520;
+const HEIGHT = 430;
 
 /**
- * The header: the couple's embrace, fading into the blush page under "Noblet & Nancy" and the
- * dates, drawn from `design/email-header` and served from the site. Where images are blocked, the
- * blush ground and the alt text stand in for it. Left out of the plain-text part.
+ * The header: the pre-wedding shoot with "Sat 5 Dec" and 05·12 in glass behind the couple, fading
+ * into the blush page at its sides and bottom, from `design/email-header` and served from the site.
+ * Where images are blocked, the blush ground and the alt text stand in for it. Left out of the
+ * plain-text part.
  */
 export function Header({ siteUrl }: { siteUrl: string }) {
   return (
@@ -17,7 +18,7 @@ export function Header({ siteUrl }: { siteUrl: string }) {
         src={`${siteUrl}/email/header.jpg`}
         width={WIDTH}
         height={HEIGHT}
-        alt="Noblet & Nancy · 5 & 6 December 2026 · Tepa"
+        alt="Noblet & Nancy · Saturday 5 December 2026 · Tepa"
         style={{
           display: "block",
           width: "100%",

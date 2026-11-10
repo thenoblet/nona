@@ -1,43 +1,16 @@
 <!doctype html>
-<!-- Source of public/email/header.jpg (1200x1040, shown at 600x520), the RSVP email's header.
-     Two moments: the bouquet hug in colour on the left melts into the embrace on the right, toned
-     in the palette (cocoa shadows, blush highlights), and both fade into the email's blush page
-     (#F7EFEA), so the letter starts where the pictures end. Render it with render.mjs. --><html><head><meta charset="utf-8"><style>
-@font-face { font-family: Pinyon; src: url(../../src/fonts/pinyon-script-latin-400-normal.woff2); }
-@font-face { font-family: Jost; font-weight: 500; src: url(../../src/fonts/jost-latin-500-normal.woff2); }
+<!-- Source of public/email/header.jpg (1200x860, shown at 600x430), the RSVP email's header.
+     The pre-wedding shoot with "Sat 5 Dec" and 05·12 in glass numerals behind the couple, like a
+     phone's lock screen (date-photo.jpg, from just above the date line down), so the first thing a
+     guest sees is the day. Like the header before it, it fades into the email's blush page
+     (#F7EFEA): softly at the sides, and from the couple's knees down at the bottom, so the letter
+     starts where the picture ends. Render it with render.mjs. --><html><head><meta charset="utf-8"><style>
 html, body { margin: 0; }
-.header { width: 1200px; height: 1040px; position: relative; overflow: hidden; background: #F7EFEA; }
-.names { position: absolute; z-index: 5; left: 0; right: 0; top: 708px; text-align: center; font: 150px/1 Pinyon, cursive; color: #3D2927; }
-.names span { color: #E87F39; }
-.date { position: absolute; z-index: 5; left: 0; right: 0; top: 920px; text-align: center; font: 500 24px/1 Jost, sans-serif; letter-spacing: 0.46em; text-transform: uppercase; color: #6A524C; }
-.date b { color: #E87F39; font-weight: 500; }
-.layer { position: absolute; }
-.bouquet, .bouquet-tone { left: 0; top: 0; width: 700px; height: 900px; object-fit: cover; object-position: 50% 16%; }
-/* The bouquet in colour, softened to sit beside the palette, giving way to its own warm tone. */
-.bouquet { z-index: 2; filter: saturate(0.82) brightness(1.05) contrast(0.97);
-  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 40%, transparent 72%); mask-image: linear-gradient(90deg, #000 0%, #000 40%, transparent 72%); }
-.bouquet-tone { z-index: 1; filter: url(#palette) brightness(1.04);
-  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 60%, transparent 100%); mask-image: linear-gradient(90deg, #000 0%, #000 60%, transparent 100%); }
-/* The embrace, mapped from cocoa shadows to blush highlights with an ember middle. */
-.embrace { right: 0; top: 0; width: 740px; height: 900px; object-fit: cover; object-position: 50% 26%; filter: url(#palette) contrast(1.03);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 42%, #000 100%); mask-image: linear-gradient(90deg, transparent 0%, #000 42%, #000 100%); }
-.glow { inset: 0; z-index: 2; background: radial-gradient(ellipse 30% 40% at 66% 30%, rgba(232,127,57,0.14) 0%, rgba(232,127,57,0) 100%); mix-blend-mode: soft-light; }
-.fade { inset: 0; z-index: 3; background:
-  linear-gradient(180deg, rgba(247,239,234,0.15) 0%, rgba(247,239,234,0) 14%, rgba(247,239,234,0) 44%, rgba(247,239,234,0.8) 67%, #F7EFEA 83%),
-  linear-gradient(90deg, #F7EFEA 0%, rgba(247,239,234,0) 10%, rgba(247,239,234,0) 90%, #F7EFEA 100%); }
+.header { width: 1200px; height: 860px; position: relative; overflow: hidden; background: #F7EFEA; }
+.header img { display: block; width: 1200px; height: 860px; object-fit: cover; object-position: 50% 0%; }
+.fade { position: absolute; inset: 0; background:
+  linear-gradient(180deg, rgba(247,239,234,0) 0%, rgba(247,239,234,0) 60%, rgba(247,239,234,0.35) 71%, rgba(247,239,234,0.8) 85%, #F7EFEA 98%),
+  linear-gradient(90deg, #F7EFEA 0%, rgba(247,239,234,0) 7%, rgba(247,239,234,0) 93%, #F7EFEA 100%); }
 </style></head><body>
-<svg width="0" height="0" style="position:absolute"><filter id="palette" color-interpolation-filters="sRGB">
-  <feColorMatrix type="saturate" values="0"/>
-  <feComponentTransfer>
-    <feFuncR type="table" tableValues="0.239 0.55 0.80 0.984"/>
-    <feFuncG type="table" tableValues="0.161 0.36 0.62 0.953"/>
-    <feFuncB type="table" tableValues="0.153 0.31 0.54 0.933"/>
-  </feComponentTransfer>
-</filter></svg>
-<div class="header">
-<img class="layer bouquet-tone" src="../../public/images/story/bouquet.jpg">
-<img class="layer bouquet" src="../../public/images/story/bouquet.jpg">
-<img class="layer embrace" src="../../public/images/story/embrace-bw.jpg">
-<div class="layer glow"></div><div class="layer fade"></div>
-<div class="names">Noblet <span>&amp;</span> Nancy</div><div class="date">5 <b>·</b> 6 December 2026 <b>·</b> Tepa</div>
-</div></body></html>
+<div class="header"><img src="date-photo.jpg" alt=""><div class="fade"></div></div>
+</body></html>
