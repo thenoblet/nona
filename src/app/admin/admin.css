@@ -136,6 +136,11 @@
 .admin-confirm { margin-top: 8px; padding-top: 8px; border-top: 1px solid #efc9ae; }
 .admin-confirm p { margin: 0; color: var(--admin-text); font-weight: 500; }
 .admin-flag-error { margin: 8px 0 0; color: var(--admin-bad); font-weight: 500; }
+.admin-flag-btn-danger, .admin-flag-btn-danger:hover { background: var(--admin-bad); border-color: var(--admin-bad); color: #fff; }
+.admin-confirm-danger { border-top-color: #f1b8b1; }
+.admin-delete { margin-top: 6px; }
+.admin .admin-delete .admin-linkbtn { color: var(--admin-muted); font-size: 13px; }
+.admin .admin-delete .admin-linkbtn:hover { color: var(--admin-bad); }
 /* What the last "Keep" did. Always in the page, so screen readers announce each new message. */
 .admin-notice { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--admin-border); border-left: 3px solid var(--admin-ok); border-radius: 8px; background: var(--admin-surface); font-size: 14px; overflow-wrap: anywhere; }
 .admin-notice:empty { margin: 0; padding: 0; border: 0; }

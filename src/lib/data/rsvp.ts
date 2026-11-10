@@ -247,6 +247,34 @@ export async function keepBoth(
   });
 }
 
+export type DeleteResult = { ok: true; deleted: number } | { ok: false; error: string };
+
+/**
+ * "Delete": a current reply goes for good, with every earlier reply moved into its history (through
+ * replies moved more than once), so it leaves the list, the totals and the CSV. Its "Keep both"
+ * pairs go with it. The guest made with it stays, and with them their link, photos and wishes; a
+ * confirmation still queued finds no reply and sends nothing. Under the keep lock, so nothing can be
+ * moved into its history while it goes. Returns how many replies were deleted, the current one
+ * included.
+ */
+export async function deleteReply(id: string): Promise<DeleteResult> {
+  return getDb().transaction(async (transaction) => {
+    await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${KEEP_LOCK}))`);
+    const [reply] = await transaction.select({ supersededAt: rsvps.supersededAt }).from(rsvps).where(eq(rsvps.id, id));
+    if (!reply) return { ok: false, error: REPLY_NOT_FOUND };
+    if (reply.supersededAt) return { ok: false, error: ALREADY_MOVED };
+    // `union`, not `union all`: a loop of links ends instead of going round for ever.
+    const deleted = await transaction.execute(sql`
+      with recursive history(id) as (
+        select ${id}::uuid
+        union
+        select earlier.id from rsvps earlier join history on earlier.superseded_by = history.id
+      )
+      delete from rsvps where id in (select id from history) returning id`);
+    return { ok: true, deleted: deleted.length };
+  });
+}
+
 /** The earlier replies moved into this one's history, newest first. */
 export async function rsvpHistory(id: string): Promise<RsvpRecord[]> {
   const rows = await getDb()
