@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -170,6 +170,19 @@ async function saved(bytes: Uint8Array, extension: string): Promise<string> {
   const path = join(folder, `${randomUUID()}.${extension}`);
   await writeFile(path, bytes);
   return path;
+}
+
+/**
+ * Bytes that look random but are the same on every run. Truly random ones aren't a fair corrupt
+ * file: about 1 in 500 probes as raw H.263 ("detected only with low score of 25"), a format the
+ * allowed list refuses, so the job rightly fails it as unsupported-type rather than retrying it.
+ */
+function noise(length: number): Buffer {
+  const blocks: Buffer[] = [];
+  for (let block = 0; blocks.length * 32 < length; block += 1) {
+    blocks.push(createHash("sha256").update(`poster-test-noise-${block}`).digest());
+  }
+  return Buffer.concat(blocks).subarray(0, length);
 }
 
 /** An Android phone's clip: H.264 8-bit 4:2:0 and AAC in MP4, with its time and place in its tags. */
@@ -791,7 +804,7 @@ describe.skipIf(!ffmpegSeven)("a file that isn't a video the album takes (Review
       "index cut off": mp4.subarray(0, Math.floor(mp4.length / 2)),
       // The index first, its frames cut off before the poster's moment.
       "frames cut off": (await androidClip(3, true)).subarray(0, 30_000),
-      "random bytes": Buffer.concat([Buffer.from([0x13, 0x37]), randomBytes(20_000)]),
+      "random bytes": Buffer.concat([Buffer.from([0x13, 0x37]), noise(20_000)]),
     };
     for (const [what, bytes] of Object.entries(files)) {
       const mediaId = await uploadedVideo(bytes, "mp4");
