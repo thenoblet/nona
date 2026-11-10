@@ -1,12 +1,24 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { couple, wedding } from "@/content/wedding";
+import { invitationOpenGraph } from "@/lib/invitation-preview";
 import { getSiteImages } from "@/lib/site-images/get";
 import { resolveSlotPhoto } from "@/lib/site-images/photos";
 import { slotDefinition } from "@/lib/site-images/slots";
 import { OpenInvitation } from "@/components/landing/OpenInvitation";
 import { SitePhoto } from "@/components/ui/SitePhoto";
+
+/**
+ * The invitation's preview again, as the root layout gives it: app/opengraph-image.tsx sits beside
+ * this page, and Next applies it here unless this page's own metadata names `images`. Without this,
+ * `/` (the link most guests are sent) kept the build-time card after the couple replaced its photo.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  await connection();
+  return { openGraph: await invitationOpenGraph() };
+}
 
 const printPhoto = "block h-[180px] w-full object-cover sm:h-[230px] lg:h-[290px]";
 

@@ -307,4 +307,35 @@ test.describe("replacing the site's photos", () => {
     // Other pages keep their own cards.
     expect(await ogImage(request, "/wishes")).toMatch(/\/wishes\/opengraph-image/);
   });
+
+  test("the invitation's preview photo, refocused in the admin, gets a card the worker draws, on / and /home both", async ({
+    browser,
+    baseURL,
+    request,
+  }) => {
+    // The links guests are sent: the landing page, beside app/opengraph-image.tsx, and the home page.
+    for (const path of ["/", "/home"]) expect(await ogImage(request, path), path).toMatch(/\/opengraph-image\?/);
+    const context = await couple(browser, baseURL);
+    const page = await context.newPage();
+    await page.goto("/admin/photos/site");
+    const name = "Home, and any page without its own";
+    const invitation = slotOf(page, name);
+    await invitation.getByRole("button", { name: `Edit ${name}` }).click();
+    const picker = invitation.getByRole("button", { name: /^Focal point/ });
+    const box = (await picker.boundingBox())!;
+    await picker.click({ position: { x: box.width * 0.5, y: box.height * 0.3 } });
+    await invitation.getByRole("button", { name: "Save" }).click();
+    await expect(invitation.getByText(CACHE_NOTE)).toBeVisible({ timeout: 60_000 });
+    await context.close();
+
+    const [row] = await sql`select card_key from site_images where slot = 'preview-invitation'`;
+    const card = `${TEST_STORAGE_ENV.MEDIA_BASE_URL}/${row.card_key}`;
+    for (const path of ["/", "/home"]) {
+      await expect.poll(() => ogImage(request, path), { message: path }).toBe(card);
+      const html = await (await request.get(path, { headers: { "user-agent": WHATSAPP } })).text();
+      expect(/<meta name="twitter:image" content="([^"]*)"/.exec(html)?.[1], path).toBe(card);
+    }
+    // A page with its own card keeps it.
+    expect(await ogImage(request, "/album")).toMatch(/\/album\/opengraph-image/);
+  });
 });

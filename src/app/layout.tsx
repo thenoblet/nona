@@ -3,10 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
 import { cormorant, jost, pinyon } from "./fonts";
 import { MusicProvider } from "@/components/music/MusicProvider";
-import { accraDayAndFullMonth } from "@/lib/accra";
-import { getSiteContent } from "@/lib/content/get";
-import { getSiteImages, storedCardImages } from "@/lib/site-images/get";
-import { shareDefaults } from "@/lib/share";
+import { invitationOpenGraph } from "@/lib/invitation-preview";
 import { siteUrl } from "@/lib/site-url";
 import "./globals.css";
 
@@ -19,7 +16,6 @@ import "./globals.css";
  */
 export async function generateMetadata(): Promise<Metadata> {
   await connection();
-  const [{ rsvp }, siteImages] = await Promise.all([getSiteContent(), getSiteImages()]);
   return {
     metadataBase: new URL(siteUrl()),
     title: {
@@ -28,16 +24,8 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     description:
       "Together with their families, Noblet and Nancy invite you to celebrate the beginning of their forever. Saturday, 5 December 2026 · Tepa, Ashanti.",
-    // The preview image is the invitation card in opengraph-image.tsx.
-    openGraph: {
-      ...shareDefaults,
-      title: "Noblet & Nancy · 5 December 2026",
-      description: `Together with their families, they invite you to celebrate the beginning of their forever. Tepa, Ashanti. ${
-        rsvp.open ? `Kindly reply by ${accraDayAndFullMonth(rsvp.replyBy)}.` : "Replies have closed."
-      }`,
-      url: "/",
-      ...storedCardImages(siteImages, "invitation"),
-    },
+    // The invitation card: the one the worker drew, or opengraph-image.tsx's (src/lib/invitation-preview.ts).
+    openGraph: await invitationOpenGraph(),
     twitter: { card: "summary_large_image" },
   };
 }
