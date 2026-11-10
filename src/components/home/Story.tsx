@@ -90,6 +90,7 @@ export function Story({ story, photos }: { story: StoryContent; photos: SlotPhot
               <>
                 <Arch photo={photos["story-met-arch"]} />
                 <SmallPrint photo={photos["story-met-print"]} caption="the early days" side="left" />
+                <SmallPrint photo={photos["story-met-second-print"]} caption="all dressed up" side="right" />
               </>
             }
           >
@@ -116,12 +117,7 @@ export function Story({ story, photos }: { story: StoryContent; photos: SlotPhot
           <Chapter
             when={story.forever.when}
             title={story.forever.title}
-            photo={
-              <>
-                <Arch photo={photos["story-forever-arch"]} />
-                <SmallPrint photo={photos["story-forever-print"]} caption="all dressed up" side="left" />
-              </>
-            }
+            photo={<Arch photo={photos["story-forever-arch"]} />}
           >
             <p className="m-0 max-w-[320px] font-serif text-xl leading-relaxed text-mocha">{story.forever.text}</p>
             <p className="m-0 text-[30px] leading-tight">

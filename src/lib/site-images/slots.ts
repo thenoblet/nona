@@ -101,6 +101,14 @@ const FIXED_SLOTS: SlotDefinition[] = [
     maxWidth: 240,
   },
   {
+    id: "story-met-second-print",
+    group: "story",
+    name: "How we met: second print",
+    where: "The small print captioned “all dressed up”, on the other side of the arch.",
+    shape: "photo",
+    maxWidth: 240,
+  },
+  {
     id: "story-asked-arch",
     group: "story",
     name: "The night he asked: arch",
@@ -124,14 +132,7 @@ const FIXED_SLOTS: SlotDefinition[] = [
     shape: "photo",
     maxWidth: 640,
   },
-  {
-    id: "story-forever-print",
-    group: "story",
-    name: "Forever begins: print",
-    where: "The small print captioned “all dressed up”.",
-    shape: "photo",
-    maxWidth: 240,
-  },
+
   {
     id: "gallery-left",
     group: "gallery",
