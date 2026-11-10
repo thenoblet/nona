@@ -1,6 +1,6 @@
 import type { StaticImageData } from "next/image";
 import nancySmile from "../../../public/images/story/nancy-smile.jpg";
-import { partyPhotos, photos, type Photo } from "@/content/images";
+import { homeHeroPhoto, partyPhotos, photos, type Photo } from "@/content/images";
 import { previewPhotos, type PreviewCardId } from "@/content/preview-photos";
 import { publicUrl } from "@/lib/storage/keys";
 import { focalFromPosition, objectPosition, type Focal } from "./focal";
@@ -32,8 +32,8 @@ const PREVIEW_IMAGES: Record<PreviewCardId, StaticImageData> = {
 const BUILTIN_PHOTOS: Record<string, BuiltinPhoto | null> = {
   "landing-cover": builtin(photos.embraceBw),
   "landing-print": builtin(photos.bouquet),
-  // The pre-wedding shoot, behind the names until the couple choose another in Site photos.
-  "home-hero": builtin(photos.sofa),
+  // public/images/home/hero.jpg (swap the file to change it), until the couple choose another in Site photos.
+  "home-hero": builtin(homeHeroPhoto),
   "invitation-band": builtin(photos.chrysanthemumsWide),
   "story-met-arch": builtin(photos.howWeMetBw),
   "story-met-print": builtin(photos.earlyDays),
