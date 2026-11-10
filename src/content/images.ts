@@ -25,7 +25,8 @@ export const photos = {
   },
   bouquet: { src: bouquet, alt: "Nancy holds her bouquet and the ring as they hug", position: "center 20%" },
   howWeMetBw: { src: howWeMetBw, alt: "Noblet and Nancy in their early days, in black and white", position: "center 30%" },
-  earlyDays: { src: earlyDays, alt: "A playful selfie of Noblet and Nancy on a basketball court", position: "center 40%" },
+  // Straightened from a tilted shot and cropped to the small print's portrait shape, around both faces.
+  earlyDays: { src: earlyDays, alt: "Noblet and Nancy, Nancy peeking past his shoulder, on a basketball court", position: "center 35%" },
   chrysanthemumsWide: { src: chrysanthemumsWide, alt: "A soft close-up of white chrysanthemums", position: "center 45%" },
   chrysanthemumsPortrait: { src: chrysanthemumsPortrait, alt: "A bouquet of white chrysanthemums", position: "30% 40%" },
   daisiesWrapped: {
