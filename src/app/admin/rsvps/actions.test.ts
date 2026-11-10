@@ -4,7 +4,7 @@ import { rsvpFlagDismissals } from "@/lib/db/schema";
 import { RELOAD } from "@/lib/admin/content";
 import { contentDefaults } from "@/lib/content/defaults";
 import { listVersions, readSection, saveSection } from "@/lib/content/store";
-import { listRsvps, rsvpHistories, saveRsvp } from "@/lib/data/rsvp";
+import { listRsvps, REPLY_NOT_FOUND, rsvpHistories, saveRsvp } from "@/lib/data/rsvp";
 import type { RsvpInput } from "@/lib/data/types";
 import { resetDb } from "../../../../test/db";
 
@@ -42,6 +42,7 @@ vi.mock("@/lib/admin/access", async (importOriginal) => {
 
 import {
   closeRsvpsAction,
+  deleteReplyAction,
   keepBothAction,
   keepReplyAction,
   reopenRsvpsAction,
@@ -78,6 +79,8 @@ describe("without the couple", () => {
     await expect(keepReplyAction(newer.record.id, [older.record.id])).rejects.toThrow("Admin access refused");
     await expect(keepBothAction(newer.record.id, older.record.id)).rejects.toThrow("Admin access refused");
     await expect(keepReplyAction("not-an-id", ["not-an-id"])).rejects.toThrow("Admin access refused");
+    await expect(deleteReplyAction(newer.record.id)).rejects.toThrow("Admin access refused");
+    expect(await listRsvps()).toHaveLength(2);
 
     expect(await flagged()).toEqual({
       [newer.record.id]: [older.record.id],
@@ -157,6 +160,31 @@ describe("keepReplyAction", () => {
       ok: false,
       error: expect.any(String),
     });
+  });
+});
+
+describe("deleteReplyAction", () => {
+  beforeEach(() => {
+    admin.allowed = true;
+  });
+
+  it("deletes the reply with its earlier replies and re-renders the page", async () => {
+    const older = await saveRsvp(base);
+    const newer = await saveRsvp({ ...base, partySize: "2 people" });
+    await keepReplyAction(newer.record.id, [older.record.id]);
+    cache.refresh.mockClear();
+
+    expect(await deleteReplyAction(newer.record.id.toUpperCase())).toEqual({ ok: true, deleted: 2 });
+    expect(await listRsvps()).toEqual([]);
+    expect((await rsvpHistories()).size).toBe(0);
+    expect(cache.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("refuses what is not a reply's id, and a reply already gone, with the page's message", async () => {
+    const ama = await saveRsvp(base);
+    expect(await deleteReplyAction("not-an-id")).toEqual({ ok: false, error: REPLY_NOT_FOUND });
+    await deleteReplyAction(ama.record.id);
+    expect(await deleteReplyAction(ama.record.id)).toEqual({ ok: false, error: REPLY_NOT_FOUND });
   });
 });
 

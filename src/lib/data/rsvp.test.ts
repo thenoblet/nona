@@ -9,6 +9,7 @@ import { resetDb } from "../../../test/db";
 import { findGuestById } from "./guests";
 import type { RsvpInput } from "./types";
 import {
+  deleteReply,
   getRsvp,
   keepBoth,
   keepReply,
@@ -235,6 +236,53 @@ describe("keepReply", () => {
     const newer = await saveRsvp({ ...base, partySize: "2 people" });
     await Promise.all([keepReply(older.record.id, [newer.record.id]), keepReply(newer.record.id, [older.record.id])]);
     expect(await listRsvps()).toHaveLength(1);
+  });
+});
+
+describe("deleteReply", () => {
+  it("deletes a current reply with its whole history, and leaves its guest and every other reply", async () => {
+    // Kept twice: the first moves into the second's history, then the second into the third's.
+    const first = await saveRsvp(base);
+    const second = await saveRsvp({ ...base, partySize: "2 people" });
+    await keepReply(second.record.id, [first.record.id]);
+    const third = await saveRsvp({ ...base, partySize: "3 people" });
+    await keepReply(third.record.id, [second.record.id]);
+    const esi = await saveRsvp({ ...base, fullName: "Esi Ansa", phone: "055 111 2222" });
+
+    expect(await deleteReply(third.record.id)).toEqual({ ok: true, deleted: 3 });
+    for (const reply of [first, second, third]) expect(await getRsvp(reply.record.id)).toBeNull();
+    expect((await listRsvps()).map((reply) => reply.id)).toEqual([esi.record.id]);
+    expect((await rsvpTotals()).ceremony).toEqual({ accepted: 1, declined: 0, people: 1 });
+    expect(await findGuestById(third.record.guestId!)).not.toBeNull();
+  });
+
+  it("takes its \"Keep both\" pairs with it", async () => {
+    const ama = await saveRsvp(base);
+    const kofi = await saveRsvp({ ...base, fullName: "Kofi Mensah" });
+    await keepBoth(ama.record.id, kofi.record.id, "couple@example.com");
+    expect(await deleteReply(ama.record.id)).toEqual({ ok: true, deleted: 1 });
+    expect(await flagsOf(kofi.record.id)).toEqual([]);
+  });
+
+  it("refuses a reply that does not exist or is in another reply's history, deleting nothing", async () => {
+    const older = await saveRsvp(base);
+    const newer = await saveRsvp({ ...base, partySize: "2 people" });
+    await keepReply(newer.record.id, [older.record.id]);
+    expect((await deleteReply(randomUUID())).ok).toBe(false);
+    expect((await deleteReply(older.record.id)).ok).toBe(false);
+    expect(await getRsvp(older.record.id)).not.toBeNull();
+    expect(await listRsvps()).toHaveLength(1);
+  });
+
+  it("survives a loop of replaced replies", async () => {
+    const ama = await saveRsvp(base);
+    const older = await saveRsvp({ ...base, partySize: "2 people" });
+    // A loop the app never makes: older points at ama, and a third points back at older.
+    const loop = await saveRsvp({ ...base, partySize: "3 people" });
+    await getDb().execute(sql`update rsvps set superseded_at = now(), superseded_by = ${ama.record.id} where id = ${older.record.id}`);
+    await getDb().execute(sql`update rsvps set superseded_at = now(), superseded_by = ${older.record.id} where id = ${loop.record.id}`);
+    await getDb().execute(sql`update rsvps set superseded_by = ${loop.record.id} where id = ${ama.record.id}`);
+    expect(await deleteReply(ama.record.id)).toEqual({ ok: true, deleted: 3 });
   });
 });
 
