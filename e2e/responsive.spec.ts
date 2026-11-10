@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, request as apiRequest, test, type Locator, type Page, type Route } from "@playwright/test";
 import sharp from "sharp";
+import { HEADER_IMAGE } from "../src/emails/components/header-image";
 import { contentDefaults } from "../src/lib/content/defaults";
 import type { RsvpRecord } from "../src/lib/data/types";
 import { renderRsvpConfirmation } from "../src/lib/email/rsvp-confirmation";
@@ -194,9 +195,9 @@ for (const [name, render] of Object.entries(emails)) {
     for (const width of widths) {
       test(`does not scroll sideways at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
-        const header = await readFile("public/email/header.jpg");
+        const header = await readFile(`public${HEADER_IMAGE}`);
         await page.route("https://fonts.gstatic.com/**", (route) => route.abort());
-        await page.route(`${EMAIL_SITE}/email/header.jpg`, (route) => route.fulfill({ body: header, contentType: "image/jpeg" }));
+        await page.route(`${EMAIL_SITE}${HEADER_IMAGE}`, (route) => route.fulfill({ body: header, contentType: "image/jpeg" }));
         await page.setContent((await render()).html, { waitUntil: "load" });
         await expect(page.getByRole("heading", { level: 1, name: "Dear Ama Owusu," })).toBeVisible();
         const { scrollWidth, innerWidth, codeLines } = await page.evaluate(() => ({
