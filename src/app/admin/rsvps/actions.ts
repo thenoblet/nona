@@ -7,7 +7,7 @@ import { requireAdmin } from "@/lib/admin/access";
 import { isVersionNumber, newerVersionMessage, RELOAD, type SaveState } from "@/lib/admin/content";
 import { CONTENT_TAG } from "@/lib/content/get";
 import { readSection, saveSection, type SaveResult } from "@/lib/content/store";
-import { keepBoth, keepReply, REPLY_NOT_FOUND, type KeepResult } from "@/lib/data/rsvp";
+import { deleteReply, keepBoth, keepReply, REPLY_NOT_FOUND, type DeleteResult, type KeepResult } from "@/lib/data/rsvp";
 import { redrawRsvpCard } from "@/lib/site-images/cards";
 
 // Reached by a direct POST as well as from the page, so each action checks the couple first.
@@ -41,6 +41,19 @@ export async function keepBothAction(
     return { ok: false, error: REPLY_NOT_FOUND };
   }
   const result = await keepBoth(id.toLowerCase(), otherId.toLowerCase(), admin.email);
+  refresh();
+  return result;
+}
+
+/**
+ * "Delete": the reply and its earlier replies go for good, after the page's inline confirm. Logged
+ * with who deleted it, since the couple share the admin and nothing else keeps a trace.
+ */
+export async function deleteReplyAction(id: string): Promise<DeleteResult> {
+  const admin = await requireAdmin();
+  if (!replyId.safeParse(id).success) return { ok: false, error: REPLY_NOT_FOUND };
+  const result = await deleteReply(id.toLowerCase());
+  if (result.ok) console.info(`rsvp: ${admin.email} deleted reply ${id.toLowerCase()} (${result.deleted} with its history)`);
   refresh();
   return result;
 }

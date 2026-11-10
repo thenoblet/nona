@@ -11,6 +11,7 @@ import {
   type ReplyFilter,
   type ReplyRow,
 } from "@/lib/admin/replies";
+import { ReplyDelete } from "./ReplyDelete";
 import { ReplyFlags } from "./ReplyFlags";
 
 /** Counts the replies moved into this one's history, which "Keep this one" can grow by several at once. */
@@ -34,7 +35,7 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
     [replies, filter, query],
   );
 
-  // After a Keep, the flag panel that held focus is gone, so focus moves to what happened.
+  // After a Keep or a Delete, the panel that held focus is gone, so focus moves to what happened.
   useEffect(() => {
     if (notice.serial > 0) noticeBox.current?.focus();
   }, [notice.serial]);
@@ -134,6 +135,7 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
                         ))}
                       </details>
                     )}
+                    <ReplyDelete replyId={row.id} replyName={row.fullName} earlierCount={row.earlier.length} onDone={announce} />
                   </td>
                   <td className="admin-party" data-label="Party">
                     {row.partySize}
