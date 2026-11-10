@@ -6,13 +6,14 @@ describe("the slots", () => {
   it("are the spec's: landing cover and print, home hero, invitation band, story, gallery, the four cards, and one per member", () => {
     const slots = allSlots(contentDefaults.party);
     const ids = slots.map((slot) => slot.id);
-    expect(ids.slice(0, 16)).toEqual([
+    expect(ids.slice(0, 17)).toEqual([
       "landing-cover",
       "landing-print",
       "home-hero",
       "invitation-band",
       "story-met-arch",
       "story-met-print",
+      "story-met-second-print",
       "story-asked-arch",
       "story-asked-print",
       "story-forever-arch",
@@ -24,7 +25,7 @@ describe("the slots", () => {
       "preview-album",
       "preview-wishes",
     ]);
-    expect(ids.slice(16)).toEqual(contentDefaults.party.map((member) => `party-${member.id}`));
+    expect(ids.slice(17)).toEqual(contentDefaults.party.map((member) => `party-${member.id}`));
     expect(new Set(slots.map((slot) => slot.group))).toEqual(new Set(SLOT_GROUPS.map((group) => group.id)));
     // Every slot lists sizes up to twice its widest CSS width.
     for (const slot of slots) expect(slot.maxWidth).toBeGreaterThan(0);

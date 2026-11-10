@@ -37,6 +37,7 @@ const BUILTIN_PHOTOS: Record<string, BuiltinPhoto | null> = {
   "invitation-band": builtin(photos.chrysanthemumsWide),
   "story-met-arch": builtin(photos.howWeMetBw),
   "story-met-print": builtin(photos.earlyDays),
+  "story-met-second-print": builtin(photos.dressedUp),
   "story-asked-arch": builtin(photos.embraceBw),
   "story-asked-print": builtin(photos.bouquet),
   "story-forever-arch": builtin(photos.daisiesWrapped),

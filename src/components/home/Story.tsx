@@ -90,6 +90,7 @@ export function Story({ story, photos }: { story: StoryContent; photos: SlotPhot
               <>
                 <Arch photo={photos["story-met-arch"]} />
                 <SmallPrint photo={photos["story-met-print"]} caption="the early days" side="left" />
+                <SmallPrint photo={photos["story-met-second-print"]} caption="all dressed up" side="right" />
               </>
             }
           >
