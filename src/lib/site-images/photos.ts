@@ -40,6 +40,7 @@ const BUILTIN_PHOTOS: Record<string, BuiltinPhoto | null> = {
   "story-asked-arch": builtin(photos.embraceBw),
   "story-asked-print": builtin(photos.bouquet),
   "story-forever-arch": builtin(photos.daisiesWrapped),
+  "story-forever-print": builtin(photos.dressedUp),
   "gallery-left": builtin(photos.bouquet, "Nancy holds her bouquet as they hug"),
   "gallery-centre": builtin(photos.embraceBw, "Noblet and Nancy embrace, in black and white"),
   "gallery-right": builtin(photos.kiss, "Noblet and Nancy share a kiss"),
