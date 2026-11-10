@@ -1,37 +1,91 @@
 import { describe, expect, it } from "vitest";
 import { contentDefaults } from "@/lib/content/defaults";
-import type { ScheduleItem } from "@/lib/content/schema";
-import { nowIndex } from "./day";
+import type { Celebration, ScheduleItem } from "@/lib/content/schema";
+import { currentItem, inProgrammeOrder, itemStarts, programmeNow, stateOf } from "./day";
 
-const defaultSchedule = contentDefaults.schedule;
-const saturdayItem: ScheduleItem = { time: "10:00", title: "Wedding", place: "Church", day: "sat" };
-const sundayItem: ScheduleItem = { time: "09:00", title: "Thanksgiving", place: "Church", day: "sun" };
+const celebrations: Celebration[] = structuredClone(contentDefaults.celebrations);
 
-describe("nowIndex", () => {
-  it("keeps today's behaviour on the default schedule", () => {
-    expect(nowIndex(defaultSchedule, false)).toBe(1);
-    expect(nowIndex(defaultSchedule, true)).toBe(defaultSchedule.findIndex((item) => item.day === "sun"));
+/** A moment in Tepa (GMT, so UTC) on the wedding weekend. */
+const at = (date: string, time: string) => new Date(`${date}T${time}:00Z`);
+const saturday = (time: string) => at("2026-12-05", time);
+const sunday = (time: string) => at("2026-12-06", time);
+
+const programme: ScheduleItem[] = [
+  { celebration: "ceremony", title: "Guests arrive", time: "09:30" },
+  { celebration: "ceremony", title: "Processional", time: "10:00" },
+  { celebration: "ceremony", title: "Opening hymn" },
+  { celebration: "ceremony", title: "Vows", time: "10:30" },
+  { celebration: "reception", title: "Grand entrance", time: "15:00" },
+  { celebration: "reception", title: "Dancing", time: "21:00" },
+  { celebration: "reception", title: "Last song", time: "00:30" },
+  { celebration: "thanks", title: "Sunday service", time: "09:00" },
+  { celebration: "thanks", title: "Closing & photos" },
+];
+
+const titleAt = (now: Date, schedule = programme, withCelebrations = celebrations) =>
+  currentItem(schedule, withCelebrations, now)?.title;
+
+describe("programmeNow", () => {
+  it("has nothing on before the first item starts", () => {
+    expect(programmeNow(programme, celebrations, saturday("09:00"))).toEqual({ current: -1, started: -1 });
   });
 
-  it("picks the Saturday item on Saturday and the Sunday item on Sunday", () => {
-    const schedule = [saturdayItem, sundayItem];
-    expect(nowIndex(schedule, false)).toBe(0);
-    expect(nowIndex(schedule, true)).toBe(1);
+  it("marks the last item whose time has passed", () => {
+    expect(titleAt(saturday("09:30"))).toBe("Guests arrive");
+    expect(titleAt(saturday("10:15"))).toBe("Processional");
+    expect(titleAt(saturday("15:10"))).toBe("Grand entrance");
+    expect(titleAt(sunday("09:05"))).toBe("Sunday service");
   });
 
-  it("never points outside the schedule", () => {
-    const schedules: ScheduleItem[][] = [[saturdayItem], [sundayItem], [sundayItem, saturdayItem], defaultSchedule];
-    for (const schedule of schedules) {
-      for (const secondDay of [false, true]) {
-        const index = nowIndex(schedule, secondDay);
-        expect(index).toBeGreaterThanOrEqual(0);
-        expect(index).toBeLessThan(schedule.length);
-      }
-    }
+  it("never marks an item without a time, but reads it as done once a later item starts", () => {
+    const standing = programmeNow(programme, celebrations, saturday("11:15"));
+    expect(programme[standing.current].title).toBe("Vows");
+    expect(stateOf(2, standing)).toBe("done");
+    expect(stateOf(4, standing)).toBe("next");
   });
 
-  it("returns -1 for an empty schedule", () => {
-    expect(nowIndex([], false)).toBe(-1);
-    expect(nowIndex([], true)).toBe(-1);
+  it("reads an earlier reception time as after midnight", () => {
+    expect(titleAt(saturday("23:50"))).toBe("Dancing");
+    expect(titleAt(sunday("00:40"))).toBe("Last song");
+    expect(itemStarts(programme, celebrations)[6]).toBe(sunday("00:30").getTime());
+  });
+
+  it("lets an item go after four hours when nothing after it has started", () => {
+    expect(titleAt(saturday("14:31"))).toBeUndefined();
+    const standing = programmeNow(programme, celebrations, saturday("14:31"));
+    expect(stateOf(3, standing)).toBe("done");
+  });
+
+  it("ends with its celebration when the celebration's end time is set", () => {
+    const ending = celebrations.map((celebration) =>
+      celebration.id === "ceremony" ? { ...celebration, startTime: "09:30", endTime: "12:00" } : celebration,
+    );
+    expect(titleAt(saturday("11:55"), programme, ending)).toBe("Vows");
+    expect(titleAt(saturday("12:05"), programme, ending)).toBeUndefined();
+  });
+
+  it("follows a celebration's date when the couple change it", () => {
+    const moved = celebrations.map((celebration) =>
+      celebration.id === "thanks" ? { ...celebration, date: "2026-12-13" } : celebration,
+    );
+    expect(titleAt(sunday("09:05"), programme, moved)).toBeUndefined();
+    expect(titleAt(at("2026-12-13", "09:05"), programme, moved)).toBe("Sunday service");
+  });
+
+  it("has nothing on for a programme with no times, or none at all", () => {
+    expect(titleAt(saturday("12:00"), contentDefaults.schedule)).toBeUndefined();
+    expect(programmeNow([], celebrations, saturday("12:00"))).toEqual({ current: -1, started: -1 });
+  });
+});
+
+describe("inProgrammeOrder", () => {
+  it("groups the items by celebration, each keeping its own order", () => {
+    const mixed: ScheduleItem[] = [
+      { celebration: "thanks", title: "Service" },
+      { celebration: "ceremony", title: "Arrive" },
+      { celebration: "reception", title: "Dinner" },
+      { celebration: "ceremony", title: "Vows" },
+    ];
+    expect(inProgrammeOrder(mixed).map((item) => item.title)).toEqual(["Arrive", "Vows", "Dinner", "Service"]);
   });
 });

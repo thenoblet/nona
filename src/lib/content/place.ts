@@ -41,7 +41,16 @@ export function celebrationPlace(celebration: Pick<Celebration, "venue">, venues
   };
 }
 
-/** Where an order of the day item happens: its venue's name with the town, or the place typed for it. */
-export function scheduleItemPlace(item: Pick<ScheduleItem, "venue" | "place">, venues: SiteContent["venues"]): string {
-  return item.venue ? withTown(venues[item.venue]) : (item.place ?? "");
+/**
+ * Where an order of the day item happens: the place typed for it, or else its celebration's venue
+ * with the town, so renaming a venue renames every item held there.
+ */
+export function scheduleItemPlace(
+  item: Pick<ScheduleItem, "celebration" | "place">,
+  celebrations: readonly Pick<Celebration, "id" | "venue">[],
+  venues: SiteContent["venues"],
+): string {
+  if (item.place) return item.place;
+  const celebration = celebrations.find((entry) => entry.id === item.celebration);
+  return celebration ? withTown(venues[celebration.venue]) : "";
 }

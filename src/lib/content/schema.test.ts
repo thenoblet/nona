@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { celebrationsSavedBeforeVenues, scheduleSavedBeforeVenues } from "../../../test/fixtures/saved-before-venues";
+import {
+  celebrationsSavedBeforeVenues,
+  scheduleSavedBeforeCelebrations,
+  scheduleSavedBeforeVenues,
+} from "../../../test/fixtures/saved-before-venues";
 import { contentDefaults } from "./defaults";
 import { formatIssues, sectionKeys, sectionSchemas, type SectionKey } from "./schema";
 
@@ -32,7 +36,7 @@ describe("one-line fields", () => {
 
     const schedule = structuredClone(contentDefaults.schedule);
     schedule[0].title = "Guests\narrive";
-    schedule[1] = { ...schedule[1], venue: undefined, place: "Town\nhall" };
+    schedule[1] = { ...schedule[1], place: "Town\nhall" };
     expect(problems("schedule", schedule)).toEqual(["schedule[0].title: Use one line", "schedule[1].place: Use one line"]);
 
     const party = structuredClone(contentDefaults.party);
@@ -170,51 +174,99 @@ describe("a GhanaPost GPS typed into a celebration's extra place note", () => {
   });
 });
 
-describe("order of the day venues", () => {
-  it("name the venue of every built-in item", () => {
-    expect(contentDefaults.schedule.map((item) => [item.title, item.venue, item.place])).toEqual([
-      ["Guests arrive", "church", undefined],
-      ["White wedding", "church", undefined],
-      ["Photos with the couple", "reception", undefined],
-      ["Reception dinner", "reception", undefined],
-      ["First dance & party", "reception", undefined],
-      ["Thanksgiving service", "church", undefined],
+describe("the order of the day", () => {
+  const schedule = () => structuredClone(contentDefaults.schedule) as Record<string, unknown>[];
+
+  it("puts every built-in item in a celebration, at its venue, with no time yet", () => {
+    const counts = Object.fromEntries(
+      ["ceremony", "reception", "thanks"].map((id) => [id, contentDefaults.schedule.filter((item) => item.celebration === id).length]),
+    );
+    expect(counts).toEqual({ ceremony: 9, reception: 10, thanks: 3 });
+    expect(contentDefaults.schedule.every((item) => item.time === undefined && item.place === undefined)).toBe(true);
+  });
+
+  it("takes a time, a note and a place, each optional", () => {
+    const value = schedule();
+    value[0] = { celebration: "ceremony", title: "Guests arrive", time: "09:30", note: "Please be seated early", place: "Church grounds" };
+    value[1] = { celebration: "ceremony", title: "Processional" };
+    expect(problems("schedule", value)).toEqual([]);
+  });
+
+  it("refuses a time that isn't a 24-hour time, and a celebration that isn't one", () => {
+    const value = schedule();
+    value[0] = { ...value[0], time: "Morning" };
+    value[1] = { ...value[1], celebration: "brunch" };
+    expect(problems("schedule", value)).toEqual([
+      "schedule[0].time: Use a 24-hour time like 14:30",
+      "schedule[1].celebration: Choose a celebration",
     ]);
   });
 
-  it("are read from a schedule saved before items named one, with or without the town; anywhere else stays as typed", () => {
+  it("keeps at least one item in each celebration", () => {
+    const value = schedule().filter((item) => item.celebration !== "reception");
+    expect(problems("schedule", value)).toEqual(["schedule: Add at least one Reception item"]);
+  });
+
+  it("keeps the white wedding's and the thanksgiving's times in order", () => {
+    const value = schedule();
+    value[0].time = "10:00";
+    value[1].time = "09:45";
+    value[19].time = "09:00";
+    value[20].time = "08:00";
+    expect(problems("schedule", value)).toEqual([
+      "schedule[1].time: Earlier than Guests arrive: times run in order",
+      "schedule[20].time: Earlier than Sunday service: times run in order",
+    ]);
+  });
+
+  it("lets the reception run past midnight", () => {
+    const value = schedule();
+    value[9].time = "15:00";
+    value[17].time = "21:00";
+    value[18].time = "00:30";
+    expect(problems("schedule", value)).toEqual([]);
+  });
+
+  it("is read from a schedule saved before items belonged to a celebration", () => {
+    const parsed = sectionSchemas.schedule.safeParse(structuredClone(scheduleSavedBeforeCelebrations));
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.data).toEqual([
+      { celebration: "ceremony", title: "Guests arrive" },
+      { celebration: "ceremony", title: "White wedding" },
+      { celebration: "reception", title: "Photos with the couple" },
+      { celebration: "reception", title: "Reception dinner" },
+      { celebration: "reception", title: "First dance & party" },
+      { celebration: "thanks", title: "Thanksgiving service" },
+    ]);
+  });
+
+  it("is read from a schedule saved before items named a venue; anywhere else stays as typed", () => {
     const parsed = sectionSchemas.schedule.safeParse(structuredClone(scheduleSavedBeforeVenues));
     expect(parsed.error).toBeUndefined();
     expect(parsed.data).toEqual([
-      { time: "[Time]", title: "Guests arrive", venue: "church", day: "sat" },
-      { time: "[Time]", title: "White wedding", venue: "church", day: "sat" },
-      { time: "[Time]", title: "Photos with the couple", venue: "reception", day: "sat" },
-      { time: "[Time]", title: "Reception dinner", venue: "reception", day: "sat" },
-      { time: "[Time]", title: "After-party", place: "Rexco Junction, Tepa", day: "sat" },
-      { time: "Sun 6 Dec", title: "Thanksgiving service", venue: "church", day: "sun" },
+      { celebration: "ceremony", title: "Guests arrive" },
+      { celebration: "ceremony", title: "White wedding" },
+      { celebration: "reception", title: "Photos with the couple" },
+      { celebration: "reception", title: "Reception dinner" },
+      { celebration: "reception", title: "After-party", place: "Rexco Junction, Tepa" },
+      { celebration: "thanks", title: "Thanksgiving service" },
     ]);
   });
 
-  it("leave an item's own place behind once it names a venue, the hotel included", () => {
-    const schedule = [
-      { time: "[Time]", title: "Breakfast", venue: "hotel", place: "Typed before the venue was chosen", day: "sat" },
-      { time: "[Time]", title: "Brunch", place: "Town park", day: "sun" },
+  it("keeps an old time that is a clock time, and moves other words into the note", () => {
+    const saved = [
+      { time: "9.30", title: "Guests arrive", venue: "church", day: "sat" },
+      { time: "11:00 am", title: "White wedding", venue: "church", day: "sat" },
+      { time: "2:30 PM", title: "Breakfast", venue: "hotel", day: "sat" },
+      { time: "Afternoon", title: "Reception dinner", venue: "reception", day: "sat" },
+      { time: "Sunday", title: "Thanksgiving service", venue: "church", day: "sun" },
     ];
-    expect(sectionSchemas.schedule.parse(schedule)).toEqual([
-      { time: "[Time]", title: "Breakfast", venue: "hotel", day: "sat" },
-      { time: "[Time]", title: "Brunch", place: "Town park", day: "sun" },
-    ]);
-  });
-
-  it("ask for a place when an item names no venue, and refuse a venue that isn't one", () => {
-    const schedule = structuredClone(contentDefaults.schedule) as Record<string, unknown>[];
-    delete schedule[0].venue;
-    schedule[1].venue = "garden";
-    schedule[2] = { ...schedule[2], venue: undefined, place: "" };
-    expect(problems("schedule", schedule)).toEqual([
-      "schedule[0].place: Type the place, or choose a venue",
-      "schedule[1].venue: Choose a venue, or Other place",
-      "schedule[2].place: Cannot be empty",
+    expect(sectionSchemas.schedule.parse(saved)).toEqual([
+      { celebration: "ceremony", title: "Guests arrive", time: "09:30" },
+      { celebration: "ceremony", title: "White wedding", time: "11:00" },
+      { celebration: "ceremony", title: "Breakfast", time: "14:30", place: "[Guest hotel], Tepa" },
+      { celebration: "reception", title: "Reception dinner", note: "Afternoon" },
+      { celebration: "thanks", title: "Thanksgiving service", note: "Sunday" },
     ]);
   });
 });

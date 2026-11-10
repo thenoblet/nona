@@ -101,7 +101,7 @@ test.describe("each venue fact typed once", () => {
     }
   });
 
-  test("the order of the day names its venues: renaming one renames its items, and Other place takes a typed place", async ({
+  test("the order of the day takes its place from the celebration's venue: renaming the venue renames it", async ({
     browser,
     baseURL,
   }) => {
@@ -109,27 +109,65 @@ test.describe("each venue fact typed once", () => {
     try {
       await saveReceptionVenue(page, "Name", "Katakyie Gardens");
 
-      await page.goto("/today");
-      const order = page.getByRole("list").filter({ visible: true }).filter({ hasText: "Photos with the couple" });
-      const photos = order.getByRole("listitem").filter({ hasText: "Photos with the couple" });
-      await expect(photos).toContainText("Katakyie Gardens, Tepa");
-      await expect(order).not.toContainText(BUILT_IN_RECEPTION_NAME);
-      await expect(order.getByRole("listitem").filter({ hasText: "Guests arrive" })).toContainText(
-        "Assemblies of God, Victory Worship Centre, Tepa",
-      );
-
-      await page.goto("/admin/content/schedule");
-      await page.waitForLoadState("networkidle");
-      const guestsArrive = page.getByRole("group", { name: "Guests arrive" });
-      await expect(guestsArrive.getByLabel("Venue", { exact: true })).toHaveValue("church");
-      await expect(guestsArrive.getByLabel("Place", { exact: true })).toHaveCount(0);
-      await guestsArrive.getByLabel("Venue", { exact: true }).selectOption({ label: "Other place" });
-      await expect(guestsArrive.getByLabel("Place", { exact: true })).toBeVisible();
-      await page.getByRole("button", { name: "Discard changes" }).click();
-      await expect(guestsArrive.getByLabel("Place", { exact: true })).toHaveCount(0);
+      await page.goto("/programme");
+      const reception = page.locator("section#reception");
+      await expect(reception).toContainText("Katakyie Gardens, Tepa");
+      await expect(reception).not.toContainText(BUILT_IN_RECEPTION_NAME);
+      await expect(page.locator("section#ceremony")).toContainText("Assemblies of God, Victory Worship Centre, Tepa");
     } finally {
       // Later tests expect the built-in name.
       await saveReceptionVenue(page, "Name", BUILT_IN_RECEPTION_NAME);
+      await done();
+    }
+  });
+});
+
+test.describe("the order of the day in the admin", () => {
+  test("an item added to the reception, with a time, shows there on the Order of the day page", async ({ browser, baseURL }) => {
+    const { page, done } = await signedIn(browser, baseURL);
+    try {
+      await page.goto("/admin/content/schedule");
+      await page.waitForLoadState("networkidle");
+      const reception = page.getByRole("region", { name: /^Reception/ });
+      await reception.getByRole("button", { name: "Add an item to the Reception" }).click();
+      const added = reception.getByRole("group", { name: "New item" });
+      await added.getByLabel("Time", { exact: true }).fill("23.45");
+      await added.getByLabel("Note", { exact: true }).fill("Out on the lawn");
+      // Last: once it has a title, the item is named by it rather than "New item".
+      await added.getByLabel("What happens", { exact: true }).fill("E2E fireworks");
+      await page.getByRole("button", { name: "Save order of the day" }).click();
+      await expect(page.getByText("Saved. Guests see it now.")).toBeVisible();
+
+      await page.goto("/programme");
+      const item = page.locator("section#reception li").filter({ hasText: "E2E fireworks" });
+      await expect(item).toContainText("11:45 PM");
+      await expect(item).toContainText("Out on the lawn");
+      await expect(page.locator("section#ceremony")).not.toContainText("E2E fireworks");
+
+      // The page's button and the header lead here.
+      await page.goto("/home?mode=before");
+      await page.getByRole("link", { name: "See the order of the day" }).filter({ visible: true }).click();
+      await expect(page).toHaveURL(/\/programme$/);
+    } finally {
+      await page.goto("/admin/content/schedule");
+      await page.waitForLoadState("networkidle");
+      await page.getByRole("button", { name: "Remove E2E fireworks (Reception)" }).click();
+      await page.getByRole("button", { name: "Save order of the day" }).click();
+      await expect(page.getByText("Saved. Guests see it now.")).toBeVisible();
+      await done();
+    }
+  });
+
+  test("an item with no title is named where it sits when the save is refused", async ({ browser, baseURL }) => {
+    const { page, done } = await signedIn(browser, baseURL);
+    try {
+      await page.goto("/admin/content/schedule");
+      await page.waitForLoadState("networkidle");
+      await page.getByRole("button", { name: "Add an item to the White wedding" }).click();
+      await page.getByRole("button", { name: "Save order of the day" }).click();
+      await expect(page.getByRole("status").filter({ hasText: "1 problem to fix: White wedding · New item · What happens" })).toBeVisible();
+      await expect(page.getByRole("region", { name: /^White wedding/ }).getByRole("group", { name: "New item" }).getByText("Cannot be empty")).toBeVisible();
+    } finally {
       await done();
     }
   });

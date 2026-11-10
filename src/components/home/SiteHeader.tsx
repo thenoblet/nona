@@ -6,13 +6,24 @@ import { couple } from "@/content/wedding";
 import type { Mode } from "@/lib/mode";
 import { Icon } from "@/components/ui/Icon";
 
-type NavItem = { href: string; label: string };
+type NavItem = {
+  href: string;
+  label: string;
+  /** The words in the phone menu, where there is room for more than on a laptop. */
+  menuLabel?: string;
+  /** A small "New" beside it in the phone menu. */
+  isNew?: boolean;
+};
+
+/** The order of the day: "Programme" fits the laptop's row of links, the phone menu says it in full. */
+const programme: NavItem = { href: "/programme", label: "Programme", menuLabel: "Order of the day", isNew: true };
 
 const nav: Record<Mode, { links: NavItem[]; cta: NavItem }> = {
   before: {
     links: [
       { href: "#story", label: "Our story" },
       { href: "#celebrations", label: "Celebrations" },
+      programme,
       { href: "#map", label: "Map" },
       { href: "#travel", label: "Travel" },
       { href: "#gifts", label: "Gifts" },
@@ -27,6 +38,7 @@ const nav: Record<Mode, { links: NavItem[]; cta: NavItem }> = {
       { href: "#album", label: "Album" },
       { href: "/wishes", label: "Wishes" },
       { href: "#celebrations", label: "Celebrations" },
+      programme,
       { href: "#map", label: "Map" },
       { href: "#gifts", label: "Gifts" },
     ],
@@ -50,14 +62,21 @@ const closing = "duration-200 ease-[cubic-bezier(0.4,0,1,1)]";
 /**
  * Phones: monogram, the main action and a menu button that drops a paper panel
  * of links over the dimmed page. Desktop (lg): the links sit inline.
+ *
+ * On another page than the home page (`current`, such as "/programme"), the home page's links lead
+ * back to it, and that page's own link is marked as the one you are on.
  */
-export function SiteHeader({ mode }: { mode: Mode }) {
+export function SiteHeader({ mode, current }: { mode: Mode; current?: string }) {
   const [open, setOpen] = useState(false);
-  const { links, cta } = nav[mode];
+  const { links: homeLinks, cta: homeCta } = nav[mode];
+  const onHome = current === undefined;
+  const fromHere = (item: NavItem): NavItem => (onHome || !item.href.startsWith("#") ? item : { ...item, href: `/home${item.href}` });
+  const links = homeLinks.map(fromHere);
+  const cta = fromHere(homeCta);
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
     document.addEventListener("keydown", onKey);
     // Hold the page still behind the menu.
     const root = document.documentElement;
@@ -81,16 +100,24 @@ export function SiteHeader({ mode }: { mode: Mode }) {
       />
       <header className="sticky top-0 z-40 border-b border-ember/35 bg-cocoa text-white">
         <nav aria-label="Main" className="mx-auto flex max-w-[1200px] items-center justify-between gap-4 px-4 py-2.5 sm:px-6 lg:py-4">
-          <Link href="#top" className="py-1.5 font-script text-[34px] leading-none text-ember no-underline" onClick={() => setOpen(false)}>
+          <Link href={onHome ? "#top" : "/home"} className="py-1.5 font-script text-[34px] leading-none text-ember no-underline" onClick={() => setOpen(false)}>
             {couple.monogram}
           </Link>
   
-          <div className="hidden items-center gap-7 text-xs uppercase tracking-[0.2em] lg:flex">
-            {links.map((l) => (
-              <a key={l.href} href={l.href} className="py-3.5 text-white no-underline transition-colors hover:text-ember">
-                {l.label}
-              </a>
-            ))}
+          <div className="hidden items-center gap-5 text-xs uppercase tracking-[0.2em] lg:flex xl:gap-7">
+            {links.map((link) => {
+              const here = link.href === current;
+              return (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  aria-current={here ? "page" : undefined}
+                  className={`py-3.5 text-white no-underline transition-colors hover:text-ember ${here ? "underline decoration-ember decoration-1 underline-offset-[7px]" : ""}`}
+                >
+                  {link.label}
+                </a>
+              );
+            })}
           </div>
   
           <div className="flex items-center gap-2">
@@ -106,7 +133,7 @@ export function SiteHeader({ mode }: { mode: Mode }) {
               aria-expanded={open}
               aria-controls="site-menu"
               aria-label={open ? "Close menu" : "Open menu"}
-              onClick={() => setOpen((o) => !o)}
+              onClick={() => setOpen((isOpen) => !isOpen)}
             >
               <span className="relative size-[22px]">
                 <Icon
@@ -139,18 +166,22 @@ export function SiteHeader({ mode }: { mode: Mode }) {
         >
           <div className="overflow-hidden">
             <ul className="mx-auto flex max-w-[1200px] list-none flex-col px-5 pt-2 pb-5 sm:px-6">
-              {links.map((l, i) => (
+              {links.map((link, index) => (
                 <li
-                  key={l.href}
+                  key={link.href}
                   className={`border-b border-hairline transition-[opacity,translate] last:border-0 ${open ? `translate-y-0 opacity-100 ${opening}` : `-translate-y-2 opacity-0 ${closing}`}`}
-                  style={{ transitionDelay: open ? `${60 + i * 40}ms` : "0ms" }}
+                  style={{ transitionDelay: open ? `${60 + index * 40}ms` : "0ms" }}
                 >
                   <a
-                    href={l.href}
+                    href={link.href}
                     onClick={() => setOpen(false)}
-                    className="flex min-h-13 items-center font-serif text-[26px] italic no-underline transition-colors hover:text-ember-ink"
+                    aria-current={link.href === current ? "page" : undefined}
+                    className="flex min-h-13 items-center justify-between gap-4 font-serif text-[26px] italic no-underline transition-colors hover:text-ember-ink"
                   >
-                    {l.label}
+                    {link.menuLabel ?? link.label}
+                    {link.isNew ? (
+                      <span className="font-sans text-[10px] not-italic uppercase tracking-[0.22em] text-ember-ink">New</span>
+                    ) : null}
                   </a>
                 </li>
               ))}

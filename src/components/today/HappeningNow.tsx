@@ -1,20 +1,22 @@
 import { scheduleItemPlace } from "@/lib/content/place";
-import type { ScheduleItem, SiteContent } from "@/lib/content/schema";
-import { nowIndex } from "./day";
+import type { Celebration, ScheduleItem, SiteContent } from "@/lib/content/schema";
+import { currentItem } from "./day";
 
-/** The rounded strip in the header: what's on right now, and where. */
+/** The rounded strip in the header: what's on right now, and where. Nothing while nothing is on. */
 export function HappeningNow({
   schedule,
+  celebrations,
   venues,
-  secondDay,
+  now,
 }: {
   schedule: ScheduleItem[];
+  celebrations: Celebration[];
   venues: SiteContent["venues"];
-  secondDay: boolean;
+  now: Date;
 }) {
-  const item = schedule[nowIndex(schedule, secondDay)];
+  const item = currentItem(schedule, celebrations, now);
   if (!item) return null;
-  const place = scheduleItemPlace(item, venues).replace(/, Tepa$/, "");
+  const place = scheduleItemPlace(item, celebrations, venues).replace(/, Tepa$/, "");
   return (
     <div className="flex items-center gap-3.5 rounded-full border border-ember/50 px-5 py-3">
       <span className="live-dot" aria-hidden />

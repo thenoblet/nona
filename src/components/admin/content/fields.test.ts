@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { contentDefaults } from "@/lib/content/defaults";
 import { VENUE_LABELS } from "@/lib/content/schema";
-import { fieldsInOrder, sectionSpecs, type GroupsSpec, type ListSpec } from "./fields";
+import { fieldsInOrder, groupedIndexes, sectionSpecs, type GroupsSpec, type ListSpec } from "./fields";
 
 const celebrationFields = (sectionSpecs.celebrations as ListSpec).fields;
 const savedVenues = { venues: contentDefaults.venues };
@@ -60,38 +60,63 @@ describe("the celebration editor's place", () => {
   });
 });
 
-describe("the order of the day editor's place", () => {
+describe("the order of the day editor", () => {
   const scheduleSpec = sectionSpecs.schedule as ListSpec;
-  const [guestsArrive] = contentDefaults.schedule;
-  const otherPlace = { ...guestsArrive, venue: undefined, place: "Town park" };
+  const programme = [
+    { celebration: "reception", title: "Guests arrive" },
+    { celebration: "ceremony", title: "Guests arrive" },
+    { celebration: "thanks", title: "Sunday service" },
+    { celebration: "ceremony", title: "Vows" },
+  ];
 
-  it("chooses one of the venues, or another place", () => {
-    expect(scheduleSpec.fields.find((field) => field.label === "Venue")).toMatchObject({
-      path: ["venue"],
-      kind: "select",
-      options: [
-        { value: "church", label: "Church" },
-        { value: "reception", label: "Reception" },
-        { value: "hotel", label: "Hotel" },
-        { value: "", label: "Other place" },
-      ],
-    });
+  it("groups the items by celebration, in the order they happen", () => {
+    expect(groupedIndexes(scheduleSpec, programme)).toEqual([
+      { value: "ceremony", label: "White wedding", indexes: [1, 3] },
+      { value: "reception", label: "Reception", indexes: [0] },
+      { value: "thanks", label: "Thanksgiving", indexes: [2] },
+    ]);
   });
 
-  it("asks for the place only when the item is somewhere other than a venue", () => {
-    const fieldNames = (item: unknown) => fieldsInOrder(scheduleSpec, [item]).map((field) => field.name);
-    expect(fieldNames(guestsArrive)).toEqual([
-      "Guests arrive · Time",
-      "Guests arrive · What happens",
-      "Guests arrive · Venue",
-      "Guests arrive · Day",
+  it("lists an item in no celebration last, under no heading", () => {
+    const lost = [...programme, { celebration: "brunch", title: "Brunch" }];
+    expect(groupedIndexes(scheduleSpec, lost).at(-1)).toEqual({ value: null, label: null, indexes: [4] });
+  });
+
+  it("names each field with its celebration, as two can each have a Guests arrive", () => {
+    expect(fieldsInOrder(scheduleSpec, programme.slice(0, 2)).map((field) => field.name)).toEqual([
+      "White wedding · Guests arrive · Time",
+      "White wedding · Guests arrive · What happens",
+      "White wedding · Guests arrive · Celebration",
+      "White wedding · Guests arrive · Note",
+      "White wedding · Guests arrive · Place",
+      "Reception · Guests arrive · Time",
+      "Reception · Guests arrive · What happens",
+      "Reception · Guests arrive · Celebration",
+      "Reception · Guests arrive · Note",
+      "Reception · Guests arrive · Place",
     ]);
-    expect(fieldNames(otherPlace)).toEqual([
-      "Guests arrive · Time",
-      "Guests arrive · What happens",
-      "Guests arrive · Venue",
-      "Guests arrive · Place",
-      "Guests arrive · Day",
+  });
+
+  it("adds a new item to the celebration it is added under", () => {
+    const editable = scheduleSpec.editable!;
+    expect(editable.newItem(programme, "reception")).toMatchObject({ celebration: "reception", title: "" });
+    expect(typeof editable.addLabel === "function" && editable.addLabel("Reception")).toBe("Add an item to the Reception");
+  });
+
+  it("chooses the celebration from the three", () => {
+    expect(scheduleSpec.fields.find((field) => field.label === "Celebration")?.options).toEqual([
+      { value: "ceremony", label: "White wedding" },
+      { value: "reception", label: "Reception" },
+      { value: "thanks", label: "Thanksgiving" },
+    ]);
+  });
+});
+
+describe("an ungrouped list", () => {
+  it("shows its items together, in order", () => {
+    const faqSpec = sectionSpecs.faq as ListSpec;
+    expect(groupedIndexes(faqSpec, contentDefaults.faq)).toEqual([
+      { value: null, label: null, indexes: contentDefaults.faq.map((_item, index) => index) },
     ]);
   });
 });

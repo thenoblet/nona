@@ -1,8 +1,10 @@
+import Link from "next/link";
 import { Fragment } from "react";
 import { celebrationPlace } from "@/lib/content/place";
 import type { Celebration, SiteContent } from "@/lib/content/schema";
 import { PillAnchor, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
+import { Icon } from "@/components/ui/Icon";
 import { Reveal } from "@/components/ui/Reveal";
 import { SectionHeading } from "@/components/ui/Typography";
 
@@ -78,6 +80,18 @@ export function Celebrations({ celebrations, venues }: { celebrations: Celebrati
             <CelebrationCard key={celebration.id} celebration={celebration} venues={venues} index={index} />
           ))}
         </div>
+        <Reveal className="flex flex-col items-center gap-3 text-center sm:gap-3.5">
+          <p className="m-0 font-serif text-xl text-mocha italic sm:text-[22px]">Every part of each day, hour by hour</p>
+          <Link
+            href="/programme"
+            className="press inline-flex min-h-13 items-center gap-3 rounded-full border border-cocoa bg-white py-2 pr-2.5 pl-6.5 text-[11.5px] uppercase tracking-[0.2em] text-cocoa no-underline transition-colors hover:text-ember-ink sm:min-h-13.5 sm:pl-7 sm:text-xs"
+          >
+            See the order of the day
+            <span aria-hidden className="flex size-8.5 items-center justify-center rounded-full bg-ember text-cocoa sm:size-9">
+              <Icon name="arrow" size={16} strokeWidth={2} />
+            </span>
+          </Link>
+        </Reveal>
       </div>
     </section>
   );

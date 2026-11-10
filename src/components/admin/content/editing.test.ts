@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getAt, insertAt, moveItem, pathKey, removeAt, setAt } from "./editing";
+import { getAt, groupNeighbour, insertAt, moveItem, moveWithinGroup, pathKey, removeAt, setAt } from "./editing";
 
 describe("editing helpers", () => {
   const original = { church: { name: "Old", coords: { lat: 7, lng: -2 } }, list: ["a", "b", "c"] };
@@ -44,5 +44,28 @@ describe("editing helpers", () => {
     expect(pathKey([0, "startTime"])).toBe("0.startTime");
     expect(pathKey(["hotel", "coords", "lat"])).toBe("hotel.coords.lat");
     expect(pathKey([])).toBe("");
+  });
+});
+
+describe("moving within a group", () => {
+  // A list of two groups, as the order of the day by celebration: a1, b1, a2, b2, a3.
+  const list = ["a1", "b1", "a2", "b2", "a3"];
+  const groupA = [0, 2, 4];
+
+  it("finds the next item up or down in the same group, and none at its edges", () => {
+    expect(groupNeighbour(groupA, 2, -1)).toBe(0);
+    expect(groupNeighbour(groupA, 2, 1)).toBe(4);
+    expect(groupNeighbour(groupA, 0, -1)).toBeUndefined();
+    expect(groupNeighbour(groupA, 4, 1)).toBeUndefined();
+  });
+
+  it("moves an item past its group neighbour, leaving the other group in order", () => {
+    expect(moveWithinGroup(list, groupA, 2, -1)).toEqual(["a2", "a1", "b1", "b2", "a3"]);
+    expect(moveWithinGroup(list, groupA, 2, 1)).toEqual(["a1", "b1", "b2", "a3", "a2"]);
+  });
+
+  it("changes nothing at the group's edge", () => {
+    expect(moveWithinGroup(list, groupA, 0, -1)).toEqual(list);
+    expect(moveWithinGroup(list, groupA, 4, 1)).toEqual(list);
   });
 });

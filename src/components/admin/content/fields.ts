@@ -1,7 +1,7 @@
 import { describeDate } from "@/lib/admin/content";
 import type { ContentSectionKey } from "@/lib/admin/content";
 import { celebrationPlace } from "@/lib/content/place";
-import { CELEBRATION_VENUES, VENUE_KEYS, VENUE_LABELS, type SiteContent } from "@/lib/content/schema";
+import { CELEBRATION_VENUES, EVENT_IDS, EVENT_LABELS, VENUE_KEYS, VENUE_LABELS, type SiteContent } from "@/lib/content/schema";
 import { endsNextDay } from "@/lib/content/times";
 import { getAt } from "./editing";
 
@@ -32,16 +32,28 @@ export type FieldSpec = {
   rows?: 2;
 };
 
+/**
+ * Shows a list's items under a heading for each value of one field (the order of the day by
+ * celebration). The list is still saved as one list; items move up and down within their group.
+ */
+export type GroupBy = {
+  path: readonly string[];
+  groups: readonly { value: string; label: string }[];
+};
+
 /** A list of items, each in its own fieldset. `editable` lists can add, remove and reorder. */
 export type ListSpec = {
   layout: "list";
   fields: readonly FieldSpec[];
   legend: (item: Item, index: number) => string;
   note?: (item: Item) => string | undefined;
+  groupBy?: GroupBy;
   editable?: {
     noun: string;
-    addLabel: string;
-    newItem: (list: readonly Item[]) => Item;
+    /** The add button's text; in a grouped list it is given the group's label. */
+    addLabel: string | ((groupLabel: string) => string);
+    /** A new item, given the list and, in a grouped list, the group it is added to. */
+    newItem: (list: readonly Item[], group?: string) => Item;
     /** Items the site depends on can be edited and moved but not removed. */
     removable?: (item: Item) => boolean;
   };
@@ -102,11 +114,8 @@ function venueHint(item: Item, { venues }: EditorContext): string | undefined {
   return `Place, GPS and directions come from Venues → ${VENUE_LABELS[venue]}: ${place}${gpsLine ? ` · ${gpsLine}` : " (no GPS yet)"}`;
 }
 
-/** An order of the day item is at one of the venues, or at another place typed for it (posted as no venue). */
-const scheduleVenueOptions = [
-  ...VENUE_KEYS.map((venue) => ({ value: venue, label: VENUE_LABELS[venue] })),
-  { value: "", label: "Other place" },
-];
+/** The order of the day is grouped by celebration, in the order they happen. */
+const celebrationGroups = EVENT_IDS.map((id) => ({ value: id, label: EVENT_LABELS[id] }));
 
 const chapterFields = (body: "text" | "quote"): readonly FieldSpec[] => [
   { path: ["when"], label: "When", kind: "text", span: 2 },
@@ -154,28 +163,30 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
   },
   schedule: {
     layout: "list",
-    legend: named("title", "Item"),
+    // Numbers would count across the celebrations ("Item 20" in the reception), so a new one is just new.
+    legend: (item) => text(item, "title") || "New item",
+    groupBy: { path: ["celebration"], groups: celebrationGroups },
     fields: [
-      { path: ["time"], label: "Time", kind: "text", span: 2 },
-      { path: ["title"], label: "What happens", kind: "text", span: 4 },
-      { path: ["venue"], label: "Venue", kind: "select", span: 2, options: scheduleVenueOptions },
-      { path: ["place"], label: "Place", kind: "text", span: 2, shownFor: (item) => !text(item, "venue") },
+      { path: ["time"], label: "Time", kind: "time", span: 1, placeholder: OPTIONAL },
+      { path: ["title"], label: "What happens", kind: "text", span: 3 },
+      { path: ["celebration"], label: "Celebration", kind: "select", span: 2, options: celebrationGroups },
+      { path: ["note"], label: "Note", kind: "text", span: 3, placeholder: OPTIONAL },
       {
-        path: ["day"],
-        label: "Day",
-        kind: "select",
-        span: 2,
-        options: [
-          { value: "sat", label: "Saturday" },
-          { value: "sun", label: "Sunday" },
-        ],
+        path: ["place"],
+        label: "Place",
+        kind: "text",
+        span: 3,
+        placeholder: "At the celebration’s venue",
+        hint: "Only if it happens somewhere else.",
       },
     ],
     editable: {
       noun: "item",
-      addLabel: "Add an item",
-      newItem: (list) => ({ time: "", title: "", place: "", day: getAt(list.at(-1), ["day"]) ?? "sat" }),
+      addLabel: (groupLabel) => `Add an item to the ${groupLabel}`,
+      newItem: (_list, group) => ({ celebration: group ?? "ceremony", time: "", title: "", note: "", place: "" }),
     },
+    hint:
+      "Guests see this on the Order of the day page, grouped by celebration. Leave a time empty when it has none. On the day, the item whose time has passed shows as Happening now.",
   },
   venues: {
     layout: "groups",
@@ -300,10 +311,55 @@ export function fieldsInOrder(spec: SectionSpec, value: unknown): { path: string
     );
   }
   const items = Array.isArray(value) ? value : [];
-  return items.flatMap((item, index) =>
-    fieldsFor(spec, item).map((field) => ({
-      path: [index, ...field.path].join("."),
-      name: spec.fields.length === 1 ? spec.legend(item, index) : `${spec.legend(item, index)} · ${field.label}`,
-    })),
+  return groupedIndexes(spec, items).flatMap(({ label, indexes }) =>
+    indexes.flatMap((index) => {
+      const item = items[index];
+      const legend = label ? `${label} · ${spec.legend(item, index)}` : spec.legend(item, index);
+      return fieldsFor(spec, item).map((field) => ({
+        path: [index, ...field.path].join("."),
+        name: spec.fields.length === 1 ? legend : `${legend} · ${field.label}`,
+      }));
+    }),
   );
+}
+
+/**
+ * A list's items as the editor shows them: under each group's heading in a grouped list (an item in
+ * none comes last, under no heading), or all together. Each index points into the saved list.
+ */
+export function groupedIndexes(
+  spec: ListSpec,
+  items: readonly Item[],
+): { value: string | null; label: string | null; indexes: number[] }[] {
+  const all = items.map((_item, index) => index);
+  if (!spec.groupBy) return [{ value: null, label: null, indexes: all }];
+  const { path, groups } = spec.groupBy;
+  const known = new Set(groups.map((group) => group.value));
+  const sections = groups.map((group) => ({
+    value: group.value,
+    label: group.label,
+    indexes: all.filter((index) => getAt(items[index], path) === group.value),
+  }));
+  const rest = all.filter((index) => !known.has(String(getAt(items[index], path))));
+  return rest.length > 0 ? [...sections, { value: null, label: null, indexes: rest }] : sections;
+}
+
+/**
+ * Where an item of group `value` goes so the list stays grouped in the order the editor shows it:
+ * after the last item of its group, or of the groups before it. The save keeps the same order, so
+ * the place of a problem it reports is the place of the field on screen.
+ */
+export function groupEnd(spec: ListSpec, items: readonly Item[], value: string): number {
+  if (!spec.groupBy) return items.length;
+  const { path, groups } = spec.groupBy;
+  const order = (groupValue: unknown) => {
+    const position = groups.findIndex((group) => group.value === groupValue);
+    return position < 0 ? groups.length : position;
+  };
+  const target = order(value);
+  let end = 0;
+  items.forEach((item, index) => {
+    if (order(getAt(item, path)) <= target) end = index + 1;
+  });
+  return end;
 }

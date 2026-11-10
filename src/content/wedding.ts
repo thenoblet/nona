@@ -204,12 +204,32 @@ export const rsvp = {
     "Replies are now closed. Thank you to everyone who let us know! If your plans have changed, please message Noblet or Nancy directly.",
 };
 
-/** An item held at one of the venues names it; one held anywhere else types its `place`. */
+/**
+ * The order of the day, in order, each item part of one celebration. Times are added once they are
+ * confirmed (a 24-hour time like "14:30"); an item without one shows no time. Each item happens at
+ * its celebration's venue unless it types another `place`.
+ */
 export const schedule: ScheduleItem[] = [
-  { time: "[Time]", title: "Guests arrive", venue: "church", day: "sat" },
-  { time: "[Time]", title: "White wedding", venue: "church", day: "sat" },
-  { time: "[Time]", title: "Photos with the couple", venue: "reception", day: "sat" },
-  { time: "[Time]", title: "Reception dinner", venue: "reception", day: "sat" },
-  { time: "[Time]", title: "First dance & party", venue: "reception", day: "sat" },
-  { time: "Sun 6 Dec", title: "Thanksgiving service", venue: "church", day: "sun" },
+  { celebration: "ceremony", title: "Guests arrive", note: "Please be seated early" },
+  { celebration: "ceremony", title: "Processional", note: "The bridal party walks in" },
+  { celebration: "ceremony", title: "Opening hymn & prayer" },
+  { celebration: "ceremony", title: "Scripture readings" },
+  { celebration: "ceremony", title: "Exhortation", note: "[Officiating minister]" },
+  { celebration: "ceremony", title: "Exchange of vows & rings" },
+  { celebration: "ceremony", title: "Signing of the register" },
+  { celebration: "ceremony", title: "Presentation of the couple" },
+  { celebration: "ceremony", title: "Recessional & photos", note: "On the church steps" },
+  { celebration: "reception", title: "Guests arrive", note: "Right after the white wedding" },
+  { celebration: "reception", title: "Grand entrance of the couple" },
+  { celebration: "reception", title: "Opening prayer" },
+  { celebration: "reception", title: "Welcome by the MC" },
+  { celebration: "reception", title: "Dinner is served" },
+  { celebration: "reception", title: "Toasts" },
+  { celebration: "reception", title: "Cutting of the cake" },
+  { celebration: "reception", title: "First dance" },
+  { celebration: "reception", title: "Dancing", note: "Bring your best moves" },
+  { celebration: "reception", title: "Vote of thanks & closing prayer" },
+  { celebration: "thanks", title: "Sunday service" },
+  { celebration: "thanks", title: "Thanksgiving", note: "The couple give thanks with family and friends" },
+  { celebration: "thanks", title: "Closing & photos" },
 ];
