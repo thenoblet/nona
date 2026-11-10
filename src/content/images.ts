@@ -4,6 +4,7 @@ import embraceBw from "../../public/images/story/embrace-bw.jpg";
 import bouquet from "../../public/images/story/bouquet.jpg";
 import howWeMetBw from "../../public/images/story/how-we-met-bw.jpg";
 import earlyDays from "../../public/images/story/early-days.jpg";
+import sofa from "../../public/images/story/sofa.jpg";
 import chrysanthemumsWide from "../../public/images/flowers/chrysanthemums-wide.jpg";
 import chrysanthemumsPortrait from "../../public/images/flowers/chrysanthemums-portrait.jpg";
 import daisiesWrapped from "../../public/images/flowers/daisies-wrapped.jpg";
@@ -25,6 +26,8 @@ export const photos = {
   bouquet: { src: bouquet, alt: "Nancy holds her bouquet and the ring as they hug", position: "center 20%" },
   howWeMetBw: { src: howWeMetBw, alt: "Noblet and Nancy in their early days, in black and white", position: "center 30%" },
   earlyDays: { src: earlyDays, alt: "A playful selfie of Noblet and Nancy on a basketball court", position: "center 40%" },
+  // The pre-wedding shoot; their faces sit just above the middle, a little left of centre.
+  sofa: { src: sofa, alt: "Noblet and Nancy sit together on the floor against a cream sofa", position: "48% 28%" },
   chrysanthemumsWide: { src: chrysanthemumsWide, alt: "A soft close-up of white chrysanthemums", position: "center 45%" },
   chrysanthemumsPortrait: { src: chrysanthemumsPortrait, alt: "A bouquet of white chrysanthemums", position: "30% 40%" },
   daisiesWrapped: {

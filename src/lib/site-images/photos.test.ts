@@ -25,8 +25,8 @@ describe("what a guest page shows in a slot", () => {
     const photos = slotPhotos(await getSiteImages(), contentDefaults.party);
     expect(photos["landing-cover"]).toMatchObject({ kind: "builtin", alt: builtinPhoto("landing-cover")?.alt });
     expect(photos["story-met-arch"]?.kind).toBe("builtin");
-    // No built-in photo behind the hero, nor for a member with no portrait yet.
-    expect(photos["home-hero"]).toBeNull();
+    // The pre-wedding shoot behind the hero; nothing for a member with no portrait yet.
+    expect(photos["home-hero"]).toMatchObject({ kind: "builtin", alt: builtinPhoto("home-hero")?.alt });
     expect(photos["party-bernice"]).toBeNull();
     expect(photos["party-lilian"]?.kind).toBe("builtin");
   });

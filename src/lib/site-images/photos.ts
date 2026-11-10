@@ -12,7 +12,7 @@ import { allSlots, partySlotId, type SlotDefinition } from "./slots";
  * What each slot shows a guest: the couple's photo when they replaced it (from the worker's own
  * sizes on MEDIA_BASE_URL, Ruling CI), else its built-in photo from src/content/images.ts (through
  * next/image, as before), with any alt text and focal point they edited. A slot with neither (a
- * wedding-party member with no portrait yet, the home hero before the shoot) shows nothing.
+ * wedding-party member with no portrait yet) shows nothing.
  */
 
 /** A built-in photo: the static import (its size and blur placeholder), alt text and object-position. */
@@ -32,8 +32,8 @@ const PREVIEW_IMAGES: Record<PreviewCardId, StaticImageData> = {
 const BUILTIN_PHOTOS: Record<string, BuiltinPhoto | null> = {
   "landing-cover": builtin(photos.embraceBw),
   "landing-print": builtin(photos.bouquet),
-  // The pre-wedding shoot goes here; until then the hero is plain cocoa.
-  "home-hero": null,
+  // The pre-wedding shoot, behind the names until the couple choose another in Site photos.
+  "home-hero": builtin(photos.sofa),
   "invitation-band": builtin(photos.chrysanthemumsWide),
   "story-met-arch": builtin(photos.howWeMetBw),
   "story-met-print": builtin(photos.earlyDays),

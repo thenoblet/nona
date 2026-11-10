@@ -129,7 +129,6 @@ describe("saveSlotAction", () => {
     expect(result).toMatchObject({ ok: true, slot: { state: "builtin", edited: true, alt: "Us, 2019", focal: { x: 0.2, y: 0.7 } } });
     expect(await readLiveSiteImage("story-met-arch")).toMatchObject({ mediaId: null, alt: "Us, 2019", focal: { x: 0.2, y: 0.7 } });
 
-    expect(await saveSlotAction({ slot: "home-hero", mediaId: null, alt: "Us", focal: { x: 0.5, y: 0.5 } })).toMatchObject({ ok: false });
     expect(await saveSlotAction({ slot: "party-bernice", mediaId: null, alt: "Bernice", focal: { x: 0.5, y: 0.5 } })).toMatchObject({
       ok: false,
     });
@@ -177,7 +176,7 @@ describe("restoreSlotAction", () => {
     await saveSlotAction({ slot: "landing-cover", mediaId, alt: "Cover", focal: { x: 0.5, y: 0.5 } });
     const cover = await readLiveSiteImage("landing-cover");
     expect(await restoreSlotAction("landing-print", cover!.id)).toMatchObject({ ok: false });
-    expect(await restoreSlotAction("home-hero", "builtin")).toMatchObject({ ok: false });
+    expect(await restoreSlotAction("party-bernice", "builtin")).toMatchObject({ ok: false });
   });
 
   it("refuses anyone but the couple", async () => {

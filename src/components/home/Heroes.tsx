@@ -25,8 +25,8 @@ const wrap = "relative bg-cocoa px-5 text-center text-white sm:px-6";
 const inner = "relative mx-auto flex max-w-[900px] flex-col items-center";
 
 /**
- * The couple's photo behind the names (the admin's "Home hero", the pre-wedding shoot), under the
- * cards' cocoa wash so the names stay clear. Nothing until they add one: the hero is plain cocoa.
+ * The couple's photo behind the names (the admin's "Home hero": the pre-wedding shoot until they
+ * choose another), under the cards' cocoa wash so the names stay clear.
  */
 function HeroBackdrop({ photo }: { photo: SlotPhoto | null }) {
   if (!photo) return null;
