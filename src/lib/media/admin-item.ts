@@ -1,5 +1,5 @@
 import type { AdminStateName } from "@/lib/db/schema";
-import { ALBUM_CELEBRATIONS, type AlbumCelebration, type AlbumKind, sizeWords } from "./album-item";
+import { ALBUM_CELEBRATIONS, askedCelebration, type AlbumCelebration, type AlbumKind, sizeWords } from "./album-item";
 
 /*
  * What the admin's Photos page (Task 17, gate B) has of each album item, its filter, and the words
@@ -111,7 +111,7 @@ type QueryLike = Pick<URLSearchParams, "get">;
 /** The filter a query names (an empty search is none), or null when it names one the admin doesn't offer. */
 export function parseAdminFilter(query: QueryLike): AdminFilter | null {
   const chip = query.get(QUERY.chip);
-  const celebration = query.get(QUERY.celebration);
+  const celebration = askedCelebration(query.get(QUERY.celebration));
   const kind = query.get(QUERY.kind);
   const search = query.get(QUERY.search)?.trim() ?? "";
   if (chip !== null && !(ADMIN_CHIPS as readonly string[]).includes(chip)) return null;

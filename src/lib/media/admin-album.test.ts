@@ -8,6 +8,7 @@ import { resetDb } from "../../../test/db";
 import {
   adminCountsQuery,
   adminPageQuery,
+  adminReads,
   findAdminItem,
   guestUploadsQuery,
   listAdminAlbum,
@@ -149,6 +150,49 @@ describe("listAdminAlbum", () => {
     expect(await ids({ search: "o_A" })).toEqual([percent]);
     expect(await ids({ search: "%" })).toEqual([percent]);
     expect(await ids({ search: "nobody" })).toEqual([]);
+  });
+
+  it("shows an old thanksgiving moment under More moments", async () => {
+    const thanksgiving = await addAlbumItem({ celebration: "thanks", uploadedAt: new Date(Date.now() - 60_000) });
+    const more = await addAlbumItem({ celebration: "more", uploadedAt: new Date(Date.now() - 120_000) });
+    await addAlbumItem({ celebration: "ceremony" });
+
+    const page = await listAdminAlbum({ filter: { celebration: "more" } });
+    expect(page.items.map((item) => item.id)).toEqual([thanksgiving, more]);
+    expect(page.items.map((item) => item.celebration)).toEqual(["more", "more"]);
+    expect(await findAdminItem(thanksgiving)).toMatchObject({ celebration: "more" });
+
+    const rows = await readAdminCounts();
+    expect(countsFor(rows, { celebration: "more" }).total).toBe(2);
+    expect(rows.map((row) => row.celebration)).not.toContain("thanks");
+  });
+
+  it("pages More moments across those stored as the thanksgiving, newest upload first, each once", async () => {
+    const tied = new Date("2026-12-05T18:00:00.123Z");
+    const moments: { id: string; uploadedAt: number }[] = [];
+    // Eight a second apart, alternating between the two stored values, then four sharing one upload time.
+    const uploadTimes = [...Array.from({ length: 8 }, (_, index) => tied.getTime() + (index + 1) * 1000), ...Array(4).fill(tied.getTime())];
+    for (const [index, uploadedAt] of uploadTimes.entries()) {
+      const celebration = index % 2 === 0 ? "more" : "thanks";
+      moments.push({ id: await addAlbumItem({ celebration, uploadedAt: new Date(uploadedAt) }), uploadedAt });
+    }
+    await addAlbumItem({ celebration: "reception", uploadedAt: new Date(tied.getTime() + 4500) });
+    // Newest upload first, the id (descending) breaking ties, as media_admin_celebration_idx reads them.
+    const expected = [...moments]
+      .sort((first, second) => second.uploadedAt - first.uploadedAt || (second.id < first.id ? -1 : second.id > first.id ? 1 : 0))
+      .map((moment) => moment.id);
+
+    // Five a page: the second page ends between the four that share an upload time.
+    const pages: string[][] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await listAdminAlbum({ filter: { celebration: "more" }, cursor, limit: 5 });
+      expect(page.items.every((item) => item.celebration === "more")).toBe(true);
+      pages.push(page.items.map((item) => item.id));
+      cursor = page.nextCursor;
+    } while (cursor && pages.length < 10);
+    expect(pages.map((page) => page.length)).toEqual([5, 5, 2]);
+    expect(pages.flat()).toEqual(expected);
   });
 
   it("pages by a cursor of the upload time and id, so an item uploaded meanwhile never shifts the pages below", async () => {
@@ -326,7 +370,7 @@ describe("the admin's plans (Ruling BW)", () => {
 
   /**
    * The night's album as the planner would see it: 6,000 items from 300 guests with their names,
-   * most of them ready photos in the three celebrations, one in eight a video (some converting or
+   * most of them ready photos in the two celebrations, one in eight a video (some converting or
    * queued for conversion), a few dozen from other days, failed, processing, hidden, removed and
    * highlighted ones, uploads under way and wishes' recordings beside them, with the derived keys,
    * ThumbHash and fingerprint a real row carries, analysed and vacuumed as autovacuum leaves a table
@@ -345,7 +389,7 @@ describe("the admin's plans (Ruling BW)", () => {
       select case when n % 50 = 0 then 'wish' else 'album' end,
         case when n % 8 = 0 then 'video' else 'photo' end,
         guest.id, guest.display_name,
-        case when n % 150 = 0 then 'more' when n % 3 = 0 then 'ceremony' when n % 3 = 1 then 'reception' else 'thanks' end,
+        case when n % 150 = 0 then 'more' when n % 2 = 0 then 'ceremony' else 'reception' end,
         'originals/' || gen_random_uuid() || case when n % 8 = 0 then '.mov' else '.jpg' end, 'IMG_' || n || '.JPG', 3000000, 'image/jpeg',
         case when n % 97 = 0 then 'uploaded' when n % 89 = 0 then 'failed' when n % 400 = 0 then 'uploading' else 'ready' end,
         case when n % 400 = 0 then null else now() - make_interval(secs => 6000 - n) end,
@@ -401,11 +445,15 @@ describe("the admin's plans (Ruling BW)", () => {
   });
 
   it("pages a celebration along media_admin_celebration_idx, More moments too, with no sort", async () => {
+    // More moments is two reads, "more" and the retired thanksgiving, merged: each keeps to the index.
+    expect(adminReads({ celebration: "more" }).map((read) => read.celebration)).toEqual(["more", "thanks"]);
     for (const filter of [{ celebration: "more" as const }, { celebration: "reception" as const, kind: "photo" as const }]) {
-      const plan = await genericPlan(adminPageQuery(filter, cursor, 31));
-      expect(plan).toContain("media_admin_celebration_idx");
-      expect(plan).toMatch(/Index Cond: .*celebration/);
-      noSortNoSeqScan(plan);
+      for (const read of adminReads(filter)) {
+        const plan = await genericPlan(adminPageQuery(read, cursor, 31));
+        expect(plan).toContain("media_admin_celebration_idx");
+        expect(plan).toMatch(/Index Cond: .*celebration/);
+        noSortNoSeqScan(plan);
+      }
     }
   });
 
@@ -426,7 +474,7 @@ describe("the admin's plans (Ruling BW)", () => {
       { search: "ama" },
       { search: "zz" },
       { search: "mensah", kind: "video" as const },
-      { search: "ama", celebration: "thanks" as const },
+      { search: "ama", celebration: "more" as const },
       { search: "kofi", chip: "hidden" as const },
       { search: "kofi", chip: "highlights" as const },
     ]) {

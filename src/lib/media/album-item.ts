@@ -1,4 +1,4 @@
-import type { EventId } from "@/lib/content/schema";
+import type { EventId, GuestEventId, RETIRED_EVENT_ID } from "@/lib/content/schema";
 
 /*
  * What the album sends its page about each moment, and the words it shows for them (Task 15, gate
@@ -7,7 +7,27 @@ import type { EventId } from "@/lib/content/schema";
  */
 
 /** The celebration a moment is grouped under; "more" is any other day ("More moments"). */
-export type AlbumCelebration = EventId | "more";
+export type AlbumCelebration = GuestEventId | "more";
+
+/**
+ * The retired thanksgiving's id, which moments stored while guests were asked to it, and a page
+ * left on its old chip, may still name. Typed as RETIRED_EVENT_ID rather than imported from it: this
+ * file reaches the album's page, and schema.ts's values would bring zod and the site text with them.
+ */
+const RETIRED_CELEBRATION: typeof RETIRED_EVENT_ID = "thanks";
+
+/** The celebration a stored moment is shown under: one stored as the thanksgiving joins More moments. */
+export function albumCelebrationOf(stored: EventId | "more"): AlbumCelebration {
+  return stored === RETIRED_CELEBRATION ? "more" : stored;
+}
+
+/**
+ * The celebration a filter's query names, or null for none. The thanksgiving's old chip names none,
+ * so a page left on it sees the whole album rather than a filter refused.
+ */
+export function askedCelebration(named: string | null): string | null {
+  return named === RETIRED_CELEBRATION ? null : named;
+}
 
 export type AlbumKind = "photo" | "video";
 
@@ -94,7 +114,7 @@ export function filterQuery(filter: AlbumFilter): URLSearchParams {
 
 /** The filter a query names, or null when it names one the album doesn't know. */
 export function parseFilter(query: URLSearchParams): AlbumFilter | null {
-  const celebration = query.get("celebration");
+  const celebration = askedCelebration(query.get("celebration"));
   const kind = query.get("kind");
   const view = query.get("view");
   if (celebration !== null && !(ALBUM_CELEBRATIONS as readonly string[]).includes(celebration)) return null;
@@ -111,7 +131,6 @@ export function parseFilter(query: URLSearchParams): AlbumFilter | null {
 export const CELEBRATION_LABELS: Record<AlbumCelebration, string> = {
   ceremony: "Ceremony",
   reception: "Reception",
-  thanks: "Thanksgiving",
   more: "More moments",
 };
 
@@ -119,11 +138,10 @@ export const CELEBRATION_LABELS: Record<AlbumCelebration, string> = {
 const CELEBRATION_SLUGS: Record<AlbumCelebration, string> = {
   ceremony: "ceremony",
   reception: "reception",
-  thanks: "thanksgiving",
   more: "more",
 };
 
-export const ALBUM_CELEBRATIONS: readonly AlbumCelebration[] = ["ceremony", "reception", "thanks", "more"];
+export const ALBUM_CELEBRATIONS: readonly AlbumCelebration[] = ["ceremony", "reception", "more"];
 
 /** A download's filename: NONA26-<celebration>-<the id's first eight characters>.<ext>. */
 export function downloadFilename(celebration: AlbumCelebration, mediaId: string, extension: string): string {

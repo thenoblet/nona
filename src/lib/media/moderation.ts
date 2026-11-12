@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { EVENT_IDS, type EventId } from "@/lib/content/schema";
+import { GUEST_EVENT_IDS, type GuestEventId } from "@/lib/content/schema";
 import { isUuid } from "@/lib/data/ids";
 import { getSetting, SETTING_DEFAULTS, setSetting } from "@/lib/data/settings";
 import { getDb } from "@/lib/db/client";
@@ -84,7 +84,7 @@ export type DeleteResult =
 const OK = { ok: true } as const;
 const NOT_FOUND = { ok: false, reason: "not-found" } as const;
 
-const CELEBRATIONS: readonly string[] = [...EVENT_IDS, "more"];
+const CELEBRATIONS: readonly string[] = [...GUEST_EVENT_IDS, "more"];
 
 /**
  * How long after its upload an original may be deleted: R2's bucket lock keeps `originals/` for 30
@@ -256,7 +256,7 @@ export async function unhideMedia(mediaId: string, admin: string, options: Moder
  */
 export async function moveMedia(
   mediaId: string,
-  celebration: EventId | "more",
+  celebration: GuestEventId | "more",
   admin: string,
   options: ModerationOptions,
 ): Promise<ModerationResult> {

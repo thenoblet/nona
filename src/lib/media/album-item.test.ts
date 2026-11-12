@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { albumSummaryWords } from "./album-item";
+import { albumSummaryWords, parseFilter } from "./album-item";
 
 describe("albumSummaryWords", () => {
   it("counts the photos, the videos and the guests who shared them", () => {
@@ -22,5 +22,13 @@ describe("albumSummaryWords", () => {
     for (const counts of [null, { photos: 0, videos: 0, sharers: 0 }, { photos: 5, videos: 5, sharers: 5 }]) {
       expect(albumSummaryWords(counts)).not.toMatch(/[[\]]/);
     }
+  });
+});
+
+describe("parseFilter", () => {
+  it("reads an old Thanksgiving chip as the whole album", () => {
+    const filter = parseFilter(new URLSearchParams("celebration=thanks"));
+    expect(filter).not.toBeNull();
+    expect(filter?.celebration).toBeUndefined();
   });
 });

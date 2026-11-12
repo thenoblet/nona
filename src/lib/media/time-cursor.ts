@@ -4,7 +4,8 @@ import { isUuid } from "@/lib/data/ids";
 
 /*
  * Where a page of the admin's lists ends (Task 17): the last row's time, to the microsecond, and its
- * id, which breaks ties. The admin's album pages by uploaded_at and its wishes by created_at.
+ * id, which breaks ties. The admin's album pages by uploaded_at and its wishes by created_at. Also
+ * the order in which rows read apart along such an index are merged (newestFirst).
  */
 
 /** A page's end: a time to the microsecond, in UTC ("2026-12-05T18:00:00.123456Z"), and the row's id. */
@@ -25,6 +26,18 @@ export function decodeTimeCursor(value: string | null | undefined): TimeCursor |
   const [at, id, ...rest] = Buffer.from(value, "base64url").toString("utf8").split("~");
   if (rest.length > 0 || !at || !id || !TIME_TEXT.test(at) || !isUuid(id)) return null;
   return { at, id: id.toLowerCase() };
+}
+
+/**
+ * Newest first, as the indexes read: by a time as text to the microsecond (microsecondText), then
+ * the id, both descending. Both are fixed-width text, so text order is theirs. For rows read apart,
+ * each along an index in this order, and merged: My uploads' guests, the admin's More moments.
+ */
+export function newestFirst<TRow extends { id: string }>(timeText: (row: TRow) => string | null) {
+  return (first: TRow, second: TRow): number => {
+    const byTime = (timeText(second) ?? "").localeCompare(timeText(first) ?? "");
+    return byTime !== 0 ? byTime : second.id < first.id ? -1 : second.id > first.id ? 1 : 0;
+  };
 }
 
 /** A time column as a cursor carries it, to the microsecond, in UTC. */

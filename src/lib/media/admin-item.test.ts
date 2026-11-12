@@ -46,6 +46,13 @@ describe("the admin's filter", () => {
     expect(parseAdminFilter(new URLSearchParams("q=%20%20"))).toEqual({});
   });
 
+  it("reads an old Thanksgiving chip as every celebration", () => {
+    const filter = parseAdminFilter(new URLSearchParams("celebration=thanks&kind=photo"));
+    expect(filter).not.toBeNull();
+    expect(filter?.celebration).toBeUndefined();
+    expect(filter?.kind).toBe("photo");
+  });
+
   it("refuses a chip, celebration or kind the admin doesn't offer, and a search past 80 characters", () => {
     for (const query of ["show=all", "show=deleted", "celebration=honeymoon", "kind=audio", `q=${"a".repeat(81)}`]) {
       expect(parseAdminFilter(new URLSearchParams(query)), query).toBeNull();

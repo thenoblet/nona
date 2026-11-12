@@ -1,4 +1,4 @@
-import { EVENT_IDS, type Celebration, type EventId } from "@/lib/content/schema";
+import { GUEST_EVENT_IDS, type Celebration, type GuestEventId } from "@/lib/content/schema";
 import { endsNextDay, TIME_PATTERN } from "@/lib/content/times";
 
 /*
@@ -17,14 +17,13 @@ const DEFAULT_LENGTH_MS = 3 * HOUR_MS;
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** The window a celebration has while its start time isn't set; any end on its own is ignored. */
-const DEFAULT_WINDOWS: Record<EventId, { startTime: string; endTime: string }> = {
+const DEFAULT_WINDOWS: Record<GuestEventId, { startTime: string; endTime: string }> = {
   ceremony: { startTime: "10:00", endTime: "13:00" },
   reception: { startTime: "14:00", endTime: "23:59" },
-  thanks: { startTime: "09:00", endTime: "12:00" },
 };
 
 /** A celebration's window as UTC milliseconds: it holds its start, and its end belongs to what follows. */
-type Window = { id: EventId; date: string; start: number; end: number };
+type Window = { id: GuestEventId; date: string; start: number; end: number };
 
 /** Milliseconds since the epoch for a "YYYY-MM-DD" date and "HH:MM" time in Accra, or null if either is malformed. */
 function accraTime(date: string, time: string): number | null {
@@ -63,26 +62,24 @@ function isReadable(date: Date | null): date is Date {
 /**
  * The celebration an upload is grouped under, or "more" (More moments). The rules, in order:
  * 1. Inside a celebration's window → that celebration. Where windows overlap, the one that
- *    started last.
+ *    started last. A reception running past midnight keeps its early-Sunday photos.
  * 2. On the ceremony and reception's day (Saturday), outside both windows → the one whose window
  *    is nearest.
- * 3. On the thanksgiving's day (Sunday) → the thanksgiving, unless rule 1 matched (a reception
- *    running past midnight keeps its early-Sunday photos).
- * 4. Any other day → "more".
- * 5. With no readable capture time, the upload time stands in for it.
+ * 3. Any other day, Sunday too → "more".
+ * 4. With no readable capture time, the upload time stands in for it.
  *
- * Rules 2 and 3 are one rule: outside every window, a day that has celebrations goes to its
- * nearest one. The days come from the celebrations' own dates, so moving them in the admin moves
- * the weekend. A tie goes to the first in the order white wedding, reception, thanksgiving.
+ * Rule 2 holds for any day that has a celebration: outside every window, it goes to its nearest
+ * one. The days come from the celebrations' own dates, so moving them in the admin moves them. A
+ * tie goes to the first in the order white wedding, reception.
  */
-export function assignCelebration(capturedAt: Date | null, uploadedAt: Date, celebrations: Celebration[]): EventId | "more" {
+export function assignCelebration(capturedAt: Date | null, uploadedAt: Date, celebrations: Celebration[]): GuestEventId | "more" {
   const takenAt = isReadable(capturedAt) ? capturedAt : uploadedAt;
   if (!isReadable(takenAt)) return "more";
   const moment = takenAt.getTime();
   const windows = celebrations
     .map(windowOf)
     .filter((window) => window !== null)
-    .sort((first, second) => EVENT_IDS.indexOf(first.id) - EVENT_IDS.indexOf(second.id));
+    .sort((first, second) => GUEST_EVENT_IDS.indexOf(first.id) - GUEST_EVENT_IDS.indexOf(second.id));
 
   let inside: Window | null = null;
   for (const window of windows) {

@@ -497,7 +497,7 @@ describe("a photo's derived files", () => {
 
 describe("a photo's capture time and celebration", () => {
   it("are read from the EXIF, with its offset, and the celebration assigned again from that time", async () => {
-    // 01:00 on Sunday at +02:00 is 23:00 on Saturday in Accra: the reception, not the thanksgiving.
+    // 01:00 on Sunday at +02:00 is 23:00 on Saturday in Accra: the reception, not More moments.
     const mediaId = await uploadedPhoto(await phonePhoto(1200, 900).jpeg().toBuffer(), "jpg", { celebration: "more" });
 
     await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
@@ -524,16 +524,16 @@ describe("a photo's capture time and celebration", () => {
 
   it("keep the celebration the couple moved the item to", async () => {
     const mediaId = await uploadedPhoto(await phonePhoto(1200, 900).jpeg().toBuffer(), "jpg", {
-      celebration: "thanks",
+      celebration: "ceremony",
       celebrationSetByAdmin: true,
     });
 
     await processPhoto(photoJob(mediaId), PHOTO_OPTIONS);
 
     const item = await readItem(mediaId);
-    expect(item).toMatchObject({ status: "ready", celebration: "thanks", celebrationSetByAdmin: true });
+    expect(item).toMatchObject({ status: "ready", celebration: "ceremony", celebrationSetByAdmin: true });
     expect(item.capturedAt?.toISOString()).toBe("2026-12-05T23:00:00.000Z");
-    expect(await readManifest(mediaId)).toMatchObject({ celebration: "thanks", celebrationSetByAdmin: true });
+    expect(await readManifest(mediaId)).toMatchObject({ celebration: "ceremony", celebrationSetByAdmin: true });
   });
 
   it("fall back to the time the phone sent when the file has none", async () => {

@@ -3,7 +3,7 @@ import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
 import { publicUrl } from "@/lib/storage/keys";
 import { visibleAlbumItems } from "./album";
-import type { AlbumCelebration, AlbumKind } from "./album-item";
+import { albumCelebrationOf, type AlbumCelebration, type AlbumKind } from "./album-item";
 
 /*
  * The venue TV's moments (Task 20): the album's own, as everyone sees them (ready, never a wish,
@@ -27,6 +27,7 @@ export type SlideshowItem = {
   height: number | null;
   /** The name it was shared under; null for none. */
   by: string | null;
+  /** As the album shows it: one stored as the thanksgiving is More moments. */
   celebration: AlbumCelebration;
   /** When it was listed, ISO, to the millisecond. */
   listedAt: string;
@@ -80,7 +81,7 @@ export async function listSlideshowItems(delaySeconds: number): Promise<Slidesho
         width: row.width,
         height: row.height,
         by: row.uploaderName,
-        celebration: row.celebration,
+        celebration: albumCelebrationOf(row.celebration),
         listedAt: row.listedAt.toISOString(),
       },
     ];

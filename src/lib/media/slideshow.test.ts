@@ -113,7 +113,7 @@ describe("the slideshow's plan", () => {
       select case when n % 50 = 0 then 'wish' else 'album' end,
         case when n % 8 = 0 then 'video' else 'photo' end,
         ('00000000-0000-4000-8000-' || lpad((n % 300 + 1)::text, 12, '0'))::uuid,
-        'Guest', case when n % 150 = 0 then 'more' when n % 3 = 0 then 'ceremony' when n % 3 = 1 then 'reception' else 'thanks' end,
+        'Guest', case when n % 150 = 0 then 'more' when n % 2 = 0 then 'ceremony' else 'reception' end,
         'originals/plan-' || n || '.jpg', 'IMG.JPG', 3000000, 'image/jpeg',
         case when n % 97 = 0 then 'uploaded' when n % 89 = 0 then 'failed' else 'ready' end,
         case when n % 97 = 0 or n % 89 = 0 then null else now() - make_interval(secs => 6000 - n) end,

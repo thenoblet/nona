@@ -4,7 +4,6 @@ import { getSetting, SETTING_DEFAULTS } from "@/lib/data/settings";
 import { listAdminAlbum, readAdminCounts } from "@/lib/media/admin-album";
 import { countsFor, parseAdminFilter, queryOf, type AdminCountRow } from "@/lib/media/admin-item";
 import { countAdminWishes, listAdminWishes } from "@/lib/media/admin-wishes";
-import type { AlbumCelebration } from "@/lib/media/album-item";
 import { readSlideshowDelay } from "@/lib/media/slideshow-delay";
 import { readUploadsSwitch } from "@/lib/media/uploads-switch";
 import { AlbumBrowser } from "./AlbumBrowser";
@@ -21,7 +20,7 @@ import { WishesTable } from "./WishesTable";
 async function celebrationOptions(): Promise<CelebrationOption[]> {
   const { celebrations } = await getSiteContent();
   return [
-    ...celebrations.map((celebration) => ({ id: celebration.id as AlbumCelebration, name: celebration.name })),
+    ...celebrations.map((celebration) => ({ id: celebration.id, name: celebration.name })),
     { id: "more" as const, name: "More moments" },
   ];
 }
