@@ -141,7 +141,17 @@ test("with nothing replaced, the landing cover and print render exactly as befor
       ),
     ),
   );
-  expect(images).toEqual(expected);
+  // A style attribute as its declarations: React's server markup writes "a:b;c:d", and the browser
+  // "a: b; c: d;" once React has set the style itself (a streamed part rendered on the client), so
+  // the punctuation shifts from run to run while the markup is the same.
+  const declarations = (attributes: Record<string, string | undefined>) => ({
+    ...attributes,
+    style: attributes.style
+      ?.split(";")
+      .map((declaration) => declaration.trim().replace(/\s*:\s*/, ": "))
+      .filter(Boolean),
+  });
+  expect(images.map(declarations)).toEqual(expected.map(declarations));
   await guest.close();
 });
 
