@@ -36,7 +36,7 @@ function CelebrationCard({
       as="article"
       className={`paper-card flex flex-col items-center gap-4.5 rounded-[var(--radius-paper)] bg-white px-6 pt-11 pb-8 text-center shadow-[var(--shadow-paper)] sm:px-7.5 ${
         index === 0 ? "outline outline-1 -outline-offset-[12px] outline-ember/45" : ""
-      } ${index === 1 ? "lg:mt-[18px]" : ""}`}
+      }`}
       style={{ transform: `rotate(${tilts[index % tilts.length]})` }}
     >
       <div className="flex flex-col items-center gap-1">
@@ -73,15 +73,16 @@ export function Celebrations({ celebrations, venues }: { celebrations: Celebrati
     <section id="celebrations" className="bg-tray px-5 pt-20 pb-24 sm:px-6 sm:pt-28 sm:pb-30">
       <div className="mx-auto flex max-w-[1160px] flex-col gap-14 sm:gap-16">
         <Reveal>
-          <SectionHeading eyebrow="Save the dates" title="The celebrations" />
+          <SectionHeading eyebrow="Save the date" title="The celebrations" />
         </Reveal>
-        <div className="grid grid-cols-1 items-stretch gap-x-8 gap-y-10 md:grid-cols-2 lg:grid-cols-3">
+        {/* From 1024 px each card is as wide as one of three (the row less two 2rem gaps, over three), and the pair is centred. */}
+        <div className="grid grid-cols-1 items-stretch gap-x-8 gap-y-10 md:grid-cols-2 lg:grid-cols-[repeat(2,calc((100%_-_4rem)/3))] lg:justify-center">
           {celebrations.map((celebration, index) => (
             <CelebrationCard key={celebration.id} celebration={celebration} venues={venues} index={index} />
           ))}
         </div>
         <Reveal className="flex flex-col items-center gap-3 text-center sm:gap-3.5">
-          <p className="m-0 font-serif text-xl text-mocha italic sm:text-[22px]">Every part of each day, hour by hour</p>
+          <p className="m-0 font-serif text-xl text-mocha italic sm:text-[22px]">Every part of the day, hour by hour</p>
           <Link
             href="/programme"
             className="press inline-flex min-h-13 items-center gap-3 rounded-full border border-cocoa bg-white py-2 pr-2.5 pl-6.5 text-[11.5px] uppercase tracking-[0.2em] text-cocoa no-underline transition-colors hover:text-ember-ink sm:min-h-13.5 sm:pl-7 sm:text-xs"

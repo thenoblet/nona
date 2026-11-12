@@ -542,18 +542,18 @@ describe("unhiding (Review Focus 3)", () => {
 describe("a move (the couple's celebration) survives processing", () => {
   it("is kept when the photo is processed after it, and again after a hide and an unhide", async () => {
     const mediaId = await uploadedPhoto({ capturedAt: new Date("2026-12-05T20:00:00Z") });
-    await moveMedia(mediaId, "thanks", ADMIN);
+    await moveMedia(mediaId, "ceremony", ADMIN);
 
     await processPhoto(jobFor(MEDIA_QUEUES.photo, { mediaId }), photoOptions);
-    expect(await readItem(mediaId)).toMatchObject({ status: "ready", celebration: "thanks", celebrationSetByAdmin: true });
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", celebration: "ceremony", celebrationSetByAdmin: true });
 
     await hideMedia(mediaId, { admin: ADMIN });
     await runQueued(MEDIA_QUEUES.visibility, mediaId, runVisibility);
     await unhideMedia(mediaId, ADMIN);
     await runQueued(MEDIA_QUEUES.photo, mediaId, runPhoto);
 
-    expect(await readItem(mediaId)).toMatchObject({ status: "ready", celebration: "thanks", celebrationSetByAdmin: true });
-    expect(await readManifest(mediaId)).toMatchObject({ celebration: "thanks", celebrationSetByAdmin: true, hiddenAt: null });
+    expect(await readItem(mediaId)).toMatchObject({ status: "ready", celebration: "ceremony", celebrationSetByAdmin: true });
+    expect(await readManifest(mediaId)).toMatchObject({ celebration: "ceremony", celebrationSetByAdmin: true, hiddenAt: null });
   });
 });
 

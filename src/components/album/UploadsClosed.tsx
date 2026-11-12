@@ -3,8 +3,8 @@ import { Icon } from "@/components/ui/Icon";
 
 /**
  * In place of the share buttons while sharing isn't open (gate A): before the couple open it, the
- * wedding weekend's dates and Add to calendar; once they close it, a thank-you. The album below
- * stays open to look through.
+ * wedding's date and Add to calendar; once they close it, a thank-you. The album below stays open
+ * to look through.
  */
 export function UploadsClosed({ phase }: { phase: "before" | "after" }) {
   const before = phase === "before";
@@ -14,11 +14,11 @@ export function UploadsClosed({ phase }: { phase: "before" | "after" }) {
         <Halo icon={before ? "calendar" : "heart"} size="md" tone="dark" />
         <div className="flex min-w-0 flex-col gap-1.5">
           <p className="m-0 font-serif text-[23px] leading-[1.18] text-white italic">
-            {before ? "Photo and video sharing opens on the wedding weekend" : "Sharing has closed"}
+            {before ? "Photo and video sharing opens on the wedding day" : "Sharing has closed"}
           </p>
           <p className="m-0 text-[13.5px] leading-[1.55] text-mist">
             {before
-              ? "Saturday 5 and Sunday 6 December. Come back here with your camera ready."
+              ? "Saturday 5 December. Come back here with your camera ready."
               : "Thank you for every photo and video. The album stays here for you to look through."}
           </p>
         </div>

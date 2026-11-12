@@ -31,8 +31,8 @@ export const wedding = {
   rsvpBy: "2026-11-20",
   /** The wedding weekend starts at midnight on 5 Dec (Ghana is GMT all year). */
   weekendStart: "2026-12-05T00:00:00Z",
-  /** The thank-you version starts at midnight on 7 Dec. */
-  weekendEnd: "2026-12-07T00:00:00Z",
+  /** The after version starts at 05:00 on Sunday 6 Dec, once Saturday night is over. */
+  weekendEnd: "2026-12-06T05:00:00Z",
   /** Countdown target. */
   countdownTo: "2026-12-05T00:00:00Z",
 } as const;
@@ -93,20 +93,6 @@ export const celebrations: Celebration[] = [
     date: "2026-12-05",
     startTime: "14:30",
     endTime: "19:30",
-  },
-  {
-    id: "thanks",
-    venue: "church",
-    name: "Thanksgiving service",
-    weekday: "Sunday",
-    weekdayShort: "Sun",
-    day: "06",
-    month: "December",
-    time: "[Start time]",
-    dress: "Your Sunday best",
-    date: "2026-12-06",
-    startTime: null,
-    endTime: null,
   },
 ];
 
@@ -244,7 +230,4 @@ export const schedule: ScheduleItem[] = [
   { celebration: "reception", time: "18:45", title: "Bouquet toss" },
   { celebration: "reception", time: "18:55", title: "DJ and open dance floor" },
   { celebration: "reception", time: "19:25", title: "Closing remarks and appreciation" },
-  { celebration: "thanks", title: "Sunday service" },
-  { celebration: "thanks", title: "Thanksgiving", note: "The couple give thanks with family and friends" },
-  { celebration: "thanks", title: "Closing & photos" },
 ];

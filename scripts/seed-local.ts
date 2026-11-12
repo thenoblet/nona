@@ -59,11 +59,11 @@ const SAMPLE_PHOTOS = [
   { id: "5eed0000-0000-4000-8000-000000000101", file: "story/nancy-smile.jpg", celebration: "reception" },
   { id: "5eed0000-0000-4000-8000-000000000102", file: "story/embrace-bw.jpg", celebration: "ceremony" },
   { id: "5eed0000-0000-4000-8000-000000000103", file: "flowers/chrysanthemums-portrait.jpg", celebration: "reception" },
-  { id: "5eed0000-0000-4000-8000-000000000104", file: "story/bouquet.jpg", celebration: "thanks" },
+  { id: "5eed0000-0000-4000-8000-000000000104", file: "story/bouquet.jpg", celebration: "more" },
   { id: "5eed0000-0000-4000-8000-000000000105", file: "story/kiss.jpg", celebration: "ceremony" },
   { id: "5eed0000-0000-4000-8000-000000000106", file: "flowers/daisies-wrapped.jpg", celebration: "reception" },
   { id: "5eed0000-0000-4000-8000-000000000107", file: "story/early-days.jpg", celebration: "more" },
-  { id: "5eed0000-0000-4000-8000-000000000108", file: "story/how-we-met-bw.jpg", celebration: "thanks" },
+  { id: "5eed0000-0000-4000-8000-000000000108", file: "story/how-we-met-bw.jpg", celebration: "more" },
   { id: "5eed0000-0000-4000-8000-000000000109", file: "flowers/chrysanthemums-wide.jpg", celebration: "ceremony" },
 ] as const;
 

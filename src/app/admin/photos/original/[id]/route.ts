@@ -5,7 +5,7 @@ import { isUuid } from "@/lib/data/ids";
 import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
 import { describeError } from "@/lib/log-error";
-import { downloadFilename, type AlbumCelebration } from "@/lib/media/album-item";
+import { albumCelebrationOf, downloadFilename } from "@/lib/media/album-item";
 import { presignGet } from "@/lib/storage/objects";
 
 type OriginalContext = { params: Promise<{ id: string }> };
@@ -66,7 +66,7 @@ export async function GET(_request: Request, { params }: OriginalContext) {
     // Presigning is local: no network call, so no timeout.
     const url = await presignGet(original.originalKey, {
       expiresInSeconds: ORIGINAL_LINK_SECONDS,
-      filename: download ? downloadFilename(original.celebration as AlbumCelebration, id.toLowerCase(), extension) : undefined,
+      filename: download ? downloadFilename(albumCelebrationOf(original.celebration), id.toLowerCase(), extension) : undefined,
     });
     return new Response(null, {
       status: 302,

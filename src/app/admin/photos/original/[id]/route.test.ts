@@ -125,6 +125,16 @@ describe("GET /admin/photos/original/[id]", () => {
     );
   });
 
+  it("names an original stored as the thanksgiving like More moments", async () => {
+    const mediaId = randomUUID();
+    await addAlbumItem({ id: mediaId, celebration: "thanks", status: "failed", failureReason: "corrupt", originalKey: `originals/${mediaId}.jpg` });
+    admin.allowed = true;
+    const location = new URL((await GET(request(mediaId), routeContext(mediaId))).headers.get("Location")!);
+    expect(location.searchParams.get("response-content-disposition")).toMatch(
+      new RegExp(`^attachment; filename="NONA26-more-${mediaId.slice(0, 8)}\\.jpg"`),
+    );
+  });
+
   it("answers 404 for an id that isn't one, an item that isn't there, a tombstone, or an upload not finished", async () => {
     admin.allowed = true;
     const deleted = await addAlbumItem({ deletedAt: new Date() });

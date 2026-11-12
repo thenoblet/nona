@@ -24,7 +24,7 @@ const base: RsvpInput = {
   fullName: "Ama Owusu",
   phone: "024 000 0000",
   partySize: "Just me",
-  answers: { ceremony: "yes", reception: "yes", thanks: "no" },
+  answers: { ceremony: "yes", reception: "yes" },
 };
 
 beforeEach(resetDb);
@@ -113,7 +113,7 @@ describe("saveRsvp keeps every reply", () => {
 
   it("compares a send with the guest's newest reply only: yes, no, then yes again is three replies", async () => {
     await saveRsvp(base);
-    await saveRsvp({ ...base, answers: { ceremony: "no", reception: "yes", thanks: "no" } });
+    await saveRsvp({ ...base, answers: { ceremony: "no", reception: "yes" } });
     const third = await saveRsvp(base);
     const current = await listRsvps();
     expect(current).toHaveLength(3);
@@ -137,8 +137,28 @@ describe("saveRsvp keeps every reply", () => {
   it("keeps a reply that differs in any answer, even within 10 minutes", async () => {
     await saveRsvp(base);
     await saveRsvp({ ...base, otherNames: "Kojo Owusu" });
-    await saveRsvp({ ...base, answers: { ceremony: "yes", reception: "no", thanks: "no" } });
+    await saveRsvp({ ...base, answers: { ceremony: "yes", reception: "no" } });
     expect(await listRsvps()).toHaveLength(3);
+  });
+
+  it("keeps a reply sent again without the thanksgiving answer the guest's earlier reply had, within 10 minutes, and flags both as replied again", async () => {
+    // Ama first replied while guests were still asked to the thanksgiving.
+    const earlier = await saveRsvp({ ...base, answers: { ceremony: "yes", reception: "yes", thanks: "yes" } });
+    const again = await saveRsvp({ ...base, answers: { ceremony: "yes", reception: "yes" } });
+
+    expect(again.record.id).not.toBe(earlier.record.id);
+    const current = await listRsvps();
+    expect(current.map((reply) => reply.id)).toEqual([again.record.id, earlier.record.id]);
+    expect(current.map((reply) => reply.answers)).toEqual([
+      { ceremony: "yes", reception: "yes" },
+      { ceremony: "yes", reception: "yes", thanks: "yes" },
+    ]);
+    expect(await flagsOf(earlier.record.id)).toEqual([
+      { kind: "replied-again", otherId: again.record.id, otherName: "Ama Owusu", via: "phone" },
+    ]);
+    expect(await flagsOf(again.record.id)).toEqual([
+      { kind: "replied-again", otherId: earlier.record.id, otherName: "Ama Owusu", via: "phone" },
+    ]);
   });
 });
 
@@ -308,6 +328,7 @@ describe("rsvpTotals", () => {
   it("counts every current reply, and none moved into a history", async () => {
     const first = await saveRsvp({ ...base, partySize: "4 or more" });
     const second = await saveRsvp({ ...base, partySize: "2 people", answers: { ceremony: "yes", reception: "no" } });
+    // Kofi replied while guests were still asked to the thanksgiving.
     await saveRsvp({
       ...base,
       fullName: "Kofi Mensah",
@@ -318,7 +339,7 @@ describe("rsvpTotals", () => {
     expect(await rsvpTotals()).toEqual({
       ceremony: { accepted: 3, declined: 0, people: 9 },
       reception: { accepted: 1, declined: 1, people: 4 },
-      thanks: { accepted: 0, declined: 2, people: 0 },
+      thanks: { accepted: 0, declined: 1, people: 0 },
     });
 
     await keepReply(second.record.id, [first.record.id]);

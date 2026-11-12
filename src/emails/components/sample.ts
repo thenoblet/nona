@@ -30,20 +30,9 @@ const celebrations: ConfirmationCelebration[] = [
     googleCalendarUrl:
       "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Reception+%C2%B7+Noblet+%26+Nancy&dates=20261205%2F20261206&location=BN+111+Katakyie+St%2C+Tepa&details=Right+after+the+white+wedding+%C2%B7+dinner+%26+dancing%0Ahttps%3A%2F%2Fnobletxnancy.com",
   },
-  {
-    id: "thanks",
-    name: "Thanksgiving service",
-    date: "Sunday 6 December",
-    stub: { weekday: "Sun", day: "06", month: "Dec" },
-    time: "[Start time]",
-    place: "Assemblies of God, Victory Worship Centre, Tepa",
-    gps: null,
-    attending: false,
-    googleCalendarUrl: null,
-  },
 ];
 
-/** Coming to the wedding and the reception, not to the thanksgiving service. */
+/** Coming to the white wedding and the reception. */
 export const sampleReply = {
   guestName: "Ama Owusu",
   celebrations,
@@ -52,7 +41,7 @@ export const sampleReply = {
   personalLink: `${siteUrl}/my/sample-personal-link-token-for-the-preview0`,
 };
 
-/** Can come to none of the three. */
+/** Can come to neither celebration. */
 export const sampleDeclined = {
   guestName: "Kofi Mensah",
   celebrations: celebrations.map((celebration) => ({ ...celebration, attending: false, googleCalendarUrl: null })),

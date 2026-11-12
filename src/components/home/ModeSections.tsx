@@ -128,7 +128,6 @@ export async function LiveAlbum({ now }: { now: number }) {
 /** Wedding weekend: the order of the day and directions. */
 export function TodaySection({
   todayLabel,
-  secondDay,
   schedule,
   celebrations,
   venues,
@@ -136,7 +135,6 @@ export function TodaySection({
   liveUrl,
 }: {
   todayLabel: string;
-  secondDay: boolean;
   schedule: ScheduleItem[];
   celebrations: Celebration[];
   venues: SiteContent["venues"];
@@ -156,7 +154,7 @@ export function TodaySection({
         <div className="flex flex-col gap-12 lg:flex-row lg:items-start lg:gap-16">
           <div className="min-w-0 flex-1">
             <h3 className="mt-0 mb-3.5 font-serif text-[30px] font-normal italic sm:text-[34px]">Order of the day</h3>
-            <OrderOfDay schedule={schedule} celebrations={celebrations} venues={venues} secondDay={secondDay} now={now} />
+            <OrderOfDay schedule={schedule} celebrations={celebrations} venues={venues} now={now} />
           </div>
           <Reveal className="flex min-w-0 flex-col gap-5.5 rounded-[var(--radius-paper)] bg-tray p-4 sm:p-7 lg:w-[420px] lg:flex-none">
             <div className="flex flex-wrap justify-center gap-x-7 gap-y-1">

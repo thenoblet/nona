@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { contentDefaults } from "@/lib/content/defaults";
 import type { RsvpRecord } from "@/lib/data/types";
 import {
   celebrationDay,
@@ -8,15 +9,12 @@ import {
   matchesFilter,
   matchesSearch,
   receivedLabel,
+  replyColumns,
   replyCsvRows,
   toReplyRows,
 } from "./replies";
 
-const celebrations = [
-  { id: "ceremony" as const, name: "White wedding" },
-  { id: "reception" as const, name: "Reception" },
-  { id: "thanks" as const, name: "Thanksgiving service" },
-];
+const celebrations = replyColumns(contentDefaults.celebrations);
 
 function reply(overrides: Partial<RsvpRecord> & Pick<RsvpRecord, "id" | "fullName">): RsvpRecord {
   return {
@@ -148,7 +146,7 @@ describe("filters and search", () => {
         id: "kofi",
         fullName: "Kofi Ansah",
         phone: "055 111 2222",
-        answers: { ceremony: "no", thanks: "no" },
+        answers: { ceremony: "no", thanks: "yes" },
         flags: [{ kind: "possible-duplicate", otherId: "kofi-2", otherName: "Kofi Ansa", via: "phone" }],
       }),
       reply({
@@ -165,7 +163,7 @@ describe("filters and search", () => {
   );
 
   it("counts each filter", () => {
-    expect(countByFilter(rows)).toEqual({ all: 3, coming: 2, notComing: 1, toCheck: 2, emailFailed: 1 });
+    expect(countByFilter(rows)).toEqual({ all: 3, coming: 2, notComing: 1, thanksgiving: 1, toCheck: 2, emailFailed: 1 });
   });
 
   it("filters by coming, can't come, to check and failed email", () => {
@@ -175,6 +173,68 @@ describe("filters and search", () => {
     expect(ids("notComing")).toEqual(["kofi"]);
     expect(ids("toCheck")).toEqual(["kofi", "kofi-2"]);
     expect(ids("emailFailed")).toEqual(["ama"]);
+  });
+
+  it("counts only Saturday's answers for Coming and Can't come", () => {
+    const [thanksgivingOnly, receptionOnly] = toReplyRows(
+      [
+        reply({ id: "efua", fullName: "Efua Mensah", answers: { ceremony: "no", reception: "no", thanks: "yes" } }),
+        reply({ id: "yaw", fullName: "Yaw Boateng", answers: { reception: "yes", thanks: "no" } }),
+      ],
+      new Map(),
+      celebrations,
+      now,
+    );
+    expect(matchesFilter(thanksgivingOnly, "notComing")).toBe(true);
+    expect(matchesFilter(thanksgivingOnly, "coming")).toBe(false);
+    expect(matchesFilter(receptionOnly, "coming")).toBe(true);
+  });
+
+  it("puts a reply that answered only the thanksgiving in neither Coming nor Can't come, and lists it under the thanksgiving", () => {
+    const [thanksgivingAnswerOnly] = toReplyRows(
+      [reply({ id: "abena", fullName: "Abena Asante", answers: { thanks: "yes" } })],
+      new Map(),
+      celebrations,
+      now,
+    );
+    expect(matchesFilter(thanksgivingAnswerOnly, "coming")).toBe(false);
+    expect(matchesFilter(thanksgivingAnswerOnly, "notComing")).toBe(false);
+    expect(matchesFilter(thanksgivingAnswerOnly, "thanksgiving")).toBe(true);
+  });
+
+  it("lists a guest who said yes to the thanksgiving, even after replying again without it", () => {
+    const current = reply({ id: "ama", fullName: "Ama Owusu", answers: { ceremony: "yes" } });
+    const earlier = reply({
+      id: "ama-before",
+      fullName: "Ama Owusu",
+      answers: { ceremony: "yes", thanks: "yes" },
+      receivedAt: "2026-10-28T18:02:00Z",
+      supersededAt: "2026-10-29T09:41:00Z",
+    });
+    const saidYesNow = reply({ id: "efua", fullName: "Efua Mensah", answers: { ceremony: "no", thanks: "yes" } });
+    const neverSaidYes = reply({ id: "kwame", fullName: "Kwame Owusu" });
+    const [ama, efua, kwame] = toReplyRows([current, saidYesNow, neverSaidYes], new Map([["ama", [earlier]]]), celebrations, now);
+    expect(ama.saidYesToThanksgiving).toBe(true);
+    expect(matchesFilter(ama, "thanksgiving")).toBe(true);
+    expect(matchesFilter(efua, "thanksgiving")).toBe(true);
+    expect(kwame.saidYesToThanksgiving).toBe(false);
+    expect(matchesFilter(kwame, "thanksgiving")).toBe(false);
+  });
+
+  it("counts the replies on the thanksgiving's card from its filter, earlier replies included", () => {
+    const earlier = reply({ id: "ama-before", fullName: "Ama Owusu", answers: { thanks: "yes" }, supersededAt: "2026-10-29T09:41:00Z" });
+    const rows = toReplyRows(
+      [
+        reply({ id: "ama", fullName: "Ama Owusu", answers: { ceremony: "yes" } }),
+        reply({ id: "efua", fullName: "Efua Mensah", answers: { reception: "no", thanks: "yes" } }),
+        reply({ id: "kwame", fullName: "Kwame Owusu" }),
+      ],
+      new Map([["ama", [earlier]]]),
+      celebrations,
+      now,
+    );
+    expect(countByFilter(rows).thanksgiving).toBe(2);
+    expect(countByFilter(rows).thanksgiving).toBe(rows.filter((row) => matchesFilter(row, "thanksgiving")).length);
   });
 
   it("finds a reply by name without accents or Ghanaian letters", () => {
@@ -242,6 +302,16 @@ describe("searching by phone", () => {
   });
 });
 
+describe("replyColumns", () => {
+  it("puts the thanksgiving last among the columns, as no longer asked", () => {
+    expect(replyColumns(contentDefaults.celebrations)).toEqual([
+      { id: "ceremony", name: "White wedding" },
+      { id: "reception", name: "Reception" },
+      { id: "thanks", name: "Thanksgiving (no longer asked)" },
+    ]);
+  });
+});
+
 describe("replyCsvRows", () => {
   it("has a header row and one row per reply, with Accra times and plain labels", () => {
     const replies = [
@@ -269,7 +339,7 @@ describe("replyCsvRows", () => {
       "Party size",
       "White wedding",
       "Reception",
-      "Thanksgiving service",
+      "Thanksgiving (no longer asked)",
       "Other names",
       "Song",
       "Received",

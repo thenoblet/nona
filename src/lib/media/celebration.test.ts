@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { build, type BuildOptions } from "esbuild";
 import { describe, expect, it } from "vitest";
-import type { Celebration, EventId } from "@/lib/content/schema";
+import type { Celebration, EventId, GuestEventId } from "@/lib/content/schema";
 import { assignCelebration } from "./celebration";
 
 /** A celebration's start and end as the admin stores them: "HH:MM" or null. */
@@ -18,19 +18,16 @@ type Row = {
 };
 
 const SATURDAY = "2026-12-05";
-const SUNDAY = "2026-12-06";
 /** The upload time for rows with a capture time: a day that is More moments, so using it by mistake shows. */
 const AFTER_THE_WEEKEND = "2026-12-08T09:00:00Z";
 
-/** The three celebrations with only what grouping reads changed; the rest is placeholder text. */
+/** The two celebrations with only what grouping reads changed; the rest is placeholder text. */
 function weekend({
   ceremony = [null, null],
   reception = [null, null],
-  thanks = [null, null],
   saturday = SATURDAY,
-  sunday = SUNDAY,
-}: { ceremony?: Times; reception?: Times; thanks?: Times; saturday?: string; sunday?: string } = {}): Celebration[] {
-  const celebration = (id: EventId, date: string, [startTime, endTime]: Times): Celebration => ({
+}: { ceremony?: Times; reception?: Times; saturday?: string } = {}): Celebration[] {
+  const celebration = (id: GuestEventId, date: string, [startTime, endTime]: Times): Celebration => ({
     id,
     venue: "church",
     name: id,
@@ -47,16 +44,15 @@ function weekend({
   return [
     celebration("ceremony", saturday, ceremony),
     celebration("reception", saturday, reception),
-    celebration("thanks", sunday, thanks),
   ];
 }
 
-/** No times confirmed yet, as on the live site: ceremony 10:00–13:00, reception 14:00–23:59, thanksgiving 09:00–12:00. */
+/** No times confirmed yet, as on the live site: ceremony 10:00–13:00, reception 14:00–23:59. */
 const unconfirmed = weekend();
-/** Confirmed times, with a reception that runs past midnight and a thanksgiving with no end (09:30–12:30). */
-const confirmed = weekend({ ceremony: ["10:00", "12:30"], reception: ["14:00", "01:30"], thanks: ["09:30", null] });
-/** The couple moved the whole weekend a week later in the admin. */
-const movedAWeek = weekend({ saturday: "2026-12-12", sunday: "2026-12-13" });
+/** Confirmed times, with a reception that runs past midnight. */
+const confirmed = weekend({ ceremony: ["10:00", "12:30"], reception: ["14:00", "01:30"] });
+/** The couple moved the wedding a week later in the admin. */
+const movedAWeek = weekend({ saturday: "2026-12-12" });
 
 function row(
   name: string,
@@ -72,12 +68,11 @@ const table: Record<string, Row[]> = {
   "rule 1: inside a celebration's window, that celebration": [
     row("Saturday 11:00 is the white wedding", unconfirmed, "2026-12-05T11:00:00Z", "ceremony"),
     row("Saturday 18:00 is the reception", unconfirmed, "2026-12-05T18:00:00Z", "reception"),
-    row("Sunday 10:30 is the thanksgiving", unconfirmed, "2026-12-06T10:30:00Z", "thanks"),
     row("a window holds its last second", weekend({ ceremony: ["10:00", "13:00"], reception: ["13:00", "23:00"] }), "2026-12-05T12:59:59Z", "ceremony"),
     row("a window's end is where the next one starts", weekend({ ceremony: ["10:00", "13:00"], reception: ["13:00", "23:00"] }), "2026-12-05T13:00:00Z", "reception"),
     row("a reception ending 01:30 claims Sunday 00:45", confirmed, "2026-12-06T00:45:00Z", "reception"),
     row("a reception ending 01:30 claims Sunday 01:29:59", confirmed, "2026-12-06T01:29:59Z", "reception"),
-    row("a reception ending 01:30 leaves Sunday 01:30 to the thanksgiving", confirmed, "2026-12-06T01:30:00Z", "thanks"),
+    row("a reception ending 01:30 leaves Sunday 01:30 to More moments", confirmed, "2026-12-06T01:30:00Z", "more"),
     row("a start with no end lasts three hours: 11:50 is inside", weekend({ ceremony: ["09:00", null], reception: ["12:30", "23:00"] }), "2026-12-05T11:50:00Z", "ceremony"),
     row("a start with no end lasts three hours: 12:20 is past it, nearer the reception", weekend({ ceremony: ["09:00", null], reception: ["12:30", "23:00"] }), "2026-12-05T12:20:00Z", "reception"),
     row("a missing start takes the default window and ignores a lone end", weekend({ ceremony: [null, "11:00"] }), "2026-12-05T12:50:00Z", "ceremony"),
@@ -95,13 +90,14 @@ const table: Record<string, Row[]> = {
     row("the last minute of Saturday, after the default 23:59 end, is the reception", unconfirmed, "2026-12-05T23:59:30Z", "reception"),
     row("late Saturday night after a reception ending 22:00 is the reception", weekend({ reception: ["14:00", "22:00"] }), "2026-12-05T23:30:00Z", "reception"),
   ],
-  "rule 3: on Sunday, the thanksgiving unless rule 1 matched": [
-    row("Sunday 07:00, before the service", unconfirmed, "2026-12-06T07:00:00Z", "thanks"),
-    row("Sunday 20:00, long after it", unconfirmed, "2026-12-06T20:00:00Z", "thanks"),
-    row("Sunday 00:00, when the reception ended on Saturday", unconfirmed, "2026-12-06T00:00:00Z", "thanks"),
-    row("Sunday 00:45, when the reception ended on Saturday", unconfirmed, "2026-12-06T00:45:00Z", "thanks"),
-    row("Sunday 02:00, after a reception ending 01:30", confirmed, "2026-12-06T02:00:00Z", "thanks"),
-    row("the last second of Sunday", unconfirmed, "2026-12-06T23:59:59Z", "thanks"),
+  "rule 3: on Sunday, More moments unless rule 1 matched": [
+    row("Sunday 07:00, the morning after", unconfirmed, "2026-12-06T07:00:00Z", "more"),
+    row("Sunday 10:30", unconfirmed, "2026-12-06T10:30:00Z", "more"),
+    row("Sunday 20:00", unconfirmed, "2026-12-06T20:00:00Z", "more"),
+    row("Sunday 00:00, when the reception ended on Saturday", unconfirmed, "2026-12-06T00:00:00Z", "more"),
+    row("Sunday 00:45, when the reception ended on Saturday", unconfirmed, "2026-12-06T00:45:00Z", "more"),
+    row("Sunday 02:00, after a reception ending 01:30", confirmed, "2026-12-06T02:00:00Z", "more"),
+    row("the last second of Sunday", unconfirmed, "2026-12-06T23:59:59Z", "more"),
   ],
   "rule 4: any other day, More moments": [
     row("4 Dec", unconfirmed, "2026-12-04T18:00:00Z", "more"),
@@ -113,7 +109,7 @@ const table: Record<string, Row[]> = {
   ],
   "rule 5: with no capture time, the upload time": [
     row("no capture time and an upload on 5 Dec at 15:00 is the reception", unconfirmed, null, "reception", "2026-12-05T15:00:00Z"),
-    row("no capture time and an upload on Sunday is the thanksgiving", unconfirmed, null, "thanks", "2026-12-06T14:00:00Z"),
+    row("no capture time and an upload on Sunday is More moments", unconfirmed, null, "more", "2026-12-06T14:00:00Z"),
     row("no capture time and an upload after the weekend is More moments", unconfirmed, null, "more", "2026-12-08T09:00:00Z"),
     row("a capture time wins over the upload time", unconfirmed, "2026-12-04T18:00:00Z", "more", "2026-12-05T15:00:00Z"),
     row("an unreadable capture time counts as none", unconfirmed, "not a date", "reception", "2026-12-05T15:00:00Z"),
@@ -122,7 +118,7 @@ const table: Record<string, Row[]> = {
   "the weekend's days come from the celebrations' own dates": [
     row("moved a week later, 12 Dec 08:00 is the white wedding", movedAWeek, "2026-12-12T08:00:00Z", "ceremony"),
     row("moved a week later, 12 Dec 18:00 is the reception", movedAWeek, "2026-12-12T18:00:00Z", "reception"),
-    row("moved a week later, 13 Dec 20:00 is the thanksgiving", movedAWeek, "2026-12-13T20:00:00Z", "thanks"),
+    row("moved a week later, 13 Dec 20:00 is More moments", movedAWeek, "2026-12-13T20:00:00Z", "more"),
     row("moved a week later, the old Saturday is More moments", movedAWeek, "2026-12-05T11:00:00Z", "more"),
     row("moved a week later, the old Sunday is More moments", movedAWeek, "2026-12-06T10:30:00Z", "more"),
   ],

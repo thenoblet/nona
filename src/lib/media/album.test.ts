@@ -108,6 +108,21 @@ describe("listAlbum", () => {
     expect(await ids({ viewerGuestIds: [], celebration: "more" })).toEqual([morePhoto]);
   });
 
+  it("lists and counts a moment stored as the thanksgiving under More moments", async () => {
+    const thanksgiving = await addAlbumItem({ celebration: "thanks" });
+    const more = await addAlbumItem({ celebration: "more" });
+    await addAlbumItem({ celebration: "reception" });
+
+    const page = await listAlbum({ viewerGuestIds: [], celebration: "more" });
+    expect(page.items.map((item) => item.id).sort()).toEqual([thanksgiving, more].sort());
+    expect(page.items.map((item) => item.celebration)).toEqual(["more", "more"]);
+
+    const stats = await albumStats();
+    expect(countFor(stats, { celebration: "more", kind: "photo" })).toBe(2);
+    expect(stats.everyone).toContainEqual({ celebration: "more", kind: "photo", count: 2 });
+    expect(stats.everyone.map((count) => count.celebration)).not.toContain("thanks");
+  });
+
   it("My uploads shows every guest the browser knows, and combines with Photos or Videos and a celebration", async () => {
     const own = await createGuest("Kofi Mensah");
     const remembered = await createGuest("Ama Owusu");
@@ -328,7 +343,7 @@ describe("the album's plans", () => {
 
   /**
    * A wedding's album, as the planner would see it on the night: 6,000 items from 300 guests, most
-   * of them ready photos in the three celebrations, one in eight a video, a few dozen from other
+   * of them ready photos in the two celebrations, one in eight a video, a few dozen from other
    * days ("More moments"), with wishes, hidden items and uploads in progress beside them, analysed.
    */
   beforeEach(async () => {
@@ -339,7 +354,7 @@ describe("the album's plans", () => {
       select case when n % 50 = 0 then 'wish' else 'album' end,
         case when n % 8 = 0 then 'video' else 'photo' end,
         ('00000000-0000-4000-8000-' || lpad((n % 300 + 1)::text, 12, '0'))::uuid,
-        'Guest', case when n % 150 = 0 then 'more' when n % 3 = 0 then 'ceremony' when n % 3 = 1 then 'reception' else 'thanks' end,
+        'Guest', case when n % 150 = 0 then 'more' when n % 2 = 0 then 'ceremony' else 'reception' end,
         'originals/plan-' || n || '.jpg', 'IMG.JPG', 3000000, 'image/jpeg',
         case when n % 97 = 0 then 'uploaded' when n % 89 = 0 then 'failed' else 'ready' end,
         case when n % 97 = 0 or n % 89 = 0 then null else now() - make_interval(secs => 6000 - n) end,

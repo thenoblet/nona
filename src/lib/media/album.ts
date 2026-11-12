@@ -1,17 +1,19 @@
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { RETIRED_EVENT_ID, type EventId } from "@/lib/content/schema";
 import { isUuid } from "@/lib/data/ids";
 import { getDb } from "@/lib/db/client";
 import { media } from "@/lib/db/schema";
 import { publicUrl } from "@/lib/storage/keys";
-import type {
-  AlbumCelebration,
-  AlbumCount,
-  AlbumFilter,
-  AlbumItem,
-  AlbumKind,
-  AlbumPage,
-  AlbumStats,
+import {
+  albumCelebrationOf,
+  type AlbumCelebration,
+  type AlbumCount,
+  type AlbumFilter,
+  type AlbumItem,
+  type AlbumPage,
+  type AlbumStats,
 } from "./album-item";
+import { newestFirst } from "./time-cursor";
 
 /*
  * The album's queries (Task 15). Everyone sees album items that are `ready` and visible (not
@@ -27,6 +29,9 @@ import type {
  * media_album_mine_idx and merges them, so it never sorts either. A browser's own items that aren't
  * listed (uploaded, waiting for the worker; failed, with their reason) come apart from the cursor,
  * on the first page only.
+ *
+ * A moment stored as the retired thanksgiving is read as More moments: listed, filtered, counted
+ * and named under it (albumCelebrationOf), its row left as it is.
  */
 
 /** A page's size unless the caller asks for another. */
@@ -91,7 +96,7 @@ type ItemRow = {
   status: "uploading" | "uploaded" | "ready" | "failed";
   guestId: string | null;
   uploaderName: string | null;
-  celebration: AlbumCelebration;
+  celebration: EventId | "more";
   listedAt: string | null;
   capturedAt: Date | null;
   uploadedAt: Date | null;
@@ -134,7 +139,7 @@ export function toAlbumItem(row: ItemRow, viewerGuestIds: readonly string[]): Al
     status: row.status === "ready" ? "ready" : row.status === "failed" ? "failed" : "uploaded",
     mine: row.guestId !== null && viewerGuestIds.includes(row.guestId),
     by: row.uploaderName,
-    celebration: row.celebration,
+    celebration: albumCelebrationOf(row.celebration),
     takenAt: row.capturedAt?.toISOString() ?? listedAt ?? row.uploadedAt?.toISOString() ?? null,
     listedAt,
     width: row.width,
@@ -167,10 +172,15 @@ export function visibleAlbumItems(): SQL {
   return sql`${media.purpose} = 'album' and ${media.hiddenAt} is null and ${media.deletedAt} is null and not ${media.removedByUploader}`;
 }
 
+/** A celebration's moments: More moments holds those stored as the thanksgiving too. */
+function celebrationCondition(celebration: AlbumCelebration): SQL {
+  return celebration === "more" ? inArray(media.celebration, ["more", RETIRED_EVENT_ID]) : eq(media.celebration, celebration);
+}
+
 function filterConditions(filter: AlbumFilter): (SQL | undefined)[] {
   return [
     filter.kind ? eq(media.kind, filter.kind) : undefined,
-    filter.celebration ? eq(media.celebration, filter.celebration) : undefined,
+    filter.celebration ? celebrationCondition(filter.celebration) : undefined,
   ];
 }
 
@@ -243,11 +253,8 @@ export function pendingQuery(guestId: string, filter: AlbumFilter, statuses: rea
     .limit(PENDING_LIMIT);
 }
 
-/** Newest first, as the indexes read: by listed_at, then id. Both are fixed-width text, so text order is theirs. */
-function newestFirst(first: ItemRow, second: ItemRow): number {
-  const byListed = (second.listedAt ?? "").localeCompare(first.listedAt ?? "");
-  return byListed !== 0 ? byListed : second.id < first.id ? -1 : second.id > first.id ? 1 : 0;
-}
+/** Newest listed first, as the indexes read: by listed_at, then id. */
+const newestListedFirst = newestFirst((row: ItemRow) => row.listedAt);
 
 function knownGuests(viewerGuestIds: readonly string[]): string[] {
   return [...new Set(viewerGuestIds.filter((id) => isUuid(id)).map((id) => id.toLowerCase()))];
@@ -258,7 +265,7 @@ async function listedRows(viewerGuestIds: readonly string[], filter: AlbumFilter
   if (!filter.mine) return (await everyoneQuery(filter, window, limit)) as ItemRow[];
   const guests = knownGuests(viewerGuestIds);
   const pages = await Promise.all(guests.map((guestId) => guestQuery(guestId, filter, window, limit)));
-  return (pages.flat() as ItemRow[]).sort(newestFirst).slice(0, limit);
+  return (pages.flat() as ItemRow[]).sort(newestListedFirst).slice(0, limit);
 }
 
 export type ListAlbumOptions = AlbumFilter & {
@@ -426,10 +433,16 @@ export async function countSharers(): Promise<number> {
   return row?.count ?? 0;
 }
 
-function asCounts(rows: { celebration: string; kind: string; count: number }[]): AlbumCount[] {
-  return rows
-    .filter((row) => row.kind === "photo" || row.kind === "video")
-    .map((row) => ({ celebration: row.celebration as AlbumCelebration, kind: row.kind as AlbumKind, count: row.count }));
+/** The counts of photos and videos per celebration as the album shows them, those that read as one celebration summed. */
+function asCounts(rows: readonly { celebration: EventId | "more"; kind: string; count: number }[]): AlbumCount[] {
+  const counts = new Map<string, AlbumCount>();
+  for (const row of rows) {
+    if (row.kind !== "photo" && row.kind !== "video") continue;
+    const celebration = albumCelebrationOf(row.celebration);
+    const key = `${celebration}/${row.kind}`;
+    counts.set(key, { celebration, kind: row.kind, count: (counts.get(key)?.count ?? 0) + row.count });
+  }
+  return [...counts.values()];
 }
 
 /**
@@ -440,13 +453,7 @@ function asCounts(rows: { celebration: string; kind: string; count: number }[]):
 export async function albumStats(viewerGuestIds: readonly string[] = []): Promise<AlbumStats> {
   const guests = knownGuests(viewerGuestIds);
   const [everyone, ...own] = await Promise.all([everyoneStatsQuery(), ...guests.map((guestId) => guestStatsQuery(guestId))]);
-  const mine = new Map<string, AlbumCount>();
-  for (const count of asCounts(own.flat())) {
-    const key = `${count.celebration}/${count.kind}`;
-    const known = mine.get(key);
-    mine.set(key, { ...count, count: (known?.count ?? 0) + count.count });
-  }
-  return { everyone: asCounts(everyone), mine: [...mine.values()] };
+  return { everyone: asCounts(everyone), mine: asCounts(own.flat()) };
 }
 
 /**
@@ -524,7 +531,7 @@ export async function findDownloadable(mediaId: string): Promise<DownloadableIte
     .where(and(eq(media.id, mediaId), visibleAlbumItems(), sql`${media.status} = 'ready'`))
     .limit(1);
   if (!row || (row.kind !== "photo" && row.kind !== "video")) return null;
-  return row as DownloadableItem;
+  return { ...row, kind: row.kind, celebration: albumCelebrationOf(row.celebration) };
 }
 
 /** Whether a photo is an iPhone's HEIC or HEIF, which also downloads as a JPEG. */

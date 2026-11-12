@@ -1,11 +1,12 @@
 import "server-only";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { RETIRED_EVENT_ID, type EventId } from "@/lib/content/schema";
 import { isUuid } from "@/lib/data/ids";
 import { getDb } from "@/lib/db/client";
 import { adminScopeOf, adminStateOf, media, type AdminStateName } from "@/lib/db/schema";
 import { publicUrl } from "@/lib/storage/keys";
-import type { AlbumCelebration } from "./album-item";
+import { albumCelebrationOf } from "./album-item";
 import {
   ADMIN_CHIPS,
   type AdminChip,
@@ -15,7 +16,7 @@ import {
   type AdminPage,
 } from "./admin-item";
 import { deletableFrom } from "./moderation";
-import { decodeTimeCursor, encodeTimeCursor, microsecondText, type TimeCursor } from "./time-cursor";
+import { decodeTimeCursor, encodeTimeCursor, microsecondText, newestFirst, type TimeCursor } from "./time-cursor";
 
 /*
  * The admin's album (Task 17, Ruling BW): every album item that finished uploading, hidden and
@@ -38,6 +39,12 @@ import { decodeTimeCursor, encodeTimeCursor, microsecondText, type TimeCursor } 
  *   rows the page sums.
  * Conditions the indexes' predicates name are written as literals (adminScopeOf), never bound
  * values, so a generic plan, as a pooled prepared statement gets, can still prove they apply.
+ *
+ * An item stored as the retired thanksgiving is listed, counted and named under More moments, as
+ * the album shows it (albumCelebrationOf), its row left as it is. More moments is read twice, once
+ * for "more" and once for the thanksgiving, each along media_admin_celebration_idx in its own
+ * order, and the two merged: one read of both values would have to sort, or walk media_admin_idx
+ * whole to find a few dozen items (adminReads).
  */
 
 /** A page's size. */
@@ -55,12 +62,23 @@ function chipCondition(chip: AdminChip): SQL {
   return sql`${adminStateOf(media)} = ${sql.raw(`'${chip}'`)}`;
 }
 
-function filterConditions(filter: AdminFilter): (SQL | undefined)[] {
+/** One read of the admin's album: the filter, its celebration as stored. */
+export type AdminRead = Omit<AdminFilter, "celebration"> & { celebration?: EventId | "more" };
+
+/**
+ * The reads a filter's page is made of: the filter itself, or for More moments one read of "more"
+ * and one of the retired thanksgiving, which listAdminAlbum merges.
+ */
+export function adminReads(filter: AdminFilter): AdminRead[] {
+  return filter.celebration === "more" ? [filter, { ...filter, celebration: RETIRED_EVENT_ID }] : [filter];
+}
+
+function filterConditions(read: AdminRead): (SQL | undefined)[] {
   return [
-    filter.chip ? chipCondition(filter.chip) : undefined,
-    filter.celebration ? eq(media.celebration, filter.celebration) : undefined,
-    filter.kind ? eq(media.kind, filter.kind) : undefined,
-    filter.search ? sql`${media.uploaderName} ilike ${containsPattern(filter.search)}` : undefined,
+    read.chip ? chipCondition(read.chip) : undefined,
+    read.celebration ? eq(media.celebration, read.celebration) : undefined,
+    read.kind ? eq(media.kind, read.kind) : undefined,
+    read.search ? sql`${media.uploaderName} ilike ${containsPattern(read.search)}` : undefined,
   ];
 }
 
@@ -101,7 +119,7 @@ type ItemRow = {
   state: AdminStateName | null;
   guestId: string | null;
   uploaderName: string | null;
-  celebration: AlbumCelebration;
+  celebration: EventId | "more";
   uploadedAt: Date | null;
   uploadedAtText: string;
   capturedAt: Date | null;
@@ -126,20 +144,20 @@ type ItemRow = {
 type ItemColumnName = keyof typeof itemColumns;
 
 /**
- * A page of the admin's album: the ids from a media_admin_* index, in its order, then each one's
- * row by primary key. The row is a lateral subquery of the page's id, so it is always read per id
- * (a nested loop on media_pkey, which keeps the page's order); a plain join could be hashed, the
- * table read whole, and the page sorted, as a generic plan can't know the page is short (it takes
- * a bound LIMIT for a tenth of the table). Exported so a test can check its plan.
+ * A page of one read of the admin's album: the ids from a media_admin_* index, in its order, then
+ * each one's row by primary key. The row is a lateral subquery of the page's id, so it is always
+ * read per id (a nested loop on media_pkey, which keeps the page's order); a plain join could be
+ * hashed, the table read whole, and the page sorted, as a generic plan can't know the page is short
+ * (it takes a bound LIMIT for a tenth of the table). Exported so a test can check its plan.
  */
-export function adminPageQuery(filter: AdminFilter, cursor: TimeCursor | null, limit: number) {
+export function adminPageQuery(read: AdminRead, cursor: TimeCursor | null, limit: number) {
   const page = getDb()
     .select({ id: media.id, uploadedAt: media.uploadedAt })
     .from(media)
     .where(
       and(
         adminScopeOf(media),
-        ...filterConditions(filter),
+        ...filterConditions(read),
         cursor ? sql`(${media.uploadedAt}, ${media.id}) < (${cursor.at}::timestamptz, ${cursor.id}::uuid)` : undefined,
       ),
     )
@@ -218,7 +236,7 @@ function toAdminItem(row: ItemRow, uploads: Map<string, number>): AdminItem {
     state: row.state,
     by: row.uploaderName,
     uploads: row.guestId ? (uploads.get(row.guestId) ?? null) : null,
-    celebration: row.celebration,
+    celebration: albumCelebrationOf(row.celebration),
     uploadedAt: uploadedAt.toISOString(),
     takenAt: row.capturedAt?.toISOString() ?? null,
     hiddenAt: row.hiddenAt?.toISOString() ?? null,
@@ -240,10 +258,19 @@ function toAdminItem(row: ItemRow, uploads: Map<string, number>): AdminItem {
 
 export type ListAdminAlbumOptions = { filter: AdminFilter; cursor?: string | null; limit?: number };
 
-/** A page of the admin's album for the filter, newest upload first. A cursor this server didn't make reads as the first page. */
+/** Newest upload first, as the admin's indexes read: by uploaded_at, then id. */
+const newestUploadFirst = newestFirst((row: ItemRow) => row.uploadedAtText);
+
+/**
+ * A page of the admin's album for the filter, newest upload first. A cursor this server didn't make
+ * reads as the first page. Each of the filter's reads (adminReads) gives at most a page and one
+ * more, in order; merged, their first page and one more are the album's.
+ */
 export async function listAdminAlbum(options: ListAdminAlbumOptions): Promise<AdminPage> {
   const limit = options.limit ?? ADMIN_PAGE_SIZE;
-  const rows = (await adminPageQuery(options.filter, decodeTimeCursor(options.cursor), limit + 1)) as ItemRow[];
+  const cursor = decodeTimeCursor(options.cursor);
+  const pages = await Promise.all(adminReads(options.filter).map((read) => adminPageQuery(read, cursor, limit + 1)));
+  const rows = (pages.flat() as ItemRow[]).sort(newestUploadFirst).slice(0, limit + 1);
   const page = rows.slice(0, limit);
   const uploads = await uploadsByGuest(page);
   const last = page.at(-1);
@@ -300,8 +327,23 @@ export function adminCountsQuery() {
     .groupBy(media.celebration, media.kind);
 }
 
-/** The album's counts, per celebration and kind (countsFor sums them for the filter shown). */
+/**
+ * The album's counts, per celebration and kind as the admin shows them (countsFor sums them for the
+ * filter shown): those stored as the thanksgiving summed into More moments.
+ */
 export async function readAdminCounts(): Promise<AdminCountRow[]> {
-  const rows = await adminCountsQuery();
-  return rows.filter((row) => row.kind === "photo" || row.kind === "video") as AdminCountRow[];
+  const counts = new Map<string, AdminCountRow>();
+  for (const row of await adminCountsQuery()) {
+    if (row.kind !== "photo" && row.kind !== "video") continue;
+    const celebration = albumCelebrationOf(row.celebration);
+    const key = `${celebration}/${row.kind}`;
+    const known = counts.get(key);
+    if (!known) {
+      counts.set(key, { ...row, celebration, kind: row.kind });
+      continue;
+    }
+    known.total += row.total;
+    for (const chip of ADMIN_CHIPS) known[chip] += row[chip];
+  }
+  return [...counts.values()];
 }

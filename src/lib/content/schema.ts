@@ -2,11 +2,16 @@ import * as zod from "zod";
 import { celebrations as builtInCelebrations, venues as builtInVenues, wedding } from "@/content/wedding";
 import { TIME_PATTERN } from "./times";
 
-/** The celebrations are fixed: their wording is editable, but exactly these three exist. */
+/** The celebrations guests are invited to are fixed: their wording is editable, but exactly these two exist. */
+export const GUEST_EVENT_IDS = ["ceremony", "reception"] as const;
+export type GuestEventId = (typeof GUEST_EVENT_IDS)[number];
+/** The Sunday thanksgiving service, which guests are no longer asked to; older replies, moments and saved text name it. */
+export const RETIRED_EVENT_ID = "thanks" as const;
+/** Every celebration id stored data may carry: the guests' two and the retired thanksgiving. */
 export const EVENT_IDS = ["ceremony", "reception", "thanks"] as const;
 export type EventId = (typeof EVENT_IDS)[number];
 /** Each celebration's name in the admin, where the order of the day is grouped by it. */
-export const EVENT_LABELS: Record<EventId, string> = { ceremony: "White wedding", reception: "Reception", thanks: "Thanksgiving" };
+export const EVENT_LABELS: Record<GuestEventId, string> = { ceremony: "White wedding", reception: "Reception" };
 
 /** The venues, each typed once under Site text → Venues. */
 export const VENUE_KEYS = ["church", "reception", "hotel"] as const;
@@ -45,6 +50,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Leaves out of a saved list the entries whose `key` is the retired thanksgiving, so text saved
+ * while guests were asked to it still loads, with every other edit kept, rather than falling back
+ * to the built-in text. Nothing is written back: the next save stores the list without them.
+ */
+function withoutRetired(key: "id" | "celebration") {
+  return (value: unknown): unknown =>
+    Array.isArray(value) ? value.filter((entry: unknown) => !isRecord(entry) || entry[key] !== RETIRED_EVENT_ID) : value;
+}
+
+/**
  * Keeps celebrations saved before each named its venue (every version saved before 31 Oct 2026)
  * readable: one without a venue is held where the built-in text holds it, and its place detail is
  * dropped if it only gave the GhanaPost GPS, as the GPS now comes from the venue. An old place and
@@ -63,7 +78,7 @@ const celebration = zod.preprocess(
   withVenue,
   zod
     .object({
-      id: zod.enum(EVENT_IDS),
+      id: zod.enum(GUEST_EVENT_IDS),
       /** Where it is held: its place, GhanaPost GPS and directions all come from this venue. */
       venue: zod.enum(CELEBRATION_VENUES, { error: "Choose the church or the reception venue" }),
       name: line,
@@ -131,8 +146,8 @@ const DAY_ONLY_TIME = /^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+\d/i;
 /**
  * Keeps schedules saved before items belonged to a celebration (every version saved before
  * 11 Nov 2026) readable. Those items named a day, a venue or a typed place, and a free-text time:
- * - Sunday items go to the thanksgiving; Saturday items to the white wedding until the first item
- *   at the reception venue, and to the reception from there on.
+ * - Sunday items go to the thanksgiving, and so are left out; Saturday items to the white wedding
+ *   until the first item at the reception venue, and to the reception from there on.
  * - An item at its celebration's own venue now takes the place from it; one at another venue keeps
  *   that venue's name as its typed place.
  * - A time is read as a clock time when it is one ("2:30 PM"); a placeholder like "[Time]" or a
@@ -146,7 +161,7 @@ function withCelebrations(value: unknown): unknown {
     const { day, venue: savedVenue, time: savedTime, ...rest } = entry;
     const venue = savedVenue ?? venueNamed(entry.place);
     if (day === "sat" && venue === "reception") reachedReception = true;
-    const celebration: EventId = day === "sun" ? "thanks" : reachedReception ? "reception" : "ceremony";
+    const celebration: EventId = day === "sun" ? RETIRED_EVENT_ID : reachedReception ? "reception" : "ceremony";
     const item: Record<string, unknown> = { ...rest, celebration };
     if (isVenueKey(venue)) {
       const celebrationVenue = builtInCelebrations.find((built) => built.id === celebration)?.venue;
@@ -167,7 +182,7 @@ function withCelebrations(value: unknown): unknown {
 
 const scheduleItem = zod.object({
   /** The celebration it is part of: its day, and its place unless one is typed. */
-  celebration: zod.enum(EVENT_IDS, { error: "Choose a celebration" }),
+  celebration: zod.enum(GUEST_EVENT_IDS, { error: "Choose a celebration" }),
   /** When it starts, if it has a set time; guests see "2:30 PM". */
   time: time.optional(),
   title: line,
@@ -178,8 +193,8 @@ const scheduleItem = zod.object({
 });
 
 /**
- * Each celebration keeps at least one item. The white wedding's and the thanksgiving's times run
- * in order; the reception's may go past midnight, so an earlier time there is read as the next day.
+ * Each celebration keeps at least one item. The white wedding's times run in order; the
+ * reception's may go past midnight, so an earlier time there is read as the next day.
  */
 function checkSchedule(
   items: readonly unknown[],
@@ -187,7 +202,7 @@ function checkSchedule(
 ) {
   // An item that failed its own checks may arrive here as it was sent.
   const records = items.map((item) => (isRecord(item) ? item : {}));
-  for (const id of EVENT_IDS) {
+  for (const id of GUEST_EVENT_IDS) {
     if (!records.some((item) => item.celebration === id)) {
       context.addIssue({ code: "custom", message: `Add at least one ${EVENT_LABELS[id]} item` });
     }
@@ -258,15 +273,20 @@ const rsvp = zod.object({
 });
 
 export const sectionSchemas = {
-  celebrations: zod
-    .array(celebration)
-    .length(3, "There must be exactly three celebrations")
-    .refine(
-      (items) =>
-        EVENT_IDS.every((id) => items.filter((item) => item.id === id).length === 1),
-      "Keep the white wedding, reception and thanksgiving, each once",
-    ),
-  schedule: zod.preprocess(withCelebrations, zod.array(scheduleItem).superRefine(checkSchedule)),
+  celebrations: zod.preprocess(
+    withoutRetired("id"),
+    zod
+      .array(celebration)
+      .length(2, "There must be exactly two celebrations")
+      .refine(
+        (items) => GUEST_EVENT_IDS.every((id) => items.filter((item) => item.id === id).length === 1),
+        "Keep the white wedding and the reception, each once",
+      ),
+  ),
+  schedule: zod.preprocess(
+    (value) => withoutRetired("celebration")(withCelebrations(value)),
+    zod.array(scheduleItem).superRefine(checkSchedule),
+  ),
   venues: zod.object({ church: venue, reception: venue, hotel: venue } satisfies Record<VenueKey, typeof venue>),
   landmarks: zod.array(line),
   faq: zod.array(faqItem),

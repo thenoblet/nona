@@ -19,7 +19,7 @@ export function InvitationLetter({ rsvp, band }: { rsvp: RsvpSettings; band: Slo
           coming.
         </p>
         <div className="flex flex-wrap justify-center gap-2.5">
-          <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">Three celebrations · two days</span>
+          <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">Two celebrations · one day</span>
           <span className="border border-hairline px-4.5 py-2.5 text-[13px] tracking-[0.08em] text-mocha">
             {rsvp.open ? `Kindly reply by ${accraDayAndFullMonth(rsvp.replyBy)}` : "Replies have closed"}
           </span>

@@ -224,7 +224,7 @@ describe("what the actions log (Ruling AT)", () => {
 
     await hideMedia(photo, { admin: ADMIN });
     await unhideMedia(photo, ADMIN);
-    await moveMedia(photo, "thanks", ADMIN);
+    await moveMedia(photo, "ceremony", ADMIN);
     await setHighlight(video, true, ADMIN);
     await retryProcessing(video, ADMIN);
     await deleteMediaPermanently(photo, ADMIN);
@@ -548,10 +548,10 @@ describe("moveMedia", () => {
   it("moves the item to the couple's choice, marks it theirs, and writes the manifest", async () => {
     const mediaId = await addItem({ celebration: "reception" });
 
-    expect(await moveMedia(mediaId, "thanks", ADMIN)).toEqual({ ok: true });
+    expect(await moveMedia(mediaId, "ceremony", ADMIN)).toEqual({ ok: true });
 
-    expect(await readItem(mediaId)).toMatchObject({ celebration: "thanks", celebrationSetByAdmin: true });
-    expect(await readManifest(mediaId)).toMatchObject({ celebration: "thanks", celebrationSetByAdmin: true });
+    expect(await readItem(mediaId)).toMatchObject({ celebration: "ceremony", celebrationSetByAdmin: true });
+    expect(await readManifest(mediaId)).toMatchObject({ celebration: "ceremony", celebrationSetByAdmin: true });
   });
 
   it("moves an item still waiting to be processed, and to More moments", async () => {
@@ -575,7 +575,7 @@ describe("moveMedia", () => {
     expect(await readItem(mediaId)).toMatchObject({ celebration: "reception", celebrationSetByAdmin: false });
     const deleted = await addItem({ deletedAt: new Date() });
     for (const missing of [randomUUID(), deleted]) {
-      expect(await moveMedia(missing, "thanks", ADMIN)).toEqual({ ok: false, reason: "not-found" });
+      expect(await moveMedia(missing, "ceremony", ADMIN)).toEqual({ ok: false, reason: "not-found" });
     }
   });
 
@@ -584,7 +584,7 @@ describe("moveMedia", () => {
     const mediaId = await addItem();
     manifests.failuresLeft = 10;
 
-    expect(await moveMedia(mediaId, "thanks", ADMIN)).toEqual({ ok: true });
+    expect(await moveMedia(mediaId, "ceremony", ADMIN)).toEqual({ ok: true });
 
     expect((await jobsOf(MEDIA_QUEUES.visibility, mediaId)).map((job) => job.data)).toEqual([{ mediaId, action: "sync" }]);
   });

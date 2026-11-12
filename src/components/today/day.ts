@@ -1,4 +1,4 @@
-import { EVENT_IDS, type Celebration, type EventId, type ScheduleItem } from "@/lib/content/schema";
+import { GUEST_EVENT_IDS, type Celebration, type GuestEventId, type ScheduleItem } from "@/lib/content/schema";
 import { endsNextDay } from "@/lib/content/times";
 
 const MINUTE = 60 * 1000;
@@ -6,21 +6,16 @@ const DAY = 24 * 60 * MINUTE;
 /** The longest an item shows as happening now when nothing after it has a time. */
 const LONGEST_ITEM = 4 * 60 * MINUTE;
 
-/** "Saturday · 5 Dec" or "Sunday · 6 Dec". */
-export function dayLabel(secondDay: boolean, celebrations: Celebration[]) {
-  const celebration = celebrations.find((entry) => entry.id === (secondDay ? "thanks" : "ceremony")) ?? celebrations[0];
+/** The white wedding's day, as "Saturday · 5 Dec". */
+export function dayLabel(celebrations: Celebration[]): string {
+  const celebration = celebrations.find((entry) => entry.id === "ceremony") ?? celebrations[0];
   if (!celebration) return "";
   return `${celebration.weekday} · ${Number(celebration.day)} ${celebration.month.slice(0, 3)}`;
 }
 
-/** The celebrations on the day: the white wedding and reception on Saturday, the thanksgiving on Sunday. */
-export function todaysCelebrations(secondDay: boolean): readonly EventId[] {
-  return secondDay ? ["thanks"] : ["ceremony", "reception"];
-}
-
 /** The programme in celebration order, each celebration's items in the order the couple set. */
 export function inProgrammeOrder<TItem extends Pick<ScheduleItem, "celebration">>(schedule: readonly TItem[]): TItem[] {
-  return EVENT_IDS.flatMap((id) => schedule.filter((item) => item.celebration === id));
+  return GUEST_EVENT_IDS.flatMap((id) => schedule.filter((item) => item.celebration === id));
 }
 
 /** A celebration's date at a 24-hour time, in Ghana (GMT all year, so UTC). */
@@ -33,8 +28,8 @@ function at(date: string, time: string): number {
  * before it is after midnight, on the next day; so is every time after it.
  */
 export function itemStarts(schedule: readonly ScheduleItem[], celebrations: readonly Celebration[]): (number | null)[] {
-  const previous = new Map<EventId, string>();
-  const pastMidnight = new Set<EventId>();
+  const previous = new Map<GuestEventId, string>();
+  const pastMidnight = new Set<GuestEventId>();
   return schedule.map((item) => {
     const celebration = celebrations.find((entry) => entry.id === item.celebration);
     if (!item.time || !celebration) return null;

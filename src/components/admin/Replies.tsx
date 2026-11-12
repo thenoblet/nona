@@ -1,5 +1,5 @@
 import { accraDateTime, accraDayAndFullMonth } from "@/lib/accra";
-import { celebrationDay, toReplyRows } from "@/lib/admin/replies";
+import { RETIRED_EVENT_LABEL, celebrationDay, countByFilter, replyColumns, toReplyRows } from "@/lib/admin/replies";
 import { getSiteContent } from "@/lib/content/get";
 import { readRsvpSettings } from "@/lib/content/rsvp";
 import { listRsvps, rsvpHistories, rsvpTotals } from "@/lib/data/rsvp";
@@ -22,8 +22,10 @@ export async function Replies() {
     getSiteContent(),
     readRsvpSettings(),
   ]);
-  const columns = celebrations.map(({ id, name }) => ({ id, name }));
+  const columns = replyColumns(celebrations);
   const rows = toReplyRows(replies, histories, columns, new Date());
+  // The follow-up list's count, as its filter gives it, so the card and the filter always agree.
+  const saidYesToThanksgiving = countByFilter(rows).thanksgiving;
 
   return (
     <>
@@ -66,6 +68,13 @@ export async function Replies() {
             </article>
           );
         })}
+        {/* Guests are no longer asked to it: the card counts the replies to follow up, current or earlier. */}
+        <article className="admin-stat">
+          <h2>{RETIRED_EVENT_LABEL}</h2>
+          <p className="admin-stat-big admin-num">
+            {count(saidYesToThanksgiving, "reply", "replies")} <span>said yes</span>
+          </p>
+        </article>
       </section>
       <p className="admin-footnote">Guest counts add up party sizes, counting “4 or more” as 4.</p>
 

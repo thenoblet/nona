@@ -63,7 +63,7 @@ describe("GET /admin/rsvps.csv", () => {
 
     const lines = (await response.text()).replace(/^\uFEFF/, "").split("\r\n");
     expect(lines[0]).toBe(
-      "Name,Phone,Email,Party size,White wedding,Reception,Thanksgiving service,Other names,Song,Received,Email status,Flags",
+      "Name,Phone,Email,Party size,White wedding,Reception,Thanksgiving (no longer asked),Other names,Song,Received,Email status,Flags",
     );
     expect(lines[1]).toMatch(/^Ama Owusu,024 000 0000,ama@example\.com,2 people,Yes,No,,,'=Odo,\d{4}-\d{2}-\d{2} \d{2}:\d{2},Not sent,$/);
     expect(lines).toHaveLength(3);

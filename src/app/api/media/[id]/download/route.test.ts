@@ -199,14 +199,20 @@ describe("GET /api/media/[id]/download", () => {
   });
 
   it("answers with the link as JSON when the phone asks for it (Save to Photos fetches the file itself)", async () => {
-    const mediaId = await addAlbumItem({ celebration: "thanks" });
+    const mediaId = await addAlbumItem({ celebration: "ceremony" });
     const response = await GET(downloadRequest(mediaId, "", { Accept: "application/json" }), routeContext(mediaId));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       status: "ready",
       url: expect.stringContaining(`/originals/${mediaId}.jpg?`),
-      filename: `NONA26-thanksgiving-${mediaId.slice(0, 8)}.jpg`,
+      filename: `NONA26-ceremony-${mediaId.slice(0, 8)}.jpg`,
     });
+  });
+
+  it("names a moment stored as the thanksgiving like More moments", async () => {
+    const mediaId = await addAlbumItem({ celebration: "thanks" });
+    const response = await GET(downloadRequest(mediaId, "", { Accept: "application/json" }), routeContext(mediaId));
+    expect(await response.json()).toMatchObject({ status: "ready", filename: `NONA26-more-${mediaId.slice(0, 8)}.jpg` });
   });
 
   it("is limited per guest once the browser has one: past the burst it answers 429 with Retry-After", async () => {

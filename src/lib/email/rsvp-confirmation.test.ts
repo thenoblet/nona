@@ -7,7 +7,7 @@ import type { RsvpRecord } from "@/lib/data/types";
 import { renderRsvpConfirmation } from "./rsvp-confirmation";
 
 const SITE_URL = "https://example.com";
-const [first, second, third] = contentDefaults.celebrations;
+const [first, second] = contentDefaults.celebrations;
 
 function record(
   answers: RsvpRecord["answers"],
@@ -96,7 +96,14 @@ describe("renderRsvpConfirmation", () => {
       expect(attending).toContain("Attending");
       expect(attending).not.toContain("Not attending");
       expect(notAttending).toContain("Not attending");
-      expect(body).not.toContain(third.name);
+    }
+  });
+
+  it("leaves out a celebration the reply didn't answer, in the html and the text", async () => {
+    const mail = await render(record({ [second.id]: "yes" }));
+    for (const body of [mail.html, mail.text]) {
+      expect(body).toContain(second.name);
+      expect(body).not.toContain(first.name);
     }
   });
 

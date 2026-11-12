@@ -1,11 +1,28 @@
-import type { EventId } from "@/content/wedding";
+import type { Celebration, EventId } from "@/content/wedding";
 import { accraDate, accraDateTime, accraTime } from "@/lib/accra";
+import type { GUEST_EVENT_IDS, RETIRED_EVENT_ID } from "@/lib/content/schema";
 import type { Answer, EmailStatus, RsvpFlag, RsvpRecord } from "@/lib/data/types";
 import { phoneKey, phoneSearchKeys } from "@/lib/rsvp/normalize";
 
 // Shared by the replies page, its list in the browser and the CSV export.
 
 export type CelebrationColumn = { id: EventId; name: string };
+
+// Typed as GUEST_EVENT_IDS and RETIRED_EVENT_ID rather than imported from them: the list in the
+// browser shares this file, and schema.ts's values would bring zod and the site text with them.
+
+/** Saturday's celebrations, whose answers decide who is coming. */
+const GUEST_EVENTS: typeof GUEST_EVENT_IDS = ["ceremony", "reception"];
+/** The Sunday thanksgiving, which guests are no longer asked to. Replies sent before still hold its answer. */
+const RETIRED_EVENT: typeof RETIRED_EVENT_ID = "thanks";
+
+/** The thanksgiving's name on the page, its totals and the CSV. */
+export const RETIRED_EVENT_LABEL = "Thanksgiving (no longer asked)";
+
+/** The answer columns: the site text's celebrations, then the thanksgiving that earlier replies answered. */
+export function replyColumns(celebrations: Celebration[]): CelebrationColumn[] {
+  return [...celebrations.map(({ id, name }) => ({ id, name })), { id: RETIRED_EVENT, name: RETIRED_EVENT_LABEL }];
+}
 
 /** Always shown as words: a colour alone never carries the status. */
 const emailStatusLabels: Record<EmailStatus, string> = {
@@ -91,6 +108,8 @@ export type ReplyRow = {
   flags: ReplyFlag[];
   /** The replies moved into this one's history, newest first. */
   earlier: EarlierReply[];
+  /** This reply, or one in its history, said yes to the thanksgiving, so the couple can tell the guest personally. */
+  saidYesToThanksgiving: boolean;
 };
 
 /** What an earlier reply said, naming the phone, email or spelling only where it differs from now. */
@@ -116,49 +135,58 @@ export function toReplyRows(
   now: Date,
 ): ReplyRow[] {
   const receivedAt = new Map(replies.map((reply) => [reply.id, reply.receivedAt]));
-  return replies.map((reply) => ({
-    id: reply.id,
-    fullName: reply.fullName,
-    phone: reply.phone,
-    email: reply.email,
-    partySize: reply.partySize,
-    answers: reply.answers,
-    otherNames: reply.otherNames,
-    song: reply.song,
-    receivedAt: reply.receivedAt,
-    received: receivedLabel(reply.receivedAt, now),
-    emailStatus: reply.emailStatus,
-    flags: reply.flags.map((flag) => {
-      const otherReceivedAt = receivedAt.get(flag.otherId);
-      return {
-        kind: flag.kind,
-        otherId: flag.otherId,
-        otherName: flag.otherName,
-        otherReceived: otherReceivedAt ? accraDateTime(otherReceivedAt) : "",
-        note: flagNote(flag, otherReceivedAt),
-      };
-    }),
-    earlier: (histories.get(reply.id) ?? []).map((earlier) => ({
-      id: earlier.id,
-      received: accraDateTime(earlier.receivedAt),
-      details: earlierDetails(earlier, reply, celebrations),
-    })),
-  }));
+  return replies.map((reply) => {
+    const history = histories.get(reply.id) ?? [];
+    return {
+      id: reply.id,
+      fullName: reply.fullName,
+      phone: reply.phone,
+      email: reply.email,
+      partySize: reply.partySize,
+      answers: reply.answers,
+      otherNames: reply.otherNames,
+      song: reply.song,
+      receivedAt: reply.receivedAt,
+      received: receivedLabel(reply.receivedAt, now),
+      emailStatus: reply.emailStatus,
+      flags: reply.flags.map((flag) => {
+        const otherReceivedAt = receivedAt.get(flag.otherId);
+        return {
+          kind: flag.kind,
+          otherId: flag.otherId,
+          otherName: flag.otherName,
+          otherReceived: otherReceivedAt ? accraDateTime(otherReceivedAt) : "",
+          note: flagNote(flag, otherReceivedAt),
+        };
+      }),
+      earlier: history.map((earlier) => ({
+        id: earlier.id,
+        received: accraDateTime(earlier.receivedAt),
+        details: earlierDetails(earlier, reply, celebrations),
+      })),
+      // Read from every version: a guest who replies again is no longer asked, so the newest has no answer.
+      saidYesToThanksgiving: [reply, ...history].some((version) => version.answers[RETIRED_EVENT] === "yes"),
+    };
+  });
 }
 
 export const replyFilters = [
   { id: "all", label: "All", attention: false },
   { id: "coming", label: "Coming", attention: false },
   { id: "notComing", label: "Can't come", attention: false },
+  { id: "thanksgiving", label: "Said yes to the thanksgiving", attention: false },
   { id: "toCheck", label: "To check", attention: true },
   { id: "emailFailed", label: "Email failed", attention: true },
 ] as const;
 
 export type ReplyFilter = (typeof replyFilters)[number]["id"];
 
-/** Coming means yes to at least one celebration; can't come means no to every one answered. */
+/**
+ * Coming means yes to at least one of Saturday's celebrations; can't come means no to every one of
+ * them answered. A yes to the thanksgiving alone is not coming: guests are no longer asked to it.
+ */
 export function matchesFilter(row: ReplyRow, filter: ReplyFilter): boolean {
-  const answers = Object.values(row.answers);
+  const answers = GUEST_EVENTS.map((id) => row.answers[id]);
   switch (filter) {
     case "all":
       return true;
@@ -166,6 +194,8 @@ export function matchesFilter(row: ReplyRow, filter: ReplyFilter): boolean {
       return answers.includes("yes");
     case "notComing":
       return answers.includes("no") && !answers.includes("yes");
+    case "thanksgiving":
+      return row.saidYesToThanksgiving;
     case "toCheck":
       return row.flags.length > 0;
     case "emailFailed":

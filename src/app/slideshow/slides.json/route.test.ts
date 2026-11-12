@@ -108,9 +108,9 @@ describe("GET /slideshow/slides.json", () => {
   });
 
   it("says hours, then the day, for older moments, and names the More moments of other days", async () => {
-    await addAlbumItem({ celebration: "thanks", listedSecondsAgo: 3 * 3600 + 60 });
+    await addAlbumItem({ celebration: "reception", listedSecondsAgo: 3 * 3600 + 60 });
     await addAlbumItem({ celebration: "more", listedAtText: "2026-10-28 10:00:00+00" });
-    expect((await slides()).map((slide) => slide.detail)).toEqual(["Thanksgiving service · 3 h ago", "More moments · 28 Oct"]);
+    expect((await slides()).map((slide) => slide.detail)).toEqual(["Reception · 3 h ago", "More moments · 28 Oct"]);
   });
 
   it("names no one for a moment shared without a name, and sends no placeholder text", async () => {

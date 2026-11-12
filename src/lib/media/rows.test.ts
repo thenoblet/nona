@@ -194,10 +194,10 @@ describe("markPhotoReady", () => {
 
   it("keeps an item's place in the album, and the celebration the couple moved it to", async () => {
     const listedAt = new Date("2026-12-05T12:00:00Z");
-    const id = await addPhoto({ status: "uploaded", listedAt, celebration: "thanks", celebrationSetByAdmin: true });
+    const id = await addPhoto({ status: "uploaded", listedAt, celebration: "ceremony", celebrationSetByAdmin: true });
 
-    expect(await markPhotoReady(id, processed)).toMatchObject({ celebration: "thanks", celebrationSetByAdmin: true });
-    expect(await readRow(id)).toMatchObject({ status: "ready", listedAt, celebration: "thanks" });
+    expect(await markPhotoReady(id, processed)).toMatchObject({ celebration: "ceremony", celebrationSetByAdmin: true });
+    expect(await readRow(id)).toMatchObject({ status: "ready", listedAt, celebration: "ceremony" });
   });
 
   it("changes nothing, and returns null, for an item no longer uploaded, or hidden, removed or deleted (Ruling AG)", async () => {
@@ -333,10 +333,10 @@ describe("markVideoReady", () => {
 
   it("keeps an item's place in the album, and the celebration the couple moved it to", async () => {
     const listedAt = new Date("2026-12-05T12:00:00Z");
-    const id = await addVideo({ listedAt, celebration: "thanks", celebrationSetByAdmin: true });
+    const id = await addVideo({ listedAt, celebration: "ceremony", celebrationSetByAdmin: true });
 
-    expect((await markVideoReady(id, processed))?.manifest).toMatchObject({ celebration: "thanks", celebrationSetByAdmin: true });
-    expect(await readRow(id)).toMatchObject({ status: "ready", listedAt, celebration: "thanks" });
+    expect((await markVideoReady(id, processed))?.manifest).toMatchObject({ celebration: "ceremony", celebrationSetByAdmin: true });
+    expect(await readRow(id)).toMatchObject({ status: "ready", listedAt, celebration: "ceremony" });
   });
 
   it("changes nothing, and returns null, for an item no longer uploaded, or hidden, removed or deleted (Ruling AG)", async () => {
