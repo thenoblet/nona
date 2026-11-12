@@ -68,13 +68,28 @@ describe("prepareSection", () => {
     });
   });
 
-  it("leaves out the venue of an order of the day item set to Other place, keeping its typed place", () => {
-    const [atChurch, otherPlace] = prepareSection("schedule", [
-      { ...contentDefaults.schedule[0], venue: "church" },
-      { time: "[Time]", title: "After-party", venue: "", place: "Rexco Junction", day: "sat" },
+  it("reads an order of the day item's typed time and leaves out its empty time, note and place", () => {
+    const prepared = prepareSection("schedule", [
+      { celebration: "ceremony", time: " 9:30 ", title: "Guests arrive", note: " Please be seated early ", place: "" },
+      { celebration: "ceremony", time: "14.30", title: "Photos", note: "", place: " Church steps " },
+      { celebration: "thanks", time: "", title: "Sunday service", note: " ", place: " " },
+    ]);
+    expect(prepared).toEqual([
+      { celebration: "ceremony", time: "09:30", title: "Guests arrive", note: "Please be seated early" },
+      { celebration: "ceremony", time: "14:30", title: "Photos", place: "Church steps" },
+      { celebration: "thanks", title: "Sunday service" },
+    ]);
+  });
+
+  it("keeps the order of the day grouped by celebration, each in its own order", () => {
+    const prepared = prepareSection("schedule", [
+      { celebration: "reception", title: "Dinner" },
+      { celebration: "ceremony", title: "Arrive" },
+      { celebration: "thanks", title: "Service" },
+      { celebration: "ceremony", title: "Vows" },
+      { celebration: "reception", title: "Dancing" },
     ]) as Record<string, unknown>[];
-    expect(atChurch.venue).toBe("church");
-    expect(otherPlace).toEqual({ time: "[Time]", title: "After-party", place: "Rexco Junction", day: "sat" });
+    expect(prepared.map((item) => item.title)).toEqual(["Arrive", "Vows", "Dinner", "Dancing", "Service"]);
   });
 
   it("trims the maps links", () => {

@@ -1,7 +1,7 @@
 import "server-only";
 import { partyPhotos } from "@/content/images";
 import { contentDefaults } from "@/lib/content/defaults";
-import type { SectionKey } from "@/lib/content/schema";
+import { EVENT_IDS, type SectionKey } from "@/lib/content/schema";
 import { describeDate } from "./content";
 
 // Run by the save action before the schema checks an edited section.
@@ -122,6 +122,26 @@ function prepareParty(party: unknown, portraitIds: readonly string[]): unknown {
   });
 }
 
+/**
+ * An order of the day item's empty time, note and place are left out, and a typed time is read as
+ * a 24-hour time. The items are kept grouped by celebration, in the order the editor shows them.
+ */
+function prepareSchedule(schedule: unknown): unknown {
+  if (!Array.isArray(schedule)) return schedule;
+  const prepared = schedule.map((item) => {
+    if (!isObject(item)) return item;
+    const time = optionalTime(item.time);
+    const tidied = withOptional(withOptional(item, "note"), "place");
+    return time === null ? without(tidied, "time") : { ...tidied, time };
+  });
+  const order = (item: unknown) => {
+    const position = EVENT_IDS.findIndex((id) => isObject(item) && item.celebration === id);
+    return position < 0 ? EVENT_IDS.length : position;
+  };
+  // Array sort is stable, so each celebration's items keep their order.
+  return [...prepared].sort((first, second) => order(first) - order(second));
+}
+
 function mapItems(value: unknown, prepare: (item: unknown) => unknown): unknown {
   return Array.isArray(value) ? value.map(prepare) : value;
 }
@@ -145,8 +165,7 @@ export function prepareSection(
         ? Object.fromEntries(Object.entries(value).map(([name, venue]) => [name, prepareVenue(venue)]))
         : value;
     case "schedule":
-      // "Other place" posts an empty venue: the item keeps its typed place instead.
-      return mapItems(value, (item) => (isObject(item) ? withOptional(item, "venue") : item));
+      return prepareSchedule(value);
     case "travel":
       return mapItems(value, (item) => (isObject(item) ? withOptional(item, "href") : item));
     case "party":

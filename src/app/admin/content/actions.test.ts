@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { removeAt, setAt } from "@/components/admin/content/editing";
+import { setAt } from "@/components/admin/content/editing";
 import { fieldsInOrder, sectionSpecs } from "@/components/admin/content/fields";
 import { contentDefaults } from "@/lib/content/defaults";
 import { listVersions, readSiteContent, saveSection } from "@/lib/content/store";
@@ -112,13 +112,12 @@ describe("saveSectionAction", () => {
     expect(cache.updateTag).not.toHaveBeenCalled();
   });
 
-  it("refuses an order of the day with its only Sunday item removed", async () => {
-    const sunday = contentDefaults.schedule.findIndex((item) => item.day === "sun");
-    const schedule = removeAt(contentDefaults.schedule, sunday);
+  it("refuses an order of the day with no thanksgiving item left", async () => {
+    const schedule = contentDefaults.schedule.filter((item) => item.celebration !== "thanks");
 
     const result = await saveSectionAction("schedule", idle, editorForm(schedule));
     expect(result.status).toBe("error");
-    expect(result.errors).toContain("schedule: Add at least one Sunday item");
+    expect(result.errors).toContain("schedule: Add at least one Thanksgiving item");
     expect(await listVersions("schedule")).toEqual([]);
   });
 

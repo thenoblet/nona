@@ -49,22 +49,33 @@ describe("celebrationPlace", () => {
 });
 
 describe("scheduleItemPlace", () => {
-  const [guestsArrive, , photos] = contentDefaults.schedule;
+  const { celebrations, schedule } = contentDefaults;
+  const guestsArrive = schedule.find((item) => item.celebration === "ceremony")!;
+  const dinner = schedule.find((item) => item.celebration === "reception")!;
 
-  it("gives a venue's name with the town for an item held there", () => {
-    expect(scheduleItemPlace(guestsArrive, contentDefaults.venues)).toBe("Assemblies of God, Victory Worship Centre, Tepa");
-    expect(scheduleItemPlace(photos, contentDefaults.venues)).toBe("BN 111 Katakyie St, Tepa");
+  it("gives its celebration's venue with the town", () => {
+    expect(scheduleItemPlace(guestsArrive, celebrations, contentDefaults.venues)).toBe(
+      "Assemblies of God, Victory Worship Centre, Tepa",
+    );
+    expect(scheduleItemPlace(dinner, celebrations, contentDefaults.venues)).toBe("BN 111 Katakyie St, Tepa");
   });
 
   it("follows a renamed venue", () => {
     const renamed = venues();
     renamed.reception.name = "Katakyie Gardens";
-    expect(scheduleItemPlace(photos, renamed)).toBe("Katakyie Gardens, Tepa");
-    expect(scheduleItemPlace(guestsArrive, renamed)).toBe("Assemblies of God, Victory Worship Centre, Tepa");
+    expect(scheduleItemPlace(dinner, celebrations, renamed)).toBe("Katakyie Gardens, Tepa");
+    expect(scheduleItemPlace(guestsArrive, celebrations, renamed)).toBe("Assemblies of God, Victory Worship Centre, Tepa");
+  });
+
+  it("follows a celebration moved to another venue", () => {
+    const moved = celebrations.map((celebration) =>
+      celebration.id === "ceremony" ? { ...celebration, venue: "reception" as const } : celebration,
+    );
+    expect(scheduleItemPlace(guestsArrive, moved, contentDefaults.venues)).toBe("BN 111 Katakyie St, Tepa");
   });
 
   it("gives an item held anywhere else the place typed for it", () => {
-    expect(scheduleItemPlace({ ...photos, venue: undefined, place: "Rexco Junction, Tepa" }, contentDefaults.venues)).toBe(
+    expect(scheduleItemPlace({ ...dinner, place: "Rexco Junction, Tepa" }, celebrations, contentDefaults.venues)).toBe(
       "Rexco Junction, Tepa",
     );
   });

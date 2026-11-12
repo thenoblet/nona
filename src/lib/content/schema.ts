@@ -5,6 +5,8 @@ import { TIME_PATTERN } from "./times";
 /** The celebrations are fixed: their wording is editable, but exactly these three exist. */
 export const EVENT_IDS = ["ceremony", "reception", "thanks"] as const;
 export type EventId = (typeof EVENT_IDS)[number];
+/** Each celebration's name in the admin, where the order of the day is grouped by it. */
+export const EVENT_LABELS: Record<EventId, string> = { ceremony: "White wedding", reception: "Reception", thanks: "Thanksgiving" };
 
 /** The venues, each typed once under Site text → Venues. */
 export const VENUE_KEYS = ["church", "reception", "hotel"] as const;
@@ -102,38 +104,105 @@ function venueNamed(place: unknown): VenueKey | undefined {
   });
 }
 
-/**
- * Reads a schedule item held at a venue as naming that venue, its place left to the venue.
- * Items saved before they could name one (every version saved before 31 Oct 2026) typed the
- * venue's name as their place, so that place is read as the venue.
- */
-function withScheduleVenue(value: unknown): unknown {
-  if (!isRecord(value)) return value;
-  const venue = value.venue ?? venueNamed(value.place);
-  if (venue === undefined) return value;
-  const item: Record<string, unknown> = { ...value, venue };
-  delete item.place;
-  return item;
+function isVenueKey(value: unknown): value is VenueKey {
+  return VENUE_KEYS.some((key) => key === value);
 }
 
-const scheduleItem = zod.preprocess(
-  withScheduleVenue,
-  zod
-    .object({
-      time: line,
-      title: line,
-      /** Held at one of the venues: its place is that venue's name. */
-      venue: zod.enum(VENUE_KEYS, { error: "Choose a venue, or Other place" }).optional(),
-      /** Anywhere else, as guests should read it. */
-      place: line.optional(),
-      day: zod.enum(["sat", "sun"]),
-    })
-    .superRefine((item, context) => {
-      if (item.venue === undefined && item.place === undefined) {
-        context.addIssue({ code: "custom", path: ["place"], message: "Type the place, or choose a venue" });
+/** "14:30", "9.30", "2:30 PM", "2 pm" as a 24-hour time, or undefined for anything else. */
+export function readClock(typed: string): string | undefined {
+  const match = /^(\d{1,2})(?:[:.](\d{2}))?\s*(?:([ap])\.?\s*m\.?)?$/i.exec(typed.trim());
+  if (!match) return undefined;
+  const [, hourText, minutes = "00", meridiem] = match;
+  let hour = Number(hourText);
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return undefined;
+    hour = (hour % 12) + (meridiem.toLowerCase() === "p" ? 12 : 0);
+  } else if (match[2] === undefined) {
+    // A bare number like "10" is not clearly a time.
+    return undefined;
+  }
+  const clock = `${String(hour).padStart(2, "0")}:${minutes}`;
+  return TIME_PATTERN.test(clock) ? clock : undefined;
+}
+
+/** Old times that only named the day, like "Sun 6 Dec": the celebration's heading now gives the date. */
+const DAY_ONLY_TIME = /^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+\d/i;
+
+/**
+ * Keeps schedules saved before items belonged to a celebration (every version saved before
+ * 11 Nov 2026) readable. Those items named a day, a venue or a typed place, and a free-text time:
+ * - Sunday items go to the thanksgiving; Saturday items to the white wedding until the first item
+ *   at the reception venue, and to the reception from there on.
+ * - An item at its celebration's own venue now takes the place from it; one at another venue keeps
+ *   that venue's name as its typed place.
+ * - A time is read as a clock time when it is one ("2:30 PM"); a placeholder like "[Time]" or a
+ *   day like "Sun 6 Dec" is dropped, and any other words move into the note.
+ */
+function withCelebrations(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  let reachedReception = false;
+  return value.map((entry: unknown) => {
+    if (!isRecord(entry) || entry.celebration !== undefined) return entry;
+    const { day, venue: savedVenue, time: savedTime, ...rest } = entry;
+    const venue = savedVenue ?? venueNamed(entry.place);
+    if (day === "sat" && venue === "reception") reachedReception = true;
+    const celebration: EventId = day === "sun" ? "thanks" : reachedReception ? "reception" : "ceremony";
+    const item: Record<string, unknown> = { ...rest, celebration };
+    if (isVenueKey(venue)) {
+      const celebrationVenue = builtInCelebrations.find((built) => built.id === celebration)?.venue;
+      if (venue === celebrationVenue) delete item.place;
+      else item.place = `${builtInVenues[venue].name}, ${wedding.town}`;
+    }
+    if (typeof savedTime === "string") {
+      const clock = readClock(savedTime);
+      const words = savedTime.trim();
+      if (clock) item.time = clock;
+      else if (words !== "" && !/\[.*\]/.test(words) && !DAY_ONLY_TIME.test(words) && item.note === undefined) {
+        item.note = words;
       }
-    }),
-);
+    }
+    return item;
+  });
+}
+
+const scheduleItem = zod.object({
+  /** The celebration it is part of: its day, and its place unless one is typed. */
+  celebration: zod.enum(EVENT_IDS, { error: "Choose a celebration" }),
+  /** When it starts, if it has a set time; guests see "2:30 PM". */
+  time: time.optional(),
+  title: line,
+  /** A line under the title, such as "Please be seated early". */
+  note: line.optional(),
+  /** Only for an item away from its celebration's venue, as guests should read it. */
+  place: line.optional(),
+});
+
+/**
+ * Each celebration keeps at least one item. The white wedding's and the thanksgiving's times run
+ * in order; the reception's may go past midnight, so an earlier time there is read as the next day.
+ */
+function checkSchedule(
+  items: readonly unknown[],
+  context: { addIssue: (issue: { code: "custom"; message: string; path?: (string | number)[] }) => void },
+) {
+  // An item that failed its own checks may arrive here as it was sent.
+  const records = items.map((item) => (isRecord(item) ? item : {}));
+  for (const id of EVENT_IDS) {
+    if (!records.some((item) => item.celebration === id)) {
+      context.addIssue({ code: "custom", message: `Add at least one ${EVENT_LABELS[id]} item` });
+    }
+  }
+  const previous = new Map<unknown, { time: string; title: string }>();
+  records.forEach((item, index) => {
+    if (typeof item.time !== "string" || !TIME_PATTERN.test(item.time)) return;
+    const before = previous.get(item.celebration);
+    if (item.celebration !== "reception" && before && item.time < before.time) {
+      const message = `Earlier than ${before.title || "the item before"}: times run in order`;
+      context.addIssue({ code: "custom", path: [index, "time"], message });
+    }
+    previous.set(item.celebration, { time: item.time, title: typeof item.title === "string" ? item.title : "" });
+  });
+}
 
 const coordinate = (limit: number, example: string) =>
   zod
@@ -198,10 +267,7 @@ export const sectionSchemas = {
         EVENT_IDS.every((id) => items.filter((item) => item.id === id).length === 1),
       "Keep the white wedding, reception and thanksgiving, each once",
     ),
-  schedule: zod
-    .array(scheduleItem)
-    .refine((items) => items.some((item) => item.day === "sat"), "Add at least one Saturday item")
-    .refine((items) => items.some((item) => item.day === "sun"), "Add at least one Sunday item"),
+  schedule: zod.preprocess(withCelebrations, zod.array(scheduleItem).superRefine(checkSchedule)),
   venues: zod.object({ church: venue, reception: venue, hotel: venue } satisfies Record<VenueKey, typeof venue>),
   landmarks: zod.array(line),
   faq: zod.array(faqItem),

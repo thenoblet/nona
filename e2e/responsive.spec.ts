@@ -27,6 +27,7 @@ const pages: { path: string; marker: (page: Page) => Locator }[] = [
   { path: "/album", marker: heading(/Capture it with us/) },
   { path: "/today", marker: heading(/the day/) },
   { path: "/wishes", marker: heading(/Leave us a wish/) },
+  { path: "/programme", marker: heading(/Order of the day/) },
   // The phone and TV layouts each show their own caption; the one on screen must be there.
   { path: "/slideshow", marker: (page) => page.getByText(/^Shared by /).filter({ visible: true }) },
   { path: "/admin/rsvps", marker: (page) => page.getByText("This page is for the couple.") },

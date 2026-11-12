@@ -65,3 +65,17 @@ export const scheduleSavedBeforeVenues = [
   { time: "[Time]", title: "After-party", place: "Rexco Junction, Tepa", day: "sat" },
   { time: "Sun 6 Dec", title: "Thanksgiving service", place: "Assemblies of God, Victory Worship Centre, Tepa", day: "sun" },
 ];
+
+/**
+ * The order of the day as saved before its items belonged to a celebration (10 Nov 2026): each
+ * named a day and a venue and typed a free-text time. Saved content in this shape must keep
+ * parsing, or the site falls back to the built-in text.
+ */
+export const scheduleSavedBeforeCelebrations = [
+  { time: "[Time]", title: "Guests arrive", venue: "church", day: "sat" },
+  { time: "[Time]", title: "White wedding", venue: "church", day: "sat" },
+  { time: "[Time]", title: "Photos with the couple", venue: "reception", day: "sat" },
+  { time: "[Time]", title: "Reception dinner", venue: "reception", day: "sat" },
+  { time: "[Time]", title: "First dance & party", venue: "reception", day: "sat" },
+  { time: "Sun 6 Dec", title: "Thanksgiving service", venue: "church", day: "sun" },
+];

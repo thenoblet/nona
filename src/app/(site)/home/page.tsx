@@ -18,7 +18,7 @@ import { Celebrations } from "@/components/home/Celebrations";
 import { MapSection } from "@/components/home/MapSection";
 import { AlbumTeaser, Colours, Faq, Footer, Gifts, Party, RsvpBand, Travel } from "@/components/home/Sections";
 import { AfterAlbum, LiveAlbum, TodaySection, WishesWall } from "@/components/home/ModeSections";
-import { dayLabel, nowIndex } from "@/components/today/day";
+import { currentItem, dayLabel } from "@/components/today/day";
 
 export const metadata: Metadata = {
   title: "Our invitation",
@@ -53,7 +53,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
   const live = liveStreamState(content, now);
   const mode: Mode = resolveMode(now, params.mode);
   const secondDay = mode === "day" && isSecondDay(now);
-  const current = schedule[nowIndex(schedule, secondDay)];
+  const current = mode === "day" ? currentItem(schedule, celebrations, now) : undefined;
   const todayLabel = dayLabel(secondDay, celebrations);
 
   return (
@@ -82,12 +82,17 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
           <>
             <HeroDay
               todayLabel={todayLabel}
-              now={current ? { title: current.title, place: scheduleItemPlace(current, venues).replace(", Tepa", "") } : null}
+              now={current ? { title: current.title, place: scheduleItemPlace(current, celebrations, venues).replace(", Tepa", "") } : null}
               photo={photos["home-hero"]}
             />
             <LiveAlbum now={now.getTime()} />
-            <TodaySection todayLabel={todayLabel} secondDay={secondDay} schedule={schedule}
+            <TodaySection
+              todayLabel={todayLabel}
+              secondDay={secondDay}
+              schedule={schedule}
+              celebrations={celebrations}
               venues={venues}
+              now={now}
               liveUrl={live.show ? live.url : null}
             />
             <Celebrations celebrations={celebrations} venues={venues} />

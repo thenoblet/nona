@@ -184,11 +184,11 @@ describe("validation", () => {
     await expectRejected("liveStream", { url: "not a url" }, "url");
   });
 
-  it("rejects a schedule with no Sunday item", async () => {
+  it("rejects a schedule with no thanksgiving item", async () => {
     await expectRejected(
       "schedule",
-      contentDefaults.schedule.filter((item) => item.day === "sat"),
-      "Sunday",
+      contentDefaults.schedule.filter((item) => item.celebration !== "thanks"),
+      "Thanksgiving",
     );
   });
 

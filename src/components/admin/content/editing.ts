@@ -42,3 +42,18 @@ export function moveItem<TItem>(list: readonly TItem[], from: number, to: number
   if (to < 0 || to >= list.length || from === to) return [...list];
   return insertAt(removeAt(list, from), to, list[from]);
 }
+
+/**
+ * The next item up (`step` -1) or down (1) among `indexes`, the items of one group in list order;
+ * undefined at the group's edge.
+ */
+export function groupNeighbour(indexes: readonly number[], index: number, step: -1 | 1): number | undefined {
+  const position = indexes.indexOf(index);
+  return position < 0 ? undefined : indexes[position + step];
+}
+
+/** Moves an item past its neighbour in its group; at the group's edge, nothing changes. */
+export function moveWithinGroup<TItem>(list: readonly TItem[], indexes: readonly number[], index: number, step: -1 | 1): TItem[] {
+  const neighbour = groupNeighbour(indexes, index, step);
+  return neighbour === undefined ? [...list] : moveItem(list, index, neighbour);
+}

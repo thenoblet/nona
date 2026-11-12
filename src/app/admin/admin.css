@@ -665,3 +665,11 @@
   .admin-slot-editor, .admin-spinner { animation: none !important; }
   .admin-focal-dot, .admin-crop img, .admin-card img, .admin-progress-fill, .admin-slot-buttons .admin-icon { transition: none !important; }
 }
+
+/* A grouped list (the order of the day by celebration): a heading over each group's items. */
+.admin-group { margin: 0 0 22px; }
+.admin-group-heading {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 10px; padding-bottom: 6px;
+  border-bottom: 2px solid var(--admin-accent); font-size: 17px; font-weight: 700; overflow-wrap: anywhere;
+}
+.admin-group-count { color: var(--admin-muted); font-size: 13px; font-weight: 500; }

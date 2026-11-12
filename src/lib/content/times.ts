@@ -9,3 +9,11 @@ export function endsNextDay(startTime: string | null | undefined, endTime: strin
   if (!startTime || !endTime || !TIME_PATTERN.test(startTime) || !TIME_PATTERN.test(endTime)) return false;
   return endTime < startTime;
 }
+
+/** "14:30" as guests read it, "2:30 PM"; "00:15" is "12:15 AM". Anything else is shown as typed. */
+export function formatClock(time: string): string {
+  if (!TIME_PATTERN.test(time)) return time;
+  const [hour, minutes] = time.split(":").map(Number);
+  const meridiem = hour < 12 ? "AM" : "PM";
+  return `${hour % 12 === 0 ? 12 : hour % 12}:${String(minutes).padStart(2, "0")} ${meridiem}`;
+}

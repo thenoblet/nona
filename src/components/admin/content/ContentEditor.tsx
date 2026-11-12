@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useEffect,
   useId,
   useLayoutEffect,
@@ -21,10 +22,12 @@ import {
   type ContentSectionKey,
   type SaveState,
 } from "@/lib/admin/content";
-import { getAt, insertAt, moveItem, pathKey, removeAt, setAt, type Path } from "./editing";
+import { getAt, groupNeighbour, insertAt, moveItem, moveWithinGroup, pathKey, removeAt, setAt, type Path } from "./editing";
 import {
   fieldsFor,
   fieldsInOrder,
+  groupEnd,
+  groupedIndexes,
   sectionSpecs,
   type EditorContext,
   type FieldSpec,
@@ -41,7 +44,10 @@ type Problems = { fields: Map<string, string>; general: string[]; message: strin
 const noProblems: Problems = { fields: new Map(), general: [], message: null };
 
 /** After a render, focus moves here: a list item's control, or the first problem after a failed save. */
-type FocusTarget = { item: string; control: "first" | "group" | "up" | "down" } | { add: true } | { problems: true };
+type FocusTarget =
+  | { item: string; control: "first" | "group" | "up" | "down" }
+  | { add: string | null }
+  | { problems: true };
 
 function problemsFrom(sectionKey: ContentSectionKey, spec: SectionSpec, value: unknown, errors: string[]): Problems {
   const shown = new Set(fieldsInOrder(spec, value).map((field) => field.path));
@@ -137,7 +143,7 @@ export function ContentEditor({
     if ("problems" in target) {
       element = form.querySelector<HTMLElement>('[aria-invalid="true"], .admin-form-problems');
     } else if ("add" in target) {
-      element = form.querySelector<HTMLElement>("[data-add]");
+      element = form.querySelector<HTMLElement>(target.add === null ? "[data-add]" : `[data-add="${target.add}"]`);
     } else {
       const fieldset = form.querySelector<HTMLElement>(`[data-item="${target.item}"]`);
       if (target.control === "first") element = fieldset?.querySelector("input, textarea, select") ?? null;
@@ -152,6 +158,19 @@ export function ContentEditor({
   });
 
   function change(path: Path, next: unknown) {
+    // In a grouped list, an item given another group moves to the end of it, where it now shows.
+    const [index, ...rest] = path;
+    if (spec.layout === "list" && spec.groupBy && typeof index === "number" && pathKey(rest) === pathKey(spec.groupBy.path)) {
+      const list = listOf(draft);
+      const others = removeAt(list, index);
+      const target = groupEnd(spec, others, String(next));
+      changeList((current) => insertAt(removeAt(current, index), target, current[index]), {
+        item: itemKeys[index] ?? `item-${index}`,
+        control: "group",
+      });
+      setDraft((current: unknown) => setAt(current, [target, ...rest], next));
+      return;
+    }
     setDraft((current: unknown) => setAt(current, path, next));
     const key = pathKey(path);
     setProblems((current) => {
@@ -170,15 +189,16 @@ export function ContentEditor({
     setProblems((current) => ({ ...current, fields: new Map() }));
   }
 
-  // A new item goes at the end, so no other path moves and field messages stay.
-  function add(editable: NonNullable<ListSpec["editable"]>) {
+  // A new item goes at the end, so no other path moves and field messages stay. In a grouped list it
+  // goes at the end of its group; when that moves later items, their messages no longer fit and go.
+  function add(listSpec: ListSpec, editable: NonNullable<ListSpec["editable"]>, group?: string) {
     const key = `new-${nextItemKey.current++}`;
+    const list = listOf(draft);
+    const position = group === undefined ? list.length : groupEnd(listSpec, list, group);
     focusTarget.current = { item: key, control: "first" };
-    setDraft((current: unknown) => {
-      const list = listOf(current);
-      return insertAt(list, list.length, editable.newItem(list));
-    });
-    setItemKeys((current) => [...current, key]);
+    setDraft((current: unknown) => insertAt(listOf(current), position, editable.newItem(listOf(current), group)));
+    setItemKeys((current) => insertAt(current, position, key));
+    if (position < list.length) setProblems((current) => ({ ...current, fields: new Map() }));
   }
 
   function discard() {
@@ -300,71 +320,123 @@ export function ContentEditor({
                   </fieldset>
                 );
               })
-            : listOf(draft).map((item, index, items) => {
-                const itemKey = itemKeys[index] ?? `item-${index}`;
-                const legend = spec.legend(item, index);
-                const note = spec.note?.(item);
-                return (
-                  <fieldset key={itemKey} className="admin-fieldset" data-item={itemKey} tabIndex={-1}>
-                    <legend>{legend}</legend>
-                    {note && <p className="admin-item-note">{note}</p>}
-                    <div className="admin-fields">
-                      {fieldsFor(spec, item).map((field) => (
-                        <Field
-                          key={field.path.join(".") || "value"}
-                          {...fieldProps(field, item, [index, ...field.path], `${formId}-${itemKey}`)}
-                        />
-                      ))}
-                    </div>
-                    {spec.editable && (
-                      <div className="admin-item-actions">
-                        <button
-                          type="button"
-                          className="admin-btn admin-btn-small"
-                          data-move="up"
-                          disabled={index === 0}
-                          aria-label={`Move ${legend} up`}
-                          onClick={() => changeList((list) => moveItem(list, index, index - 1), { item: itemKey, control: "up" })}
-                        >
-                          Move up
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-btn admin-btn-small"
-                          data-move="down"
-                          disabled={index === items.length - 1}
-                          aria-label={`Move ${legend} down`}
-                          onClick={() => changeList((list) => moveItem(list, index, index + 1), { item: itemKey, control: "down" })}
-                        >
-                          Move down
-                        </button>
-                        {(spec.editable.removable?.(item) ?? true) && (
+            : groupedIndexes(spec, listOf(draft)).map((group) => {
+                const items = listOf(draft);
+                const addLabel = spec.editable
+                  ? typeof spec.editable.addLabel === "function"
+                    ? spec.editable.addLabel(group.label ?? "")
+                    : spec.editable.addLabel
+                  : null;
+                const fieldsets = group.indexes.map((index) => {
+                  const item = items[index];
+                  const itemKey = itemKeys[index] ?? `item-${index}`;
+                  const legend = spec.legend(item, index);
+                  // Buttons name the group too, as two celebrations can each have a "Guests arrive".
+                  const named = group.label ? `${legend} (${group.label})` : legend;
+                  const note = spec.note?.(item);
+                  const above = group.label ? groupNeighbour(group.indexes, index, -1) : index > 0 ? index - 1 : undefined;
+                  const below = group.label
+                    ? groupNeighbour(group.indexes, index, 1)
+                    : index < items.length - 1
+                      ? index + 1
+                      : undefined;
+                  const move = (step: -1 | 1) =>
+                    changeList(
+                      (list) => (group.label ? moveWithinGroup(list, group.indexes, index, step) : moveItem(list, index, index + step)),
+                      { item: itemKey, control: step === -1 ? "up" : "down" },
+                    );
+                  return (
+                    <fieldset key={itemKey} className="admin-fieldset" data-item={itemKey} tabIndex={-1}>
+                      <legend>{legend}</legend>
+                      {note && <p className="admin-item-note">{note}</p>}
+                      <div className="admin-fields">
+                        {fieldsFor(spec, item).map((field) => (
+                          <Field
+                            key={field.path.join(".") || "value"}
+                            {...fieldProps(field, item, [index, ...field.path], `${formId}-${itemKey}`)}
+                          />
+                        ))}
+                      </div>
+                      {spec.editable && (
+                        <div className="admin-item-actions">
                           <button
                             type="button"
-                            className="admin-btn admin-btn-small admin-btn-remove"
-                            aria-label={`Remove ${legend}`}
-                            onClick={() => {
-                              const neighbour = itemKeys[index + 1] ?? itemKeys[index - 1];
-                              changeList(
-                                (list) => removeAt(list, index),
-                                neighbour ? { item: neighbour, control: "group" } : { add: true },
-                              );
-                            }}
+                            className="admin-btn admin-btn-small"
+                            data-move="up"
+                            disabled={above === undefined}
+                            aria-label={`Move ${named} up`}
+                            onClick={() => move(-1)}
                           >
-                            Remove
+                            Move up
                           </button>
-                        )}
-                      </div>
+                          <button
+                            type="button"
+                            className="admin-btn admin-btn-small"
+                            data-move="down"
+                            disabled={below === undefined}
+                            aria-label={`Move ${named} down`}
+                            onClick={() => move(1)}
+                          >
+                            Move down
+                          </button>
+                          {(spec.editable.removable?.(item) ?? true) && (
+                            <button
+                              type="button"
+                              className="admin-btn admin-btn-small admin-btn-remove"
+                              aria-label={`Remove ${named}`}
+                              onClick={() => {
+                                // Focus stays in the group: the next item, else the one before, else its add button.
+                                const neighbourIndex = below ?? above;
+                                const neighbour = neighbourIndex === undefined ? undefined : itemKeys[neighbourIndex];
+                                changeList(
+                                  (list) => removeAt(list, index),
+                                  neighbour ? { item: neighbour, control: "group" } : { add: group.value },
+                                );
+                              }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </fieldset>
+                  );
+                });
+                if (!group.label) {
+                  return (
+                    <Fragment key="items">
+                      {fieldsets}
+                      {spec.editable && addLabel && group.value === null && !spec.groupBy && (
+                        <button type="button" className="admin-btn admin-add" data-add onClick={() => add(spec, spec.editable!)}>
+                          {addLabel}
+                        </button>
+                      )}
+                    </Fragment>
+                  );
+                }
+                const headingId = `${formId}-group-${group.value}`;
+                return (
+                  <section key={group.value} className="admin-group" aria-labelledby={headingId}>
+                    <h2 id={headingId} className="admin-group-heading">
+                      {group.label}
+                      <span className="admin-group-count">
+                        {group.indexes.length} {group.indexes.length === 1 ? spec.editable?.noun ?? "item" : `${spec.editable?.noun ?? "item"}s`}
+                      </span>
+                    </h2>
+                    {fieldsets}
+                    {spec.editable && addLabel && (
+                      <button
+                        type="button"
+                        className="admin-btn admin-add"
+                        data-add={group.value ?? ""}
+                        onClick={() => add(spec, spec.editable!, group.value ?? undefined)}
+                      >
+                        {addLabel}
+                      </button>
                     )}
-                  </fieldset>
+                  </section>
                 );
               })}
-
-          {spec.layout === "list" && spec.editable && (
-            <button type="button" className="admin-btn admin-add" data-add onClick={() => add(spec.editable!)}>
-              {spec.editable.addLabel}
-            </button>
-          )}
 
           <div className="admin-savebar">
             <span className={`admin-savestatus admin-savestatus-${status.tone}`} role="status">
