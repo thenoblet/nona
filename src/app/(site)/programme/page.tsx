@@ -15,10 +15,10 @@ import { resolveMode } from "@/lib/mode";
 
 export const metadata: Metadata = {
   title: "Order of the day",
-  description: "Every part of Noblet and Nancy's wedding weekend in Tepa, from the first hymn to the last dance.",
+  description: "Every part of Noblet and Nancy's wedding day in Tepa, from the first hymn to the last dance.",
 };
 
-/** "Sat 5 & Sun 6 December · Tepa", from the first and last celebrations' dates. */
+/** "Sat 5 December · Tepa", from the first and last celebrations' dates: one day, as Saturday's two share it. */
 function weekendLine(celebrations: Celebration[]): string {
   const first = celebrations[0];
   const last = celebrations.at(-1);

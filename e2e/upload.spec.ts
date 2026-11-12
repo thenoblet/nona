@@ -883,7 +883,7 @@ test.describe("when sharing isn't open", () => {
     await saveSetting("uploads_closed_at", null);
     await page.goto("/album");
     const main = inMain(page);
-    await expect(main.getByText("Photo and video sharing opens on the wedding weekend")).toBeVisible();
+    await expect(main.getByText("Photo and video sharing opens on the wedding day")).toBeVisible();
     await expect(main.getByText("Saturday 5 December. Come back here with your camera ready.")).toBeVisible();
     await expect(main.getByRole("link", { name: "Add to calendar" })).toHaveAttribute("href", "/calendar");
     await expect(main.getByText("Album · #NONA26")).toBeVisible();
@@ -895,7 +895,7 @@ test.describe("when sharing isn't open", () => {
     await page.reload();
     await expect(main.getByText("Sharing has closed")).toBeVisible();
     await expect(main.getByText("Thank you for every photo and video. The album stays here for you to look through.")).toBeVisible();
-    await expect(page.getByText("Photo and video sharing opens on the wedding weekend")).toHaveCount(0);
+    await expect(page.getByText("Photo and video sharing opens on the wedding day")).toHaveCount(0);
     await expect(page.locator('input[type="file"]')).toHaveCount(0);
   });
 

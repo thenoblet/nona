@@ -14,7 +14,7 @@ export function UploadsClosed({ phase }: { phase: "before" | "after" }) {
         <Halo icon={before ? "calendar" : "heart"} size="md" tone="dark" />
         <div className="flex min-w-0 flex-col gap-1.5">
           <p className="m-0 font-serif text-[23px] leading-[1.18] text-white italic">
-            {before ? "Photo and video sharing opens on the wedding weekend" : "Sharing has closed"}
+            {before ? "Photo and video sharing opens on the wedding day" : "Sharing has closed"}
           </p>
           <p className="m-0 text-[13.5px] leading-[1.55] text-mist">
             {before
