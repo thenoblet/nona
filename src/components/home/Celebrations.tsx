@@ -36,7 +36,7 @@ function CelebrationCard({
       as="article"
       className={`paper-card flex flex-col items-center gap-4.5 rounded-[var(--radius-paper)] bg-white px-6 pt-11 pb-8 text-center shadow-[var(--shadow-paper)] sm:px-7.5 ${
         index === 0 ? "outline outline-1 -outline-offset-[12px] outline-ember/45" : ""
-      } ${index === 1 ? "lg:mt-[18px]" : ""}`}
+      }`}
       style={{ transform: `rotate(${tilts[index % tilts.length]})` }}
     >
       <div className="flex flex-col items-center gap-1">
@@ -75,7 +75,8 @@ export function Celebrations({ celebrations, venues }: { celebrations: Celebrati
         <Reveal>
           <SectionHeading eyebrow="Save the dates" title="The celebrations" />
         </Reveal>
-        <div className="grid grid-cols-1 items-stretch gap-x-8 gap-y-10 md:grid-cols-2 lg:grid-cols-3">
+        {/* From 1024 px each card is as wide as one of three (the row less two 2rem gaps, over three), and the pair is centred. */}
+        <div className="grid grid-cols-1 items-stretch gap-x-8 gap-y-10 md:grid-cols-2 lg:grid-cols-[repeat(2,calc((100%_-_4rem)/3))] lg:justify-center">
           {celebrations.map((celebration, index) => (
             <CelebrationCard key={celebration.id} celebration={celebration} venues={venues} index={index} />
           ))}
