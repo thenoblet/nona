@@ -177,12 +177,13 @@ describe("a GhanaPost GPS typed into a celebration's extra place note", () => {
 describe("the order of the day", () => {
   const schedule = () => structuredClone(contentDefaults.schedule) as Record<string, unknown>[];
 
-  it("puts every built-in item in a celebration, at its venue, with no time yet", () => {
+  it("puts every built-in item in a celebration, at its venue; Saturday's have times, Sunday's not yet", () => {
     const counts = Object.fromEntries(
       ["ceremony", "reception", "thanks"].map((id) => [id, contentDefaults.schedule.filter((item) => item.celebration === id).length]),
     );
-    expect(counts).toEqual({ ceremony: 9, reception: 10, thanks: 3 });
-    expect(contentDefaults.schedule.every((item) => item.time === undefined && item.place === undefined)).toBe(true);
+    expect(counts).toEqual({ ceremony: 19, reception: 20, thanks: 3 });
+    expect(contentDefaults.schedule.every((item) => item.place === undefined)).toBe(true);
+    expect(contentDefaults.schedule.every((item) => (item.celebration === "thanks") === (item.time === undefined))).toBe(true);
   });
 
   it("takes a time, a note and a place, each optional", () => {
@@ -209,21 +210,20 @@ describe("the order of the day", () => {
 
   it("keeps the white wedding's and the thanksgiving's times in order", () => {
     const value = schedule();
-    value[0].time = "10:00";
-    value[1].time = "09:45";
-    value[19].time = "09:00";
-    value[20].time = "08:00";
+    const sunday = value.findIndex((item) => item.celebration === "thanks");
+    value[1].time = "09:00";
+    value[sunday].time = "09:00";
+    value[sunday + 1].time = "08:00";
     expect(problems("schedule", value)).toEqual([
-      "schedule[1].time: Earlier than Guests arrive: times run in order",
-      "schedule[20].time: Earlier than Sunday service: times run in order",
+      "schedule[1].time: Earlier than Arrival of guests: times run in order",
+      `schedule[${sunday + 1}].time: Earlier than Sunday service: times run in order`,
     ]);
   });
 
   it("lets the reception run past midnight", () => {
     const value = schedule();
-    value[9].time = "15:00";
-    value[17].time = "21:00";
-    value[18].time = "00:30";
+    const lastReception = value.findLastIndex((item) => item.celebration === "reception");
+    value[lastReception].time = "00:30";
     expect(problems("schedule", value)).toEqual([]);
   });
 

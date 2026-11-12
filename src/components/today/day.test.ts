@@ -3,7 +3,12 @@ import { contentDefaults } from "@/lib/content/defaults";
 import type { Celebration, ScheduleItem } from "@/lib/content/schema";
 import { currentItem, inProgrammeOrder, itemStarts, programmeNow, stateOf } from "./day";
 
-const celebrations: Celebration[] = structuredClone(contentDefaults.celebrations);
+// The built-in celebrations, without the end times the built-in text sets, so each item's own limits show.
+const celebrations: Celebration[] = structuredClone(contentDefaults.celebrations).map((celebration) => ({
+  ...celebration,
+  startTime: null,
+  endTime: null,
+}));
 
 /** A moment in Tepa (GMT, so UTC) on the wedding weekend. */
 const at = (date: string, time: string) => new Date(`${date}T${time}:00Z`);
@@ -73,8 +78,21 @@ describe("programmeNow", () => {
   });
 
   it("has nothing on for a programme with no times, or none at all", () => {
-    expect(titleAt(saturday("12:00"), contentDefaults.schedule)).toBeUndefined();
+    const untimed = contentDefaults.schedule.map((item) => ({ ...item, time: undefined }));
+    expect(titleAt(saturday("12:00"), untimed)).toBeUndefined();
     expect(programmeNow([], celebrations, saturday("12:00"))).toEqual({ current: -1, started: -1 });
+  });
+});
+
+describe("the built-in programme", () => {
+  it("follows the day by the clock", () => {
+    const builtIn = (now: Date) => currentItem(contentDefaults.schedule, contentDefaults.celebrations, now)?.title;
+    expect(builtIn(saturday("09:00"))).toBeUndefined();
+    expect(builtIn(saturday("11:20"))).toBe("Exchange of vows");
+    expect(builtIn(saturday("15:40"))).toBe("First dance");
+    // The reception ends at 7:30 PM.
+    expect(builtIn(saturday("19:29"))).toBe("Closing remarks and appreciation");
+    expect(builtIn(saturday("19:31"))).toBeUndefined();
   });
 });
 
