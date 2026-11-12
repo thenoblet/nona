@@ -22,10 +22,10 @@ describe("defaults", () => {
     expect(sectionSchemas[key].safeParse(contentDefaults[key]).success).toBe(true);
   });
 
-  it("dates the celebrations with no times", () => {
+  it("dates the celebrations, with Saturday's times from the programme and Sunday's still to come", () => {
     expect(contentDefaults.celebrations.map((celebration) => [celebration.date, celebration.startTime, celebration.endTime])).toEqual([
-      ["2026-12-05", null, null],
-      ["2026-12-05", null, null],
+      ["2026-12-05", "10:00", "14:00"],
+      ["2026-12-05", "14:30", "19:30"],
       ["2026-12-06", null, null],
     ]);
   });
