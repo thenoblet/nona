@@ -238,15 +238,6 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
       { path: ["href"], label: "Link", kind: "link", span: 4, placeholder: OPTIONAL, hint: LINK_HINT },
     ],
   },
-  gifts: {
-    layout: "list",
-    legend: named("title", "Gift"),
-    fields: [
-      { path: ["title"], label: "Title", kind: "text", span: 3 },
-      { path: ["action"], label: "Button text", kind: "text", span: 3 },
-      { path: ["text"], label: "Text", kind: "textarea", span: 6 },
-    ],
-  },
   party: {
     layout: "list",
     legend: named("name", "Member"),

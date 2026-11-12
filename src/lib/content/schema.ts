@@ -240,7 +240,6 @@ const travelItem = zod.object({
   href: link.optional(),
 });
 
-const giftItem = zod.object({ title: line, text, action: line });
 
 const story = zod.object({
   met: zod.object({ when: line, title: line, text }),
@@ -272,7 +271,6 @@ export const sectionSchemas = {
   landmarks: zod.array(line),
   faq: zod.array(faqItem),
   travel: zod.array(travelItem),
-  gifts: zod.array(giftItem),
   // Photos are found by id, so two people sharing one would share a portrait.
   party: zod.array(partyMember).superRefine((members, context) => {
     const seen = new Set<string>();
@@ -309,7 +307,6 @@ export type Venue = zod.infer<typeof venue>;
 export type FaqItem = zod.infer<typeof faqItem>;
 export type PartyMember = zod.infer<typeof partyMember>;
 export type TravelItem = zod.infer<typeof travelItem>;
-export type GiftItem = zod.infer<typeof giftItem>;
 export type Story = zod.infer<typeof story>;
 export type LiveStream = SiteContent["liveStream"];
 export type RsvpSettings = SiteContent["rsvp"];
