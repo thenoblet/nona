@@ -136,12 +136,12 @@ export function RsvpBand({ rsvp }: { rsvp: RsvpSettings }) {
         <Reveal className="oval relative w-full max-w-[260px] sm:max-w-[340px]">
           <div aria-hidden className="oval-ring absolute inset-0 translate-x-3.5 -translate-y-3.5 rounded-t-[170px] border border-ember" />
           <Image
-            src={photos.chrysanthemumsPortrait.src}
-            alt={photos.chrysanthemumsPortrait.alt}
+            src={photos.handOnShoulder.src}
+            alt={photos.handOnShoulder.alt}
             sizes="(min-width: 640px) 340px, 260px"
             placeholder="blur"
             className="relative block aspect-[3/4] h-auto w-full rounded-t-[170px] object-cover"
-            style={{ objectPosition: photos.chrysanthemumsPortrait.position }}
+            style={{ objectPosition: photos.handOnShoulder.position }}
           />
         </Reveal>
         <div className="flex max-w-[560px] flex-1 flex-col items-center gap-5.5">

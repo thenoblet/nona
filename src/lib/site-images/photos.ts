@@ -30,7 +30,7 @@ const PREVIEW_IMAGES: Record<PreviewCardId, StaticImageData> = {
 };
 
 const BUILTIN_PHOTOS: Record<string, BuiltinPhoto | null> = {
-  "landing-cover": builtin(photos.embraceBw),
+  "landing-cover": builtin(photos.coverTogether),
   "landing-print": builtin(photos.bouquet),
   // public/images/home/hero.jpg (swap the file to change it), until the couple choose another in Site photos.
   "home-hero": builtin(homeHeroPhoto),
@@ -42,9 +42,9 @@ const BUILTIN_PHOTOS: Record<string, BuiltinPhoto | null> = {
   "story-asked-print": builtin(photos.bouquet),
   "story-forever-arch": builtin(photos.foreverLaugh),
   "story-forever-print": builtin(photos.foreverFloor),
-  "gallery-left": builtin(photos.bouquet, "Nancy holds her bouquet as they hug"),
-  "gallery-centre": builtin(photos.embraceBw, "Noblet and Nancy embrace, in black and white"),
-  "gallery-right": builtin(photos.kiss, "Noblet and Nancy share a kiss"),
+  "gallery-left": builtin(photos.piggybackSmile),
+  "gallery-centre": builtin(photos.embraceGaze),
+  "gallery-right": builtin(photos.sofaSmile),
   ...Object.fromEntries(
     (Object.keys(previewPhotos) as PreviewCardId[]).map((card) => [
       `preview-${card}`,

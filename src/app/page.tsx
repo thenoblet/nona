@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return { openGraph: await invitationOpenGraph() };
 }
 
-const printPhoto = "block h-[180px] w-full object-cover sm:h-[230px] lg:h-[290px]";
+const printPhoto = "block h-[140px] w-full object-cover sm:h-[230px] lg:h-[290px]";
 
 /**
  * The cover and the print, read at request time, so a photo the couple replace in the admin shows
@@ -44,12 +44,14 @@ export default function Landing() {
   return (
     <main className="min-h-dvh bg-white text-cocoa lg:grid lg:grid-cols-[minmax(0,47%)_minmax(0,1fr)]">
       <div className="relative lg:sticky lg:top-0 lg:h-dvh">
-        <div className="relative aspect-[4/5] w-full bg-cocoa sm:aspect-[16/11] lg:aspect-auto lg:h-full">
+        <div className="relative h-[46svh] min-h-[300px] w-full bg-cocoa sm:h-auto sm:aspect-[16/11] lg:aspect-auto lg:h-full">
           <Suspense>
             <LandingPhoto slotId="landing-cover" />
           </Suspense>
-          <p className="absolute bottom-5 left-5 m-0 max-w-[45%] text-[11px] leading-relaxed uppercase tracking-[0.3em] text-white sm:bottom-9 sm:left-10 sm:max-w-none sm:text-xs">
-            The proposal · 7 June 2026
+          {/* A soft shade along the bottom keeps the white caption clear on a light photo. */}
+          <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/45 to-transparent" />
+          <p className="absolute bottom-5 left-5 m-0 max-w-[64%] text-[11px] leading-relaxed uppercase tracking-[0.3em] text-white sm:bottom-9 sm:left-10 sm:max-w-none sm:text-xs">
+            Tepa · 5 December 2026
           </p>
           <nav
             aria-label="Main"
@@ -62,13 +64,13 @@ export default function Landing() {
           </nav>
         </div>
         <div
-          className="print absolute right-5 -bottom-20 w-[150px] animate-rise bg-white p-2 pb-8 shadow-[0_18px_40px_rgb(61_41_39/0.22)] sm:right-12 sm:w-[190px] lg:top-[58%] lg:-right-20 lg:bottom-auto lg:w-[230px] lg:p-2.5 lg:pb-10"
+          className="print absolute right-5 -bottom-14 w-[120px] animate-rise bg-white p-1.5 pb-7 shadow-[0_18px_40px_rgb(61_41_39/0.22)] sm:right-12 sm:w-[190px] lg:top-[58%] lg:-right-20 lg:bottom-auto lg:w-[230px] lg:p-2.5 lg:pb-10"
           style={{ transform: "rotate(-4deg)", animationDelay: "500ms" }}
         >
           <Suspense fallback={<div className={`${printPhoto} bg-cocoa`} />}>
             <LandingPhoto slotId="landing-print" />
           </Suspense>
-          <p className="absolute inset-x-0 bottom-1.5 m-0 text-center font-script text-xl sm:text-2xl">she said yes</p>
+          <p className="absolute inset-x-0 bottom-1 m-0 text-center font-script text-lg sm:bottom-1.5 sm:text-2xl">she said yes</p>
         </div>
       </div>
 
@@ -86,16 +88,16 @@ export default function Landing() {
           </div>
         </nav>
 
-        <div className="mt-28 flex flex-col sm:mt-30 lg:mt-14">
+        <div className="mt-14 flex flex-col sm:mt-30 lg:mt-14">
           <p className="m-0 mb-4 animate-rise text-[11px] uppercase tracking-[0.34em] text-mocha sm:text-xs">
             Issue No. 1 · A wedding
           </p>
           <h1 className="m-0 font-serif font-light">
-            <span className="block animate-rise text-[88px] leading-[0.88] tracking-[-0.02em] sm:text-[120px] lg:text-[clamp(110px,10.4vw,150px)]" style={{ animationDelay: "150ms" }}>
+            <span className="block animate-rise text-[68px] leading-[0.88] tracking-[-0.02em] sm:text-[120px] lg:text-[clamp(110px,10.4vw,150px)]" style={{ animationDelay: "150ms" }}>
               {couple.groom}
             </span>
             <span
-              className="mt-1.5 ml-14 block animate-rise text-[88px] leading-[0.88] tracking-[-0.02em] italic sm:ml-24 sm:text-[120px] lg:ml-30 lg:text-[clamp(110px,10.4vw,150px)]"
+              className="mt-1.5 ml-10 block animate-rise text-[68px] leading-[0.88] tracking-[-0.02em] italic sm:ml-24 sm:text-[120px] lg:ml-30 lg:text-[clamp(110px,10.4vw,150px)]"
               style={{ animationDelay: "300ms" }}
             >
               <span className="text-ember">&amp;</span> {couple.bride}
@@ -103,7 +105,7 @@ export default function Landing() {
           </h1>
         </div>
 
-        <div className="mt-10 flex max-w-[480px] animate-rise flex-col gap-6.5 lg:mt-12 lg:ml-30" style={{ animationDelay: "500ms" }}>
+        <div className="mt-7 flex max-w-[480px] animate-rise flex-col gap-6.5 sm:mt-10 lg:mt-12 lg:ml-30" style={{ animationDelay: "500ms" }}>
           <p className="m-0 font-serif text-[22px] leading-[1.45] text-mocha sm:text-[26px]">
             Together with their families, they invite you to celebrate the beginning of their forever.
           </p>
@@ -119,7 +121,7 @@ export default function Landing() {
               </span>
             </div>
           </div>
-          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-5">
+          <div className="order-first flex flex-row flex-wrap items-center gap-x-5 gap-y-2 sm:order-none sm:gap-5">
             <OpenInvitation />
             <Link
               href="/rsvp"

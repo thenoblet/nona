@@ -151,7 +151,7 @@ export function Gallery({ photos }: { photos: SlotPhotos }) {
           style={{ transform: "rotate(-5deg)" }}
         >
           {left ? <SitePhoto photo={left} sizes="230px" blur className={galleryPrint} /> : <div className={`${galleryPrint} bg-tile`} />}
-          <span className="absolute inset-x-0 bottom-2 text-center font-script text-[22px]">she said yes</span>
+          <span className="absolute inset-x-0 bottom-2 text-center font-script text-[22px]">carried away</span>
         </Reveal>
         {centre ? (
           <SitePhoto
@@ -165,7 +165,7 @@ export function Gallery({ photos }: { photos: SlotPhotos }) {
           style={{ transform: "rotate(4deg)" }}
         >
           {right ? <SitePhoto photo={right} sizes="230px" blur className={galleryPrint} /> : <div className={`${galleryPrint} bg-tile`} />}
-          <span className="absolute inset-x-0 bottom-2 text-center font-script text-[22px]">under the roses</span>
+          <span className="absolute inset-x-0 bottom-2 text-center font-script text-[22px]">home is you</span>
         </Reveal>
       </div>
     </section>
