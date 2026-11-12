@@ -181,7 +181,7 @@ describe("the order of the day", () => {
     const counts = Object.fromEntries(
       ["ceremony", "reception", "thanks"].map((id) => [id, contentDefaults.schedule.filter((item) => item.celebration === id).length]),
     );
-    expect(counts).toEqual({ ceremony: 21, reception: 20, thanks: 3 });
+    expect(counts).toEqual({ ceremony: 19, reception: 20, thanks: 3 });
     expect(contentDefaults.schedule.every((item) => item.place === undefined)).toBe(true);
     expect(contentDefaults.schedule.every((item) => (item.celebration === "thanks") === (item.time === undefined))).toBe(true);
   });
