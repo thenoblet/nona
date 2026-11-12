@@ -1,5 +1,5 @@
 import { accraDateTime, accraDayAndFullMonth } from "@/lib/accra";
-import { celebrationDay, replyColumns, toReplyRows } from "@/lib/admin/replies";
+import { RETIRED_EVENT_LABEL, celebrationDay, countByFilter, replyColumns, toReplyRows } from "@/lib/admin/replies";
 import { getSiteContent } from "@/lib/content/get";
 import { readRsvpSettings } from "@/lib/content/rsvp";
 import { listRsvps, rsvpHistories, rsvpTotals } from "@/lib/data/rsvp";
@@ -24,6 +24,8 @@ export async function Replies() {
   ]);
   const columns = replyColumns(celebrations);
   const rows = toReplyRows(replies, histories, columns, new Date());
+  // The follow-up list's count, as its filter gives it, so the card and the filter always agree.
+  const saidYesToThanksgiving = countByFilter(rows).thanksgiving;
 
   return (
     <>
@@ -50,14 +52,12 @@ export async function Replies() {
       />
 
       <section className="admin-stats" aria-label="Totals">
-        {columns.map((column) => {
-          const total = totals[column.id];
-          // The thanksgiving is no longer in the site text, so it has no date to show.
-          const date = celebrations.find((celebration) => celebration.id === column.id)?.date;
+        {celebrations.map((celebration) => {
+          const total = totals[celebration.id];
           return (
-            <article className="admin-stat" key={column.id}>
-              <h2>{column.name}</h2>
-              {date && <p className="admin-stat-when">{celebrationDay(date)}</p>}
+            <article className="admin-stat" key={celebration.id}>
+              <h2>{celebration.name}</h2>
+              <p className="admin-stat-when">{celebrationDay(celebration.date)}</p>
               <p className="admin-stat-big admin-num">
                 {total.people} <span>{total.people === 1 ? "guest" : "guests"}</span>
               </p>
@@ -68,6 +68,13 @@ export async function Replies() {
             </article>
           );
         })}
+        {/* Guests are no longer asked to it: the card counts the replies to follow up, current or earlier. */}
+        <article className="admin-stat">
+          <h2>{RETIRED_EVENT_LABEL}</h2>
+          <p className="admin-stat-big admin-num">
+            {saidYesToThanksgiving} <span>said yes</span>
+          </p>
+        </article>
       </section>
       <p className="admin-footnote">Guest counts add up party sizes, counting “4 or more” as 4.</p>
 

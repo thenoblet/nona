@@ -209,6 +209,22 @@ describe("filters and search", () => {
     expect(matchesFilter(kwame, "thanksgiving")).toBe(false);
   });
 
+  it("counts the thanksgiving's card from its filter, earlier replies included", () => {
+    const earlier = reply({ id: "ama-before", fullName: "Ama Owusu", answers: { thanks: "yes" }, supersededAt: "2026-10-29T09:41:00Z" });
+    const rows = toReplyRows(
+      [
+        reply({ id: "ama", fullName: "Ama Owusu", answers: { ceremony: "yes" } }),
+        reply({ id: "efua", fullName: "Efua Mensah", answers: { reception: "no", thanks: "yes" } }),
+        reply({ id: "kwame", fullName: "Kwame Owusu" }),
+      ],
+      new Map([["ama", [earlier]]]),
+      celebrations,
+      now,
+    );
+    expect(countByFilter(rows).thanksgiving).toBe(2);
+    expect(countByFilter(rows).thanksgiving).toBe(rows.filter((row) => matchesFilter(row, "thanksgiving")).length);
+  });
+
   it("finds a reply by name without accents or Ghanaian letters", () => {
     expect(rows.filter((row) => matchesSearch(row, "ofori")).map((row) => row.id)).toEqual(["ama"]);
     expect(rows.filter((row) => matchesSearch(row, "  KOFI  ")).map((row) => row.id)).toEqual(["kofi", "kofi-2"]);
