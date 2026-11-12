@@ -2,7 +2,7 @@ import { connection } from "next/server";
 import { AdminAccessError, requireAdmin } from "@/lib/admin/access";
 import { toCsv } from "@/lib/admin/csv";
 import { accraDate } from "@/lib/accra";
-import { replyCsvRows } from "@/lib/admin/replies";
+import { replyColumns, replyCsvRows } from "@/lib/admin/replies";
 import { getSiteContent } from "@/lib/content/get";
 import { listRsvps } from "@/lib/data/rsvp";
 
@@ -26,7 +26,7 @@ export async function GET() {
   }
 
   const [replies, { celebrations }] = await Promise.all([listRsvps(), getSiteContent()]);
-  return new Response(toCsv(replyCsvRows(replies, celebrations)), {
+  return new Response(toCsv(replyCsvRows(replies, replyColumns(celebrations))), {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="nona-rsvps-${accraDate(new Date())}.csv"`,

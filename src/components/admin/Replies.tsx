@@ -1,5 +1,5 @@
 import { accraDateTime, accraDayAndFullMonth } from "@/lib/accra";
-import { celebrationDay, toReplyRows } from "@/lib/admin/replies";
+import { celebrationDay, replyColumns, toReplyRows } from "@/lib/admin/replies";
 import { getSiteContent } from "@/lib/content/get";
 import { readRsvpSettings } from "@/lib/content/rsvp";
 import { listRsvps, rsvpHistories, rsvpTotals } from "@/lib/data/rsvp";
@@ -22,7 +22,7 @@ export async function Replies() {
     getSiteContent(),
     readRsvpSettings(),
   ]);
-  const columns = celebrations.map(({ id, name }) => ({ id, name }));
+  const columns = replyColumns(celebrations);
   const rows = toReplyRows(replies, histories, columns, new Date());
 
   return (
@@ -50,12 +50,14 @@ export async function Replies() {
       />
 
       <section className="admin-stats" aria-label="Totals">
-        {celebrations.map((celebration) => {
-          const total = totals[celebration.id];
+        {columns.map((column) => {
+          const total = totals[column.id];
+          // The thanksgiving is no longer in the site text, so it has no date to show.
+          const date = celebrations.find((celebration) => celebration.id === column.id)?.date;
           return (
-            <article className="admin-stat" key={celebration.id}>
-              <h2>{celebration.name}</h2>
-              <p className="admin-stat-when">{celebrationDay(celebration.date)}</p>
+            <article className="admin-stat" key={column.id}>
+              <h2>{column.name}</h2>
+              {date && <p className="admin-stat-when">{celebrationDay(date)}</p>}
               <p className="admin-stat-big admin-num">
                 {total.people} <span>{total.people === 1 ? "guest" : "guests"}</span>
               </p>
