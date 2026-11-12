@@ -424,7 +424,7 @@ export function AlbumBrowser({
       </nav>
       <div className={`fold ${filters.celebration === "more" ? "" : "is-folded"}`}>
         <div>
-          <p className="m-0 px-0.5 pt-2.5 font-serif text-[17px] leading-[1.35] text-mocha italic">From outside the three celebrations, like the night before.</p>
+          <p className="m-0 px-0.5 pt-2.5 font-serif text-[17px] leading-[1.35] text-mocha italic">From outside the celebrations, like the night before or the morning after.</p>
         </div>
       </div>
 

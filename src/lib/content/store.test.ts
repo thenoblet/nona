@@ -1,7 +1,7 @@
 import postgres from "postgres";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDb } from "../../../test/db";
-import { celebrationsSavedBeforeVenues } from "../../../test/fixtures/saved-before-venues";
+import { celebrationsSavedBeforeVenues, scheduleSavedBeforeVenues } from "../../../test/fixtures/saved-before-venues";
 import { dbConfig } from "@/lib/env";
 import { contentDefaults } from "./defaults";
 import { sectionKeys, sectionSchemas } from "./schema";
@@ -14,6 +14,22 @@ beforeEach(async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
+/** The Sunday thanksgiving as the built-in text held it until 12 Nov 2026, so as saved sections may still hold it. */
+const savedThanksgiving = {
+  id: "thanks",
+  venue: "church",
+  name: "Thanksgiving service",
+  weekday: "Sunday",
+  weekdayShort: "Sun",
+  day: "06",
+  month: "December",
+  time: "[Start time]",
+  dress: "Your Sunday best",
+  date: "2026-12-06",
+  startTime: null,
+  endTime: null,
+};
+
 const faqA = [{ question: "Parking?", answer: "Behind the church." }];
 const faqB = [{ question: "Dress code?", answer: "Formal." }];
 
@@ -22,11 +38,10 @@ describe("defaults", () => {
     expect(sectionSchemas[key].safeParse(contentDefaults[key]).success).toBe(true);
   });
 
-  it("dates the celebrations, with Saturday's times from the programme and Sunday's still to come", () => {
+  it("dates the celebrations, with Saturday's times from the programme", () => {
     expect(contentDefaults.celebrations.map((celebration) => [celebration.date, celebration.startTime, celebration.endTime])).toEqual([
       ["2026-12-05", "10:00", "14:00"],
       ["2026-12-05", "14:30", "19:30"],
-      ["2026-12-06", null, null],
     ]);
   });
 });
@@ -54,12 +69,50 @@ describe("readSiteContent", () => {
     expect(celebrations.map((celebration) => [celebration.id, celebration.venue, celebration.placeDetail])).toEqual([
       ["ceremony", "church", undefined],
       ["reception", "reception", undefined],
-      ["thanks", "church", undefined],
     ]);
     expect(celebrations[1].dress).toBe("Evening glamour, as saved");
     const section = await readSection("celebrations");
     expect(section.version).toBe(3);
     expect(section.value).toEqual(celebrations);
+  });
+
+  it("reads text saved before 31 Oct without its thanksgiving, nothing falling back", async () => {
+    await sql`insert into site_content (key, version, value, saved_by) values ('celebrations', 1, ${sql.json(celebrationsSavedBeforeVenues)}, 'test')`;
+    await sql`insert into site_content (key, version, value, saved_by) values ('schedule', 1, ${sql.json(scheduleSavedBeforeVenues)}, 'test')`;
+    const { celebrations, schedule } = await readSiteContent();
+    expect(celebrations.map((celebration) => celebration.id)).toEqual(["ceremony", "reception"]);
+    const sundayTitles = scheduleSavedBeforeVenues.filter((item) => item.day === "sun").map((item) => item.title);
+    expect(schedule.filter((item) => sundayTitles.includes(item.title))).toEqual([]);
+    // The couple's own Saturday text, which the built-in text doesn't have.
+    const savedSaturday = celebrationsSavedBeforeVenues.filter((celebration) => celebration.weekday === "Saturday");
+    expect(celebrations.map((celebration) => celebration.time)).toEqual(savedSaturday.map((celebration) => celebration.time));
+    const savedSaturdayItems = scheduleSavedBeforeVenues.filter((item) => item.day === "sat");
+    expect(schedule.map((item) => item.title)).toEqual(savedSaturdayItems.map((item) => item.title));
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("reads a saved celebrations section that still names the thanksgiving without it, keeping the couple's edits", async () => {
+    const builtIn = structuredClone(contentDefaults.celebrations).map((celebration) =>
+      celebration.id === "ceremony" ? { ...celebration, dress: "E2E dress" } : celebration,
+    );
+    await sql`insert into site_content (key, version, value, saved_by) values ('celebrations', 1, ${sql.json([...builtIn, savedThanksgiving])}, 'test')`;
+    const { celebrations } = await readSiteContent();
+    expect(celebrations.map((celebration) => celebration.id)).toEqual(["ceremony", "reception"]);
+    expect(celebrations[0].dress).toBe("E2E dress");
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("reads a saved schedule with thanksgiving items without them", async () => {
+    // Each of Saturday's celebrations keeps at least one item, so the reception has one too.
+    const saved = [
+      { celebration: "ceremony", title: "E2E vows" },
+      { celebration: "reception", title: "E2E dinner" },
+      { celebration: "thanks", title: "Sunday service" },
+    ];
+    await sql`insert into site_content (key, version, value, saved_by) values ('schedule', 1, ${sql.json(saved)}, 'test')`;
+    const { schedule } = await readSiteContent();
+    expect(schedule.map((item) => item.title)).toEqual(["E2E vows", "E2E dinner"]);
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it("falls back to the default for a stored row with a bad shape", async () => {
@@ -94,7 +147,6 @@ describe("versions", () => {
     expect(restored.value.map((celebration) => [celebration.id, celebration.venue])).toEqual([
       ["ceremony", "church"],
       ["reception", "reception"],
-      ["thanks", "church"],
     ]);
     for (const celebration of restored.value) {
       expect(celebration).not.toHaveProperty("place");
@@ -171,7 +223,7 @@ describe("validation", () => {
 
   it("rejects celebrations that repeat an id", async () => {
     const value = celebrations().map((celebration) => ({ ...celebration, id: "ceremony" }));
-    await expectRejected("celebrations", value, "celebrations: Keep the white wedding, reception and thanksgiving, each once");
+    await expectRejected("celebrations", value, "celebrations: Keep the white wedding and the reception, each once");
   });
 
   it("rejects a bad start time with a readable message", async () => {
@@ -184,11 +236,11 @@ describe("validation", () => {
     await expectRejected("liveStream", { url: "not a url" }, "url");
   });
 
-  it("rejects a schedule with no thanksgiving item", async () => {
+  it("rejects a schedule with no white wedding item", async () => {
     await expectRejected(
       "schedule",
-      contentDefaults.schedule.filter((item) => item.celebration !== "thanks"),
-      "Thanksgiving",
+      contentDefaults.schedule.filter((item) => item.celebration !== "ceremony"),
+      "schedule: Add at least one White wedding item",
     );
   });
 

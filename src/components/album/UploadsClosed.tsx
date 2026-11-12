@@ -3,8 +3,8 @@ import { Icon } from "@/components/ui/Icon";
 
 /**
  * In place of the share buttons while sharing isn't open (gate A): before the couple open it, the
- * wedding weekend's dates and Add to calendar; once they close it, a thank-you. The album below
- * stays open to look through.
+ * wedding's date and Add to calendar; once they close it, a thank-you. The album below stays open
+ * to look through.
  */
 export function UploadsClosed({ phase }: { phase: "before" | "after" }) {
   const before = phase === "before";
@@ -18,7 +18,7 @@ export function UploadsClosed({ phase }: { phase: "before" | "after" }) {
           </p>
           <p className="m-0 text-[13.5px] leading-[1.55] text-mist">
             {before
-              ? "Saturday 5 and Sunday 6 December. Come back here with your camera ready."
+              ? "Saturday 5 December. Come back here with your camera ready."
               : "Thank you for every photo and video. The album stays here for you to look through."}
           </p>
         </div>

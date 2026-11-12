@@ -19,7 +19,7 @@ type Place = {
 
 function placesFor(venues: SiteContent["venues"]): Place[] {
   return [
-    { number: 1, eyebrow: "White wedding · Thanksgiving", tag: "Church", ...venues.church },
+    { number: 1, eyebrow: "White wedding", tag: "Church", ...venues.church },
     { number: 2, eyebrow: "Reception", tag: "Reception", ...venues.reception },
   ];
 }

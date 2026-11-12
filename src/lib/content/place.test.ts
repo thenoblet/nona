@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { contentDefaults } from "./defaults";
 import { celebrationPlace, scheduleItemPlace } from "./place";
 
-const [ceremony, reception, thanks] = contentDefaults.celebrations;
+const [ceremony, reception] = contentDefaults.celebrations;
 const venues = () => structuredClone(contentDefaults.venues);
 
 describe("celebrationPlace", () => {
@@ -29,10 +29,9 @@ describe("celebrationPlace", () => {
     const edited = venues();
     edited.church = { ...edited.church, name: "Victory Worship Centre", gps: "AS-0123-4567", mapsUrl: "https://maps.example.com/church" };
     edited.reception.gps = "AX-9999-0001";
-    expect([ceremony, reception, thanks].map((celebration) => celebrationPlace(celebration, edited))).toEqual([
+    expect([ceremony, reception].map((celebration) => celebrationPlace(celebration, edited))).toEqual([
       { place: "Victory Worship Centre, Tepa", gps: { label: "GhanaPost GPS · ", code: "AS-0123-4567" }, gpsLine: "GhanaPost GPS · AS-0123-4567", directionsUrl: "https://maps.example.com/church" },
       { place: "BN 111 Katakyie St, Tepa", gps: { label: "GhanaPost GPS · ", code: "AX-9999-0001" }, gpsLine: "GhanaPost GPS · AX-9999-0001", directionsUrl: edited.reception.mapsUrl },
-      { place: "Victory Worship Centre, Tepa", gps: { label: "GhanaPost GPS · ", code: "AS-0123-4567" }, gpsLine: "GhanaPost GPS · AS-0123-4567", directionsUrl: "https://maps.example.com/church" },
     ]);
   });
 
@@ -42,7 +41,7 @@ describe("celebrationPlace", () => {
   });
 
   it("follows the venue the celebration names", () => {
-    expect(celebrationPlace({ ...thanks, venue: "reception" }, contentDefaults.venues)).toEqual(
+    expect(celebrationPlace({ ...ceremony, venue: "reception" }, contentDefaults.venues)).toEqual(
       celebrationPlace(reception, contentDefaults.venues),
     );
   });

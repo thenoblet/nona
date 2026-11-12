@@ -74,12 +74,12 @@ describe("parseIssues", () => {
     expect(
       parseIssues("celebrations", [
         "celebrations[0].startTime: Use a 24-hour time like 14:30",
-        "celebrations: Keep the white wedding, reception and thanksgiving, each once",
+        "celebrations: Keep the white wedding and the reception, each once",
         "nancy@example.com saved a newer version at 21:14 on 30 Oct. Reload to see it.",
       ]),
     ).toEqual([
       { path: "0.startTime", message: "Use a 24-hour time like 14:30" },
-      { path: "", message: "Keep the white wedding, reception and thanksgiving, each once" },
+      { path: "", message: "Keep the white wedding and the reception, each once" },
       { path: null, message: "nancy@example.com saved a newer version at 21:14 on 30 Oct. Reload to see it." },
     ]);
     expect(parseIssues("venues", ["venues.hotel.coords.lat: Use a number like 7.019267"])).toEqual([

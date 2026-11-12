@@ -112,12 +112,12 @@ describe("saveSectionAction", () => {
     expect(cache.updateTag).not.toHaveBeenCalled();
   });
 
-  it("refuses an order of the day with no thanksgiving item left", async () => {
-    const schedule = contentDefaults.schedule.filter((item) => item.celebration !== "thanks");
+  it("refuses an order of the day with no reception item left", async () => {
+    const schedule = contentDefaults.schedule.filter((item) => item.celebration !== "reception");
 
     const result = await saveSectionAction("schedule", idle, editorForm(schedule));
     expect(result.status).toBe("error");
-    expect(result.errors).toContain("schedule: Add at least one Thanksgiving item");
+    expect(result.errors).toContain("schedule: Add at least one Reception item");
     expect(await listVersions("schedule")).toEqual([]);
   });
 
@@ -151,12 +151,12 @@ describe("saveSectionAction", () => {
   });
 
   it("works out the weekday, day and month from the date, whatever was posted", async () => {
-    let celebrations = setAt(contentDefaults.celebrations, [2, "date"], "2026-12-07");
-    celebrations = setAt(celebrations, [2, "weekday"], "Funday");
-    celebrations = setAt(celebrations, [2, "day"], "99");
+    let celebrations = setAt(contentDefaults.celebrations, [1, "date"], "2026-12-07");
+    celebrations = setAt(celebrations, [1, "weekday"], "Funday");
+    celebrations = setAt(celebrations, [1, "day"], "99");
 
     expect((await saveSectionAction("celebrations", idle, editorForm(celebrations))).status).toBe("saved");
-    expect((await readSiteContent()).celebrations[2]).toMatchObject({
+    expect((await readSiteContent()).celebrations[1]).toMatchObject({
       date: "2026-12-07",
       weekday: "Monday",
       weekdayShort: "Mon",

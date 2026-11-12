@@ -159,7 +159,7 @@ test.describe("the album with an upload on its way", () => {
 // (Ruling CA). Rendered as the confirmation job renders them, in Georgia as Gmail shows them (it
 // strips web fonts, and Georgia is the wider), with the header photo from the build's own file.
 const EMAIL_SITE = "https://wedding.example";
-const [ceremony, reception, thanks] = contentDefaults.celebrations;
+const [ceremony, reception] = contentDefaults.celebrations;
 
 function reply(answers: RsvpRecord["answers"]): RsvpRecord {
   return {
@@ -182,13 +182,13 @@ const COMING_TO_NONE = "the confirmation for a guest who can come to none";
 const emails = {
   "the confirmation for a guest who is coming, with their personal link": () =>
     renderRsvpConfirmation(
-      reply({ [ceremony.id]: "yes", [reception.id]: "yes", [thanks.id]: "no" }),
+      reply({ [ceremony.id]: "yes", [reception.id]: "yes" }),
       contentDefaults,
       EMAIL_SITE,
       `${EMAIL_SITE}/my/made-up-token-for-the-width-check-000000000`,
     ),
   [COMING_TO_NONE]: () =>
-    renderRsvpConfirmation(reply({ [ceremony.id]: "no", [reception.id]: "no", [thanks.id]: "no" }), contentDefaults, EMAIL_SITE),
+    renderRsvpConfirmation(reply({ [ceremony.id]: "no", [reception.id]: "no" }), contentDefaults, EMAIL_SITE),
 };
 
 for (const [name, render] of Object.entries(emails)) {

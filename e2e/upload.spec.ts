@@ -884,7 +884,7 @@ test.describe("when sharing isn't open", () => {
     await page.goto("/album");
     const main = inMain(page);
     await expect(main.getByText("Photo and video sharing opens on the wedding weekend")).toBeVisible();
-    await expect(main.getByText("Saturday 5 and Sunday 6 December. Come back here with your camera ready.")).toBeVisible();
+    await expect(main.getByText("Saturday 5 December. Come back here with your camera ready.")).toBeVisible();
     await expect(main.getByRole("link", { name: "Add to calendar" })).toHaveAttribute("href", "/calendar");
     await expect(main.getByText("Album · #NONA26")).toBeVisible();
     await expect(page.getByText(/Live album/)).toHaveCount(0);

@@ -7,7 +7,7 @@ import type { RsvpRecord } from "@/lib/data/types";
 import { renderRsvpConfirmation } from "./rsvp-confirmation";
 
 const SITE_URL = "https://example.com";
-const [first, second, third] = contentDefaults.celebrations;
+const [first, second] = contentDefaults.celebrations;
 
 function record(
   answers: RsvpRecord["answers"],
@@ -96,7 +96,6 @@ describe("renderRsvpConfirmation", () => {
       expect(attending).toContain("Attending");
       expect(attending).not.toContain("Not attending");
       expect(notAttending).toContain("Not attending");
-      expect(body).not.toContain(third.name);
     }
   });
 

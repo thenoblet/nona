@@ -19,14 +19,11 @@ async function uids(query: string): Promise<string[]> {
 
 describe("GET /calendar", () => {
   it("gives the celebrations asked for and ignores ids it doesn't know", async () => {
-    expect(await uids("?events=reception,party,thanks")).toEqual(["reception@nobletxnancy.com", "thanks@nobletxnancy.com"]);
+    // A link from a confirmation sent while guests were asked to the thanksgiving still names it.
+    expect(await uids("?events=reception,party,thanks")).toEqual(["reception@nobletxnancy.com"]);
   });
 
-  it("gives all three when none of the ids is known", async () => {
-    expect(await uids("?events=party,%3Cscript%3E")).toEqual([
-      "ceremony@nobletxnancy.com",
-      "reception@nobletxnancy.com",
-      "thanks@nobletxnancy.com",
-    ]);
+  it("gives both when none of the ids is known", async () => {
+    expect(await uids("?events=party,%3Cscript%3E")).toEqual(["ceremony@nobletxnancy.com", "reception@nobletxnancy.com"]);
   });
 });

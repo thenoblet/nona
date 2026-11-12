@@ -1,4 +1,4 @@
-import { EVENT_IDS, type Celebration, type EventId, type ScheduleItem } from "@/lib/content/schema";
+import { GUEST_EVENT_IDS, type Celebration, type GuestEventId, type ScheduleItem } from "@/lib/content/schema";
 import { endsNextDay } from "@/lib/content/times";
 
 const MINUTE = 60 * 1000;
@@ -15,7 +15,7 @@ export function dayLabel(celebrations: Celebration[]): string {
 
 /** The programme in celebration order, each celebration's items in the order the couple set. */
 export function inProgrammeOrder<TItem extends Pick<ScheduleItem, "celebration">>(schedule: readonly TItem[]): TItem[] {
-  return EVENT_IDS.flatMap((id) => schedule.filter((item) => item.celebration === id));
+  return GUEST_EVENT_IDS.flatMap((id) => schedule.filter((item) => item.celebration === id));
 }
 
 /** A celebration's date at a 24-hour time, in Ghana (GMT all year, so UTC). */
@@ -28,8 +28,8 @@ function at(date: string, time: string): number {
  * before it is after midnight, on the next day; so is every time after it.
  */
 export function itemStarts(schedule: readonly ScheduleItem[], celebrations: readonly Celebration[]): (number | null)[] {
-  const previous = new Map<EventId, string>();
-  const pastMidnight = new Set<EventId>();
+  const previous = new Map<GuestEventId, string>();
+  const pastMidnight = new Set<GuestEventId>();
   return schedule.map((item) => {
     const celebration = celebrations.find((entry) => entry.id === item.celebration);
     if (!item.time || !celebration) return null;

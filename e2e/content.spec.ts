@@ -80,22 +80,22 @@ test.describe("each venue fact typed once", () => {
       await page.goto("/admin/content/celebrations");
       await page.waitForLoadState("networkidle");
       const form = page.locator("form.admin-form");
-      await expect(form.getByLabel("Venue", { exact: true })).toHaveCount(3);
-      await expect(form.getByLabel("Extra place note")).toHaveCount(3);
+      await expect(form.getByLabel("Venue", { exact: true })).toHaveCount(2);
+      await expect(form.getByLabel("Extra place note")).toHaveCount(2);
       await expect(form.getByLabel(/GPS/)).toHaveCount(0);
       await expect(form.getByLabel(/^Place/)).toHaveCount(0);
       await expect(form.getByLabel(/Directions/)).toHaveCount(0);
 
-      const thanksgiving = page.getByRole("group", { name: "Thanksgiving service" });
-      await expect(thanksgiving.getByLabel("Venue", { exact: true })).toHaveValue("church");
-      await expect(thanksgiving).toContainText("come from Venues → Church: Assemblies of God, Victory Worship Centre, Tepa");
+      const whiteWedding = page.getByRole("group", { name: "White wedding", exact: true });
+      await expect(whiteWedding.getByLabel("Venue", { exact: true })).toHaveValue("church");
+      await expect(whiteWedding).toContainText("come from Venues → Church: Assemblies of God, Victory Worship Centre, Tepa");
       // Choosing another venue shows its place straight away, before anything is saved.
-      await thanksgiving.getByLabel("Venue", { exact: true }).selectOption("reception");
-      await expect(thanksgiving).toContainText(
+      await whiteWedding.getByLabel("Venue", { exact: true }).selectOption("reception");
+      await expect(whiteWedding).toContainText(
         `come from Venues → Reception: BN 111 Katakyie St, Tepa · GhanaPost GPS · ${BUILT_IN_RECEPTION_GPS}`,
       );
       await page.getByRole("button", { name: "Discard changes" }).click();
-      await expect(thanksgiving.getByLabel("Venue", { exact: true })).toHaveValue("church");
+      await expect(whiteWedding.getByLabel("Venue", { exact: true })).toHaveValue("church");
     } finally {
       await done();
     }

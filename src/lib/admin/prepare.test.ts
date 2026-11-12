@@ -72,12 +72,12 @@ describe("prepareSection", () => {
     const prepared = prepareSection("schedule", [
       { celebration: "ceremony", time: " 9:30 ", title: "Guests arrive", note: " Please be seated early ", place: "" },
       { celebration: "ceremony", time: "14.30", title: "Photos", note: "", place: " Church steps " },
-      { celebration: "thanks", time: "", title: "Sunday service", note: " ", place: " " },
+      { celebration: "reception", time: "", title: "Dinner", note: " ", place: " " },
     ]);
     expect(prepared).toEqual([
       { celebration: "ceremony", time: "09:30", title: "Guests arrive", note: "Please be seated early" },
       { celebration: "ceremony", time: "14:30", title: "Photos", place: "Church steps" },
-      { celebration: "thanks", title: "Sunday service" },
+      { celebration: "reception", title: "Dinner" },
     ]);
   });
 
@@ -85,11 +85,10 @@ describe("prepareSection", () => {
     const prepared = prepareSection("schedule", [
       { celebration: "reception", title: "Dinner" },
       { celebration: "ceremony", title: "Arrive" },
-      { celebration: "thanks", title: "Service" },
       { celebration: "ceremony", title: "Vows" },
       { celebration: "reception", title: "Dancing" },
     ]) as Record<string, unknown>[];
-    expect(prepared.map((item) => item.title)).toEqual(["Arrive", "Vows", "Dinner", "Dancing", "Service"]);
+    expect(prepared.map((item) => item.title)).toEqual(["Arrive", "Vows", "Dinner", "Dancing"]);
   });
 
   it("trims the maps links", () => {

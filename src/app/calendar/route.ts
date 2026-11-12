@@ -3,7 +3,7 @@ import { buildIcs, celebrationEvent } from "@/lib/calendar/ics";
 import { getSiteContent } from "@/lib/content/get";
 import { siteUrl } from "@/lib/site-url";
 
-/** A calendar file for the celebrations named in `?events=ceremony,reception` (all three if none are valid). */
+/** A calendar file for the celebrations named in `?events=ceremony,reception` (every one if none are valid). */
 export async function GET(request: Request) {
   // Read at request time so the build never needs the database.
   await connection();

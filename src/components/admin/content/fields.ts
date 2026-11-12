@@ -1,7 +1,7 @@
 import { describeDate } from "@/lib/admin/content";
 import type { ContentSectionKey } from "@/lib/admin/content";
 import { celebrationPlace } from "@/lib/content/place";
-import { CELEBRATION_VENUES, EVENT_IDS, EVENT_LABELS, VENUE_KEYS, VENUE_LABELS, type SiteContent } from "@/lib/content/schema";
+import { CELEBRATION_VENUES, EVENT_LABELS, GUEST_EVENT_IDS, VENUE_KEYS, VENUE_LABELS, type SiteContent } from "@/lib/content/schema";
 import { endsNextDay } from "@/lib/content/times";
 import { getAt } from "./editing";
 
@@ -115,7 +115,7 @@ function venueHint(item: Item, { venues }: EditorContext): string | undefined {
 }
 
 /** The order of the day is grouped by celebration, in the order they happen. */
-const celebrationGroups = EVENT_IDS.map((id) => ({ value: id, label: EVENT_LABELS[id] }));
+const celebrationGroups = GUEST_EVENT_IDS.map((id) => ({ value: id, label: EVENT_LABELS[id] }));
 
 const chapterFields = (body: "text" | "quote"): readonly FieldSpec[] => [
   { path: ["when"], label: "When", kind: "text", span: 2 },

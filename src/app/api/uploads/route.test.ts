@@ -394,23 +394,23 @@ describe("an upload, start to finish", () => {
   it("groups an upload by when it was taken", async () => {
     await signIn();
     const ceremony = await startSession(smallFile({ capturedAt: "2026-12-05T11:00:00Z" }));
-    const thanks = await startSession(smallFile({ capturedAt: "2026-12-06T10:00:00+00:00" }));
+    const reception = await startSession(smallFile({ capturedAt: "2026-12-05T18:00:00+00:00" }));
     const before = await startSession(smallFile({ capturedAt: "2026-11-01T12:00:00Z" }));
     expect((await mediaRow(ceremony.mediaId)).celebration).toBe("ceremony");
-    expect((await mediaRow(thanks.mediaId)).celebration).toBe("thanks");
+    expect((await mediaRow(reception.mediaId)).celebration).toBe("reception");
     // 1 November is no celebration's day.
     expect((await mediaRow(before.mediaId)).celebration).toBe("more");
     await afterResponse();
-    expect((await readManifest(thanks.mediaId))?.celebration).toBe("thanks");
+    expect((await readManifest(reception.mediaId))?.celebration).toBe("reception");
   });
 
   it("groups an upload without a capture time by when it started, whatever day that is", async () => {
     await signIn();
-    // The ceremony all of today (Accra is UTC), the thanksgiving all of tomorrow, in case the start
-    // lands past midnight, and the reception the day after: the start's own day decides.
+    // The ceremony all of today (Accra is UTC) and the reception all of tomorrow, in case the start
+    // lands past midnight: the start's own day decides.
     const day = (offsetDays: number) => new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
     const today = day(0);
-    const dates = { ceremony: today, thanks: day(1), reception: day(2) };
+    const dates = { ceremony: today, reception: day(1) };
     siteText.celebrations = contentDefaults.celebrations.map((celebration) => ({
       ...celebration,
       date: dates[celebration.id],
@@ -422,7 +422,7 @@ describe("an upload, start to finish", () => {
 
     const row = await mediaRow(session.mediaId);
     expect(row.capturedAt).toBeNull();
-    expect(row.celebration).toBe(row.startedAt.toISOString().slice(0, 10) === today ? "ceremony" : "thanks");
+    expect(row.celebration).toBe(row.startedAt.toISOString().slice(0, 10) === today ? "ceremony" : "reception");
   });
 
   it("refuses a browser without a guest with 403 no-guest, making no guest and no upload", async () => {

@@ -65,21 +65,19 @@ describe("the order of the day editor", () => {
   const programme = [
     { celebration: "reception", title: "Guests arrive" },
     { celebration: "ceremony", title: "Guests arrive" },
-    { celebration: "thanks", title: "Sunday service" },
     { celebration: "ceremony", title: "Vows" },
   ];
 
   it("groups the items by celebration, in the order they happen", () => {
     expect(groupedIndexes(scheduleSpec, programme)).toEqual([
-      { value: "ceremony", label: "White wedding", indexes: [1, 3] },
+      { value: "ceremony", label: "White wedding", indexes: [1, 2] },
       { value: "reception", label: "Reception", indexes: [0] },
-      { value: "thanks", label: "Thanksgiving", indexes: [2] },
     ]);
   });
 
   it("lists an item in no celebration last, under no heading", () => {
     const lost = [...programme, { celebration: "brunch", title: "Brunch" }];
-    expect(groupedIndexes(scheduleSpec, lost).at(-1)).toEqual({ value: null, label: null, indexes: [4] });
+    expect(groupedIndexes(scheduleSpec, lost).at(-1)).toEqual({ value: null, label: null, indexes: [3] });
   });
 
   it("names each field with its celebration, as two can each have a Guests arrive", () => {
@@ -103,11 +101,10 @@ describe("the order of the day editor", () => {
     expect(typeof editable.addLabel === "function" && editable.addLabel("Reception")).toBe("Add an item to the Reception");
   });
 
-  it("chooses the celebration from the three", () => {
+  it("chooses the celebration from the two", () => {
     expect(scheduleSpec.fields.find((field) => field.label === "Celebration")?.options).toEqual([
       { value: "ceremony", label: "White wedding" },
       { value: "reception", label: "Reception" },
-      { value: "thanks", label: "Thanksgiving" },
     ]);
   });
 });

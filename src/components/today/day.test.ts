@@ -23,8 +23,6 @@ const programme: ScheduleItem[] = [
   { celebration: "reception", title: "Grand entrance", time: "15:00" },
   { celebration: "reception", title: "Dancing", time: "21:00" },
   { celebration: "reception", title: "Last song", time: "00:30" },
-  { celebration: "thanks", title: "Sunday service", time: "09:00" },
-  { celebration: "thanks", title: "Closing & photos" },
 ];
 
 const titleAt = (now: Date, schedule = programme, withCelebrations = celebrations) =>
@@ -39,7 +37,6 @@ describe("programmeNow", () => {
     expect(titleAt(saturday("09:30"))).toBe("Guests arrive");
     expect(titleAt(saturday("10:15"))).toBe("Processional");
     expect(titleAt(saturday("15:10"))).toBe("Grand entrance");
-    expect(titleAt(sunday("09:05"))).toBe("Sunday service");
   });
 
   it("never marks an item without a time, but reads it as done once a later item starts", () => {
@@ -71,10 +68,10 @@ describe("programmeNow", () => {
 
   it("follows a celebration's date when the couple change it", () => {
     const moved = celebrations.map((celebration) =>
-      celebration.id === "thanks" ? { ...celebration, date: "2026-12-13" } : celebration,
+      celebration.id === "reception" ? { ...celebration, date: "2026-12-12" } : celebration,
     );
-    expect(titleAt(sunday("09:05"), programme, moved)).toBeUndefined();
-    expect(titleAt(at("2026-12-13", "09:05"), programme, moved)).toBe("Sunday service");
+    expect(titleAt(saturday("15:10"), programme, moved)).toBeUndefined();
+    expect(titleAt(at("2026-12-12", "15:10"), programme, moved)).toBe("Grand entrance");
   });
 
   it("has nothing on for a programme with no times, or none at all", () => {
@@ -99,11 +96,11 @@ describe("the built-in programme", () => {
 describe("inProgrammeOrder", () => {
   it("groups the items by celebration, each keeping its own order", () => {
     const mixed: ScheduleItem[] = [
-      { celebration: "thanks", title: "Service" },
+      { celebration: "reception", title: "Toast" },
       { celebration: "ceremony", title: "Arrive" },
       { celebration: "reception", title: "Dinner" },
       { celebration: "ceremony", title: "Vows" },
     ];
-    expect(inProgrammeOrder(mixed).map((item) => item.title)).toEqual(["Arrive", "Vows", "Dinner", "Service"]);
+    expect(inProgrammeOrder(mixed).map((item) => item.title)).toEqual(["Arrive", "Vows", "Toast", "Dinner"]);
   });
 });

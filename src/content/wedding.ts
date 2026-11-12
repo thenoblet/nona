@@ -94,20 +94,6 @@ export const celebrations: Celebration[] = [
     startTime: "14:30",
     endTime: "19:30",
   },
-  {
-    id: "thanks",
-    venue: "church",
-    name: "Thanksgiving service",
-    weekday: "Sunday",
-    weekdayShort: "Sun",
-    day: "06",
-    month: "December",
-    time: "[Start time]",
-    dress: "Your Sunday best",
-    date: "2026-12-06",
-    startTime: null,
-    endTime: null,
-  },
 ];
 
 export const story = {
@@ -244,7 +230,4 @@ export const schedule: ScheduleItem[] = [
   { celebration: "reception", time: "18:45", title: "Bouquet toss" },
   { celebration: "reception", time: "18:55", title: "DJ and open dance floor" },
   { celebration: "reception", time: "19:25", title: "Closing remarks and appreciation" },
-  { celebration: "thanks", title: "Sunday service" },
-  { celebration: "thanks", title: "Thanksgiving", note: "The couple give thanks with family and friends" },
-  { celebration: "thanks", title: "Closing & photos" },
 ];

@@ -1,7 +1,7 @@
 import "server-only";
 import { partyPhotos } from "@/content/images";
 import { contentDefaults } from "@/lib/content/defaults";
-import { EVENT_IDS, type SectionKey } from "@/lib/content/schema";
+import { GUEST_EVENT_IDS, type SectionKey } from "@/lib/content/schema";
 import { describeDate } from "./content";
 
 // Run by the save action before the schema checks an edited section.
@@ -135,8 +135,8 @@ function prepareSchedule(schedule: unknown): unknown {
     return time === null ? without(tidied, "time") : { ...tidied, time };
   });
   const order = (item: unknown) => {
-    const position = EVENT_IDS.findIndex((id) => isObject(item) && item.celebration === id);
-    return position < 0 ? EVENT_IDS.length : position;
+    const position = GUEST_EVENT_IDS.findIndex((id) => isObject(item) && item.celebration === id);
+    return position < 0 ? GUEST_EVENT_IDS.length : position;
   };
   // Array sort is stable, so each celebration's items keep their order.
   return [...prepared].sort((first, second) => order(first) - order(second));
