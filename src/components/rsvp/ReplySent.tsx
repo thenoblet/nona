@@ -29,7 +29,7 @@ export function ReplySent({
 }) {
   const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const photo = photos.daisiesWrapped;
+  const photo = photos.piggybackWave;
   const accepted = celebrations.filter((celebration) => values.answers[celebration.id] === "yes");
 
   // The form was long; bring the thank-you into view and announce it.

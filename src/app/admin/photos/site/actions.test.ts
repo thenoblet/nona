@@ -1,6 +1,7 @@
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MEDIA_QUEUES } from "@/lib/jobs/media-queues";
+import { builtinFocal, builtinPhoto } from "@/lib/site-images/photos";
 import { readAllSiteImages, setCardKey } from "@/lib/site-images/store";
 import { resetDb } from "../../../../../test/db";
 import { addSitePhoto, readLiveSiteImage } from "../../../../../test/site-images";
@@ -168,7 +169,8 @@ describe("restoreSlotAction", () => {
 
     const builtin = await restoreSlotAction("landing-cover", "builtin");
     expect(builtin).toMatchObject({ ok: true, slot: { state: "builtin", edited: false } });
-    expect(await readLiveSiteImage("landing-cover")).toMatchObject({ mediaId: null, focal: { x: 0.5, y: 0.45 } });
+    // The built-in photo's own focal point, whichever photo that is.
+    expect(await readLiveSiteImage("landing-cover")).toMatchObject({ mediaId: null, focal: builtinFocal(builtinPhoto("landing-cover")!) });
   });
 
   it("refuses another slot's version, and the built-in photo of a slot that has none", async () => {

@@ -8,9 +8,9 @@ import { getSiteContent } from "@/lib/content/get";
 import { PillLink } from "@/components/ui/Button";
 import { Motto, Ornament } from "@/components/ui/Typography";
 
-/** The opened invitation, with a daisy print tucked behind its corner. */
+/** The opened invitation, with a print of the couple tucked behind its corner. */
 export function InvitationCard() {
-  const photo = photos.daisiesWrapped;
+  const photo = photos.faceToFace;
   return (
     <>
       <div className="relative mt-2 w-[342px] max-w-full">

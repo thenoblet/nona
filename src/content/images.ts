@@ -7,6 +7,13 @@ import earlyDays from "../../public/images/story/early-days.jpg";
 import dressedUp from "../../public/images/story/dressed-up.jpg";
 import foreverLaugh from "../../public/images/story/forever-laugh.jpg";
 import foreverFloor from "../../public/images/story/forever-floor.jpg";
+import coverTogether from "../../public/images/shoot/cover-together.jpg";
+import piggybackSmile from "../../public/images/shoot/piggyback-smile.jpg";
+import embraceGaze from "../../public/images/shoot/embrace-gaze.jpg";
+import sofaSmile from "../../public/images/shoot/sofa-smile.jpg";
+import handOnShoulder from "../../public/images/shoot/hand-on-shoulder.jpg";
+import piggybackWave from "../../public/images/shoot/piggyback-wave.jpg";
+import faceToFace from "../../public/images/shoot/face-to-face.jpg";
 import chrysanthemumsWide from "../../public/images/flowers/chrysanthemums-wide.jpg";
 import chrysanthemumsPortrait from "../../public/images/flowers/chrysanthemums-portrait.jpg";
 import daisiesWrapped from "../../public/images/flowers/daisies-wrapped.jpg";
@@ -44,6 +51,27 @@ export const photos = {
     alt: "Noblet and Nancy sit on the floor against a cream sofa in white tops and jeans, smiling at each other",
     position: "center 25%",
   },
+  // The pre-wedding shoot (public/images/shoot), each cropped from the photographer's full-size file
+  // to the shape of its place on the site.
+  coverTogether: {
+    src: coverTogether,
+    alt: "Noblet and Nancy stand close in matching beige, looking at the camera",
+    position: "center 25%",
+  },
+  piggybackSmile: { src: piggybackSmile, alt: "Nancy rides on Noblet's back, both smiling", position: "center 30%" },
+  embraceGaze: {
+    src: embraceGaze,
+    alt: "Nancy looks over Noblet's shoulder, her hand with the ring on his back",
+    position: "center 35%",
+  },
+  sofaSmile: { src: sofaSmile, alt: "Noblet sits on the sofa with Nancy at his feet, both smiling", position: "center 25%" },
+  handOnShoulder: {
+    src: handOnShoulder,
+    alt: "Nancy rests her hand on Noblet's shoulder as they stand in matching beige",
+    position: "center 25%",
+  },
+  piggybackWave: { src: piggybackWave, alt: "Nancy waves from Noblet's back", position: "center 30%" },
+  faceToFace: { src: faceToFace, alt: "Noblet and Nancy, face to face, in matching beige", position: "center top" },
   chrysanthemumsWide: { src: chrysanthemumsWide, alt: "A soft close-up of white chrysanthemums", position: "center 45%" },
   chrysanthemumsPortrait: { src: chrysanthemumsPortrait, alt: "A bouquet of white chrysanthemums", position: "30% 40%" },
   daisiesWrapped: {
