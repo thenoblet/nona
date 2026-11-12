@@ -492,7 +492,10 @@ test.describe("a viewer whose script can't be fetched", () => {
 
       // Nothing is on its way from this page, so the first failure reloads it once, as after a deploy.
       await album.locator(`[data-moment="${moment.id}"] button`).click();
-      await expect.poll(() => page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage ?? false)).toBe(false);
+      // A look that lands while the reload swaps the page has no page to read: not reloaded yet, so look again.
+      await expect
+        .poll(() => page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage ?? false).catch(() => true))
+        .toBe(false);
       await expect(album.getByRole("heading", { name: "Every moment" })).toBeVisible();
       await page.evaluate(() => ((window as unknown as { samePage: boolean }).samePage = true));
 
