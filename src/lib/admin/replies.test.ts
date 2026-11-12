@@ -209,7 +209,7 @@ describe("filters and search", () => {
     expect(matchesFilter(kwame, "thanksgiving")).toBe(false);
   });
 
-  it("counts the thanksgiving's card from its filter, earlier replies included", () => {
+  it("counts the replies on the thanksgiving's card from its filter, earlier replies included", () => {
     const earlier = reply({ id: "ama-before", fullName: "Ama Owusu", answers: { thanks: "yes" }, supersededAt: "2026-10-29T09:41:00Z" });
     const rows = toReplyRows(
       [

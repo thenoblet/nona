@@ -72,7 +72,7 @@ export async function Replies() {
         <article className="admin-stat">
           <h2>{RETIRED_EVENT_LABEL}</h2>
           <p className="admin-stat-big admin-num">
-            {saidYesToThanksgiving} <span>said yes</span>
+            {count(saidYesToThanksgiving, "reply", "replies")} <span>said yes</span>
           </p>
         </article>
       </section>
