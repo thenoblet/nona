@@ -234,6 +234,12 @@ jobs:
           build-args: |
             SITE_URL=${{ vars.SITE_URL || 'https://nobletxnancy.com' }}
             GIT_SHA=${{ github.sha }}
+          # The server actions' key, the same from build to build, so a form open across a deploy
+          # still sends (see the Dockerfile). Only this build gets it; the tests' builds use a
+          # random one. BuildKit leaves a secret out of the layer cache's key: after changing the
+          # key, make that build skip the cache (or change the source), or the old build stays.
+          secrets: |
+            next_actions_key=${{ secrets.NEXT_SERVER_ACTIONS_ENCRYPTION_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
