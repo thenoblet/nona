@@ -16,7 +16,7 @@ import { HeroAfter, HeroBefore, HeroDay } from "@/components/home/Heroes";
 import { Gallery, InvitationLetter, Story } from "@/components/home/Story";
 import { Celebrations } from "@/components/home/Celebrations";
 import { MapSection } from "@/components/home/MapSection";
-import { AlbumTeaser, Colours, Faq, Footer, Gifts, Party, RsvpBand, Travel } from "@/components/home/Sections";
+import { AlbumTeaser, Colours, Faq, Footer, Party, RsvpBand, Travel } from "@/components/home/Sections";
 import { AfterAlbum, LiveAlbum, TodaySection, WishesWall } from "@/components/home/ModeSections";
 import { currentItem, dayLabel } from "@/components/today/day";
 
@@ -43,7 +43,7 @@ export default function HomePage({ searchParams }: PageProps<"/home">) {
 async function Home({ searchParams }: { searchParams: PageProps<"/home">["searchParams"] }) {
   await connection();
   const [content, siteImages] = await Promise.all([getSiteContent(), getSiteImages()]);
-  const { celebrations, schedule, venues, landmarks, story, party, travel, gifts, rsvp } = content;
+  const { celebrations, schedule, venues, landmarks, story, party, travel, rsvp } = content;
   // The couple's photos where they replaced one (Site photos), the built-in ones elsewhere.
   const photos = slotPhotos(siteImages, party);
   const faq = visibleFaq(content);
@@ -72,7 +72,6 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <Gallery photos={photos} />
             <Travel travel={travel} />
             <RsvpBand rsvp={rsvp} />
-            <Gifts gifts={gifts} />
             <AlbumTeaser />
             <Faq faq={faq} />
           </>
@@ -100,7 +99,6 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <Story story={story} photos={photos} />
             <Party party={party} photos={photos} />
             <Gallery photos={photos} />
-            <Gifts gifts={gifts} />
             <Faq faq={faq} />
             <DockItem>
               <SharePill />
@@ -115,7 +113,6 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <WishesWall />
             <Story story={story} photos={photos} />
             <Party party={party} photos={photos} />
-            <Gifts gifts={gifts} />
           </>
         ) : null}
       </main>

@@ -5,7 +5,7 @@ export type { Celebration, EventId, PartyMember, ScheduleItem };
 /**
  * Everything the couple knows ahead of time lives here. The pages read `couple`, `wedding` and
  * `colours` straight from this file. The rest (celebrations, venues, landmarks, story, party,
- * travel, gifts, FAQ, live stream and schedule) is the built-in text: the site shows it until a
+ * travel, FAQ, live stream and schedule) is the built-in text: the site shows it until a
  * section is saved in the admin (/admin/content), and whenever the database can't be reached.
  * Once a section is saved there, changing it here no longer changes the site. The RSVP settings
  * work the same way, saved on the admin's Replies page (/admin/rsvps).
@@ -167,12 +167,6 @@ export const travel = [
     text: "[Your favourite places to eat and things to see around Tepa]: our personal guide for guests staying a few extra days.",
     link: "Our local guide",
   },
-] as const;
-
-export const gifts = [
-  { title: "The registry", text: "A few things for our home", action: "View" },
-  { title: "Bank transfer", text: "Our account details", action: "Show details" },
-  { title: "Mobile money", text: "Send a gift in seconds", action: "Show details" },
 ] as const;
 
 export const faq = [

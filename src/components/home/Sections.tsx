@@ -1,7 +1,7 @@
 import Image from "next/image";
 import { colours, couple, wedding } from "@/content/wedding";
 import { accraDayAndFullMonth } from "@/lib/accra";
-import type { FaqItem, GiftItem, PartyMember, RsvpSettings, TravelItem } from "@/lib/content/schema";
+import type { FaqItem, PartyMember, RsvpSettings, TravelItem } from "@/lib/content/schema";
 import { photos } from "@/content/images";
 import { portraitOf, type SlotPhoto, type SlotPhotos } from "@/lib/site-images/photos";
 import { PillLink, TextLink } from "@/components/ui/Button";
@@ -164,38 +164,6 @@ export function RsvpBand({ rsvp }: { rsvp: RsvpSettings }) {
               <p className={`${body} whitespace-pre-line`}>{rsvp.closedMessage}</p>
             </>
           )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-export function Gifts({ gifts }: { gifts: GiftItem[] }) {
-  return (
-    <section id="gifts" className="px-5 py-20 sm:px-6 sm:py-26">
-      <div className="mx-auto flex max-w-[1100px] flex-col gap-12">
-        <Reveal>
-          <SectionHeading
-            eyebrow="Gifts"
-            title="With gratitude"
-            lead="Your presence is the greatest gift. For those who have asked, here are a few ways to bless our new home."
-          />
-        </Reveal>
-        <div className="grid grid-cols-1 border-y border-hairline md:grid-cols-3">
-          {gifts.map((gift, index) => (
-            // TODO: link to the registry and reveal account details.
-            <a
-              key={gift.title}
-              href="#gifts"
-              className={`flex flex-col items-center gap-1.5 px-5 py-8 text-center no-underline transition-colors duration-300 hover:bg-blush ${
-                index > 0 ? "border-t border-hairline md:border-t-0 md:border-l" : ""
-              }`}
-            >
-              <span className="font-serif text-[30px] italic">{gift.title}</span>
-              <span className="text-sm text-mocha">{gift.text}</span>
-              <span className="ember-link mt-2 pb-0.5 text-xs uppercase tracking-[0.18em]">{gift.action}</span>
-            </a>
-          ))}
         </div>
       </div>
     </section>

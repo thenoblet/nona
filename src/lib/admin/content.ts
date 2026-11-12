@@ -32,7 +32,6 @@ export const contentSections = [
   { key: "landmarks", slug: "landmarks", label: "Landmarks" },
   { key: "faq", slug: "faq", label: "Questions" },
   { key: "travel", slug: "travel", label: "Travel & stay" },
-  { key: "gifts", slug: "gifts", label: "Gifts" },
   { key: "party", slug: "party", label: "Wedding party" },
   { key: "story", slug: "story", label: "Our story" },
   { key: "liveStream", slug: "live-stream", label: "Live stream" },
