@@ -132,6 +132,14 @@ const FIXED_SLOTS: SlotDefinition[] = [
     shape: "photo",
     maxWidth: 640,
   },
+  {
+    id: "story-forever-print",
+    group: "story",
+    name: "Forever begins: print",
+    where: "The small print captioned “just us”.",
+    shape: "photo",
+    maxWidth: 240,
+  },
 
   {
     id: "gallery-left",
