@@ -6,16 +6,11 @@ const DAY = 24 * 60 * MINUTE;
 /** The longest an item shows as happening now when nothing after it has a time. */
 const LONGEST_ITEM = 4 * 60 * MINUTE;
 
-/** "Saturday · 5 Dec" or "Sunday · 6 Dec". */
-export function dayLabel(secondDay: boolean, celebrations: Celebration[]) {
-  const celebration = celebrations.find((entry) => entry.id === (secondDay ? "thanks" : "ceremony")) ?? celebrations[0];
+/** The white wedding's day, as "Saturday · 5 Dec". */
+export function dayLabel(celebrations: Celebration[]): string {
+  const celebration = celebrations.find((entry) => entry.id === "ceremony") ?? celebrations[0];
   if (!celebration) return "";
   return `${celebration.weekday} · ${Number(celebration.day)} ${celebration.month.slice(0, 3)}`;
-}
-
-/** The celebrations on the day: the white wedding and reception on Saturday, the thanksgiving on Sunday. */
-export function todaysCelebrations(secondDay: boolean): readonly EventId[] {
-  return secondDay ? ["thanks"] : ["ceremony", "reception"];
 }
 
 /** The programme in celebration order, each celebration's items in the order the couple set. */

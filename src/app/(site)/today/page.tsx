@@ -27,11 +27,11 @@ export default function TodayPage() {
   return (
     <main className="flex min-h-dvh flex-col bg-white">
       <TodayLayout
-        dayLabel={<ByDay fallback={<span className="inline-block h-3 w-24 animate-pulse rounded-full bg-white/10" />} render={(secondDay, content) => dayLabel(secondDay, content.celebrations)} />}
+        dayLabel={<ByDay fallback={<span className="inline-block h-3 w-24 animate-pulse rounded-full bg-white/10" />} render={(content) => dayLabel(content.celebrations)} />}
         happeningNow={
           <ByDay
             fallback={<div className="h-16 animate-pulse rounded-full bg-white/10" />}
-            render={(_secondDay, content, now) => (
+            render={(content, now) => (
               <HappeningNow schedule={content.schedule} celebrations={content.celebrations} venues={content.venues} now={now} />
             )}
           />
@@ -39,21 +39,15 @@ export default function TodayPage() {
         orderOfDay={
           <ByDay
             fallback={<OrderSkeleton />}
-            render={(secondDay, content, now) => (
-              <OrderOfDay
-                schedule={content.schedule}
-                celebrations={content.celebrations}
-                venues={content.venues}
-                secondDay={secondDay}
-                now={now}
-              />
+            render={(content, now) => (
+              <OrderOfDay schedule={content.schedule} celebrations={content.celebrations} venues={content.venues} now={now} />
             )}
           />
         }
         quickActions={
           <ByDay
             fallback={<div className="h-56 animate-pulse rounded-[var(--radius-paper)] bg-white" />}
-            render={(_secondDay, content) => {
+            render={(content) => {
               const live = liveStreamState(content, new Date());
               return <QuickActions reception={content.venues.reception} liveUrl={live.show ? live.url : null} />;
             }}

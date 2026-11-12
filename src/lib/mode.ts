@@ -3,26 +3,19 @@ import { wedding } from "@/content/wedding";
 /**
  * The homepage has three versions and the date picks one:
  * - before: the invitation
- * - day: the wedding weekend (5 and 6 December), photo sharing first
+ * - day: the wedding day (5 December, until 05:00 the next morning), photo sharing first
  * - after: the thank-you page with the full album
  */
 export type Mode = "before" | "day" | "after";
 
 const start = Date.parse(wedding.weekendStart);
 const end = Date.parse(wedding.weekendEnd);
-const DAY = 24 * 60 * 60 * 1000;
 
 export function modeAt(now: Date): Mode {
-  const t = now.getTime();
-  if (t < start) return "before";
-  if (t < end) return "day";
+  const time = now.getTime();
+  if (time < start) return "before";
+  if (time < end) return "day";
   return "after";
-}
-
-/** True on Sunday 6 December, so the schedule moves on to the thanksgiving service. */
-export function isSecondDay(now: Date): boolean {
-  const t = now.getTime();
-  return t >= start + DAY && t < end;
 }
 
 const previewAllowed =

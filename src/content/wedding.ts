@@ -31,8 +31,8 @@ export const wedding = {
   rsvpBy: "2026-11-20",
   /** The wedding weekend starts at midnight on 5 Dec (Ghana is GMT all year). */
   weekendStart: "2026-12-05T00:00:00Z",
-  /** The thank-you version starts at midnight on 7 Dec. */
-  weekendEnd: "2026-12-07T00:00:00Z",
+  /** The after version starts at 05:00 on Sunday 6 Dec, once Saturday night is over. */
+  weekendEnd: "2026-12-06T05:00:00Z",
   /** Countdown target. */
   countdownTo: "2026-12-05T00:00:00Z",
 } as const;

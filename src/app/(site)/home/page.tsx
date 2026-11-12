@@ -7,7 +7,7 @@ import { scheduleItemPlace } from "@/lib/content/place";
 import { liveStreamState, visibleFaq } from "@/lib/content/live";
 import { getSiteImages } from "@/lib/site-images/get";
 import { slotPhotos } from "@/lib/site-images/photos";
-import { isSecondDay, resolveMode, type Mode } from "@/lib/mode";
+import { resolveMode, type Mode } from "@/lib/mode";
 import { Autoplay } from "@/components/music/Autoplay";
 import { DockItem } from "@/components/music/Dock";
 import { SharePill } from "@/components/layout/SharePill";
@@ -52,9 +52,8 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
   const now = new Date();
   const live = liveStreamState(content, now);
   const mode: Mode = resolveMode(now, params.mode);
-  const secondDay = mode === "day" && isSecondDay(now);
   const current = mode === "day" ? currentItem(schedule, celebrations, now) : undefined;
-  const todayLabel = dayLabel(secondDay, celebrations);
+  const todayLabel = dayLabel(celebrations);
 
   return (
     <>
@@ -87,7 +86,6 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <LiveAlbum now={now.getTime()} />
             <TodaySection
               todayLabel={todayLabel}
-              secondDay={secondDay}
               schedule={schedule}
               celebrations={celebrations}
               venues={venues}
