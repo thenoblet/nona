@@ -101,23 +101,24 @@ test("with nothing replaced, the landing cover and print render exactly as befor
   browser,
 }) => {
   // Captured from 33689f7's production build (task-19-work/logs/landing-markup-base.json), the
-  // static file's content hash aside. Built-in photos keep next/image's own markup.
+  // static file's content hash aside; the cover since then the shoot's photo, at its own position.
+  // Built-in photos keep next/image's own markup.
   const image = (name: string, width: number) => `/_next/image?url=%2F_next%2Fstatic%2Fmedia%2F${name}.HASH.jpg&w=${width}&q=75`;
   const srcset = (name: string, widths: number[]) => widths.map((width) => `${image(name, width)} ${width}w`).join(", ");
   const expected = [
     {
-      alt: "Noblet and Nancy embrace beneath a neon Marry Me sign, in black and white",
+      alt: "Noblet and Nancy stand close in matching beige, looking at the camera",
       class: "object-cover",
       "data-nimg": "fill",
       decoding: "async",
       sizes: "(min-width: 1024px) 47vw, 100vw",
-      src: image("embrace-bw", 3840),
-      srcset: srcset("embrace-bw", [384, 640, 750, 828, 1080, 1200, 1920, 2048, 3840]),
-      style: "position: absolute; height: 100%; width: 100%; inset: 0px; object-position: center 45%; color: transparent;",
+      src: image("cover-together", 3840),
+      srcset: srcset("cover-together", [384, 640, 750, 828, 1080, 1200, 1920, 2048, 3840]),
+      style: "position: absolute; height: 100%; width: 100%; inset: 0px; object-position: center 25%; color: transparent;",
     },
     {
       alt: "Nancy holds her bouquet and the ring as they hug",
-      class: "block h-[180px] w-full object-cover sm:h-[230px] lg:h-[290px]",
+      class: "block h-[140px] w-full object-cover sm:h-[230px] lg:h-[290px]",
       "data-nimg": "1",
       decoding: "async",
       height: "1280",
@@ -131,12 +132,17 @@ test("with nothing replaced, the landing cover and print render exactly as befor
   ];
   const guest = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 });
   await guest.goto("/");
-  await expect(guest.getByRole("img", { name: "Noblet and Nancy embrace beneath a neon Marry Me sign, in black and white" })).toBeVisible();
+  const cover = guest.getByRole("img", { name: "Noblet and Nancy stand close in matching beige, looking at the camera" });
+  await expect(cover).toBeVisible();
+  // Read as a guest sees it: once the cover has loaded and next/image has taken its blur placeholder off.
+  await expect
+    .poll(() => cover.evaluate((photo: HTMLImageElement) => photo.complete && photo.naturalWidth > 0 && photo.style.backgroundImage === ""))
+    .toBe(true);
   const images = await guest.evaluate(() =>
     [...document.querySelectorAll("main img")].map((element) =>
       Object.fromEntries(
         [...element.attributes]
-          .map((attribute) => [attribute.name, attribute.value.replace(/(embrace-bw|bouquet)\.[A-Za-z0-9_-]+\.jpg/g, "$1.HASH.jpg")])
+          .map((attribute) => [attribute.name, attribute.value.replace(/(cover-together|bouquet)\.[A-Za-z0-9_-]+\.jpg/g, "$1.HASH.jpg")])
           .sort(([first], [second]) => first.localeCompare(second)),
       ),
     ),
