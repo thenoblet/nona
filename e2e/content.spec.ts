@@ -110,10 +110,11 @@ test.describe("each venue fact typed once", () => {
       await saveReceptionVenue(page, "Name", "Katakyie Gardens");
 
       await page.goto("/programme");
-      const reception = page.locator("section#reception");
+      // Visible only: until the streamed section swaps in, a hidden copy of it can sit beside it.
+      const reception = page.locator("section#reception").filter({ visible: true });
       await expect(reception).toContainText("Katakyie Gardens, Tepa");
       await expect(reception).not.toContainText(BUILT_IN_RECEPTION_NAME);
-      await expect(page.locator("section#ceremony")).toContainText("Assemblies of God, Victory Worship Centre, Tepa");
+      await expect(page.locator("section#ceremony").filter({ visible: true })).toContainText("Assemblies of God, Victory Worship Centre, Tepa");
     } finally {
       // Later tests expect the built-in name.
       await saveReceptionVenue(page, "Name", BUILT_IN_RECEPTION_NAME);
