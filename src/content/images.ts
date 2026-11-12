@@ -5,6 +5,8 @@ import bouquet from "../../public/images/story/bouquet.jpg";
 import howWeMetBw from "../../public/images/story/how-we-met-bw.jpg";
 import earlyDays from "../../public/images/story/early-days.jpg";
 import dressedUp from "../../public/images/story/dressed-up.jpg";
+import foreverLaugh from "../../public/images/story/forever-laugh.jpg";
+import foreverFloor from "../../public/images/story/forever-floor.jpg";
 import chrysanthemumsWide from "../../public/images/flowers/chrysanthemums-wide.jpg";
 import chrysanthemumsPortrait from "../../public/images/flowers/chrysanthemums-portrait.jpg";
 import daisiesWrapped from "../../public/images/flowers/daisies-wrapped.jpg";
@@ -26,10 +28,22 @@ export const photos = {
   },
   bouquet: { src: bouquet, alt: "Nancy holds her bouquet and the ring as they hug", position: "center 20%" },
   howWeMetBw: { src: howWeMetBw, alt: "Noblet and Nancy in their early days, in black and white", position: "center 30%" },
-  // Straightened from a tilted shot and cropped to the small print's portrait shape, around both faces.
   // Cropped from inside its white frame to the small print's portrait shape.
   dressedUp: { src: dressedUp, alt: "A selfie of Nancy in yellow lace and Noblet in a navy suit", position: "center 30%" },
+  // Straightened from a tilted shot and cropped to the small print's portrait shape, around both faces.
   earlyDays: { src: earlyDays, alt: "Noblet and Nancy, Nancy peeking past his shoulder, on a basketball court", position: "center 35%" },
+  // From the pre-wedding shoot, cropped from the photographer's full-size files: the arch's 3:4 shape
+  // (leaving out the photographer's mark) and the small print's portrait shape.
+  foreverLaugh: {
+    src: foreverLaugh,
+    alt: "Nancy laughs with her eyes closed as Noblet leans his head on her shoulder, both in beige",
+    position: "center 30%",
+  },
+  foreverFloor: {
+    src: foreverFloor,
+    alt: "Noblet and Nancy sit on the floor against a cream sofa in white tops and jeans, smiling at each other",
+    position: "center 25%",
+  },
   chrysanthemumsWide: { src: chrysanthemumsWide, alt: "A soft close-up of white chrysanthemums", position: "center 45%" },
   chrysanthemumsPortrait: { src: chrysanthemumsPortrait, alt: "A bouquet of white chrysanthemums", position: "30% 40%" },
   daisiesWrapped: {
