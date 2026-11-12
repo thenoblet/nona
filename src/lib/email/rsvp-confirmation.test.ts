@@ -99,6 +99,14 @@ describe("renderRsvpConfirmation", () => {
     }
   });
 
+  it("leaves out a celebration the reply didn't answer, in the html and the text", async () => {
+    const mail = await render(record({ [second.id]: "yes" }));
+    for (const body of [mail.html, mail.text]) {
+      expect(body).toContain(second.name);
+      expect(body).not.toContain(first.name);
+    }
+  });
+
   it("links only the celebrations the guest is coming to to Google Calendar, beside the attached file", async () => {
     const mail = await render(record({ [first.id]: "yes", [second.id]: "no" }));
     const comingTo = googleCalendarUrl(celebrationEvent(first, contentDefaults.venues, SITE_URL));

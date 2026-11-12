@@ -140,6 +140,26 @@ describe("saveRsvp keeps every reply", () => {
     await saveRsvp({ ...base, answers: { ceremony: "yes", reception: "no" } });
     expect(await listRsvps()).toHaveLength(3);
   });
+
+  it("keeps a reply sent again without the thanksgiving answer the guest's earlier reply had, within 10 minutes, and flags both as replied again", async () => {
+    // Ama first replied while guests were still asked to the thanksgiving.
+    const earlier = await saveRsvp({ ...base, answers: { ceremony: "yes", reception: "yes", thanks: "yes" } });
+    const again = await saveRsvp({ ...base, answers: { ceremony: "yes", reception: "yes" } });
+
+    expect(again.record.id).not.toBe(earlier.record.id);
+    const current = await listRsvps();
+    expect(current.map((reply) => reply.id)).toEqual([again.record.id, earlier.record.id]);
+    expect(current.map((reply) => reply.answers)).toEqual([
+      { ceremony: "yes", reception: "yes" },
+      { ceremony: "yes", reception: "yes", thanks: "yes" },
+    ]);
+    expect(await flagsOf(earlier.record.id)).toEqual([
+      { kind: "replied-again", otherId: again.record.id, otherName: "Ama Owusu", via: "phone" },
+    ]);
+    expect(await flagsOf(again.record.id)).toEqual([
+      { kind: "replied-again", otherId: earlier.record.id, otherName: "Ama Owusu", via: "phone" },
+    ]);
+  });
 });
 
 describe("saveRsvp's guest (Ruling CB)", () => {

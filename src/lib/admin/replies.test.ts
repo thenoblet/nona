@@ -190,6 +190,18 @@ describe("filters and search", () => {
     expect(matchesFilter(receptionOnly, "coming")).toBe(true);
   });
 
+  it("puts a reply that answered only the thanksgiving in neither Coming nor Can't come, and lists it under the thanksgiving", () => {
+    const [thanksgivingAnswerOnly] = toReplyRows(
+      [reply({ id: "abena", fullName: "Abena Asante", answers: { thanks: "yes" } })],
+      new Map(),
+      celebrations,
+      now,
+    );
+    expect(matchesFilter(thanksgivingAnswerOnly, "coming")).toBe(false);
+    expect(matchesFilter(thanksgivingAnswerOnly, "notComing")).toBe(false);
+    expect(matchesFilter(thanksgivingAnswerOnly, "thanksgiving")).toBe(true);
+  });
+
   it("lists a guest who said yes to the thanksgiving, even after replying again without it", () => {
     const current = reply({ id: "ama", fullName: "Ama Owusu", answers: { ceremony: "yes" } });
     const earlier = reply({
