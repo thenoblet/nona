@@ -193,7 +193,8 @@ test.describe("the places to stay in the admin", () => {
       const card = page.locator("article").filter({ hasText: "E2E Lodge" }).filter({ visible: true });
       await expect(card).toContainText("About 5 km from the church");
       await expect(card.getByRole("link", { name: "Call E2E Lodge on 020 123 4567" })).toHaveAttribute("href", "tel:+233201234567");
-      await expect(page.locator("article").filter({ hasText: "NewLove Guest House" }).filter({ visible: true })).toBeVisible();
+      // Two visible cards name it (its own, and a neighbour's directions), so the first of them.
+      await expect(page.locator("article").filter({ hasText: "NewLove Guest House" }).filter({ visible: true }).first()).toBeVisible();
 
       // The home page's Where to stay card leads here.
       await page.goto("/home?mode=before");
