@@ -70,6 +70,11 @@ export function loadGoogleMaps(apiKey: string): Promise<GoogleMapsLibraries> {
   return withTimeout(load(), LOAD_TIMEOUT_MILLISECONDS, "Google Maps took too long to load");
 }
 
+/** Whether Google has refused the key on this page (it then refuses every map after). */
+export function googleMapsKeyRefused(): boolean {
+  return keyRefused;
+}
+
 /**
  * Calls `listener` if Google refuses the key, which it can do after the script has loaded and the
  * map is drawn. Returns the function that stops listening.

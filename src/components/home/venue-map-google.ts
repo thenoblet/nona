@@ -1,4 +1,5 @@
 import { withTimeout, type GoogleMapsLibraries } from "./google-maps";
+import type { DrawnMap } from "./venue-map-controller";
 import { DEFAULT_MAX_ZOOM, panToShow, pinHtml, popupHtml, usableMaxZoom, type MapPlace } from "./venue-map";
 
 const MAX_ZOOM_TIMEOUT_MILLISECONDS = 5_000;
@@ -89,9 +90,24 @@ function placeOverlayClass(maps: google.maps.MapsLibrary) {
 type PlaceOverlay = InstanceType<ReturnType<typeof placeOverlayClass>>;
 
 /**
+ * What a guest can do with the map: everything on a computer; nothing on a phone, where the map
+ * is a picture under a link to Google Maps, and a tap opens that instead.
+ */
+function interaction(preview: boolean): google.maps.MapOptions {
+  const interactive = !preview;
+  return {
+    mapTypeControl: interactive,
+    zoomControl: interactive,
+    // The wheel scrolls the page; ctrl with the wheel, or a drag, moves the map.
+    gestureHandling: interactive ? "cooperative" : "none",
+    keyboardShortcuts: interactive,
+  };
+}
+
+/**
  * Draws the satellite map (with labels) of the places into `canvas`, with a pin for each, framed
  * so all of them show: interactive, or as a still preview on phones. `onReady` runs once its first
- * tiles are in. Returns the function that takes the map down.
+ * tiles are in. Returns the map, to switch between phone and computer in place or to take down.
  */
 export function drawVenueMap({
   libraries: { maps, core },
@@ -115,28 +131,22 @@ export function drawVenueMap({
   /** Room the opening view keeps around the places (see fitPadding). */
   padding: google.maps.Padding;
   onReady: () => void;
-}): () => void {
-  const interactive = !preview;
+}): DrawnMap {
   const map = new maps.Map(canvas, {
+    ...interaction(preview),
     mapTypeId: maps.MapTypeId.HYBRID,
-    mapTypeControl: interactive,
     // With satellite listed beside hybrid, Google names the button "Satellite" (with a Labels tick,
     // on by default) rather than "Hybrid".
     mapTypeControlOptions: {
       mapTypeIds: [maps.MapTypeId.ROADMAP, maps.MapTypeId.SATELLITE, maps.MapTypeId.HYBRID],
       position: core.ControlPosition.TOP_LEFT,
     },
-    zoomControl: interactive,
     // Bottom left, above Google's logo: the landmarks note covers the bottom right, Google's usual
     // place for it, and popups open upwards, into the top of the map.
     zoomControlOptions: { position: core.ControlPosition.LEFT_BOTTOM },
     cameraControl: false,
     streetViewControl: false,
     fullscreenControl: false,
-    // The wheel scrolls the page; ctrl with the wheel, or a drag, moves the map. A preview takes
-    // no gestures at all: a tap on it opens Google Maps instead.
-    gestureHandling: interactive ? "cooperative" : "none",
-    keyboardShortcuts: interactive,
     // Our pins only: Google's own places don't open their cards.
     clickableIcons: false,
     // The opening view comes no closer than the default; once it is drawn, guests can zoom in to
@@ -169,9 +179,15 @@ export function drawVenueMap({
     for (const overlay of overlays) overlay.setOpen(false);
   });
 
-  return () => {
-    for (const overlay of overlays) overlay.setMap(null);
-    core.event.clearInstanceListeners(map);
-    canvas.replaceChildren();
+  return {
+    setPreview(nextPreview) {
+      map.setOptions(interaction(nextPreview));
+      if (nextPreview) for (const overlay of overlays) overlay.setOpen(false);
+    },
+    takeDown() {
+      for (const overlay of overlays) overlay.setMap(null);
+      core.event.clearInstanceListeners(map);
+      canvas.replaceChildren();
+    },
   };
 }

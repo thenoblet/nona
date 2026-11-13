@@ -148,8 +148,10 @@ describe("loadGoogleMaps", () => {
     const stoppedListening = vi.fn();
     loader.onGoogleMapsKeyRefused(refused);
     loader.onGoogleMapsKeyRefused(stoppedListening)();
+    expect(loader.googleMapsKeyRefused()).toBe(false);
     page.gm_authFailure?.();
 
+    expect(loader.googleMapsKeyRefused()).toBe(true);
     expect(refused).toHaveBeenCalledOnce();
     expect(stoppedListening).not.toHaveBeenCalled();
     await expect(loader.loadGoogleMaps("browser-key")).rejects.toThrow("Google Maps refused the key");

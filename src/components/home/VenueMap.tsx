@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { loadGoogleMaps, onGoogleMapsKeyRefused } from "./google-maps";
+import { googleMapsKeyRefused, loadGoogleMaps, onGoogleMapsKeyRefused } from "./google-maps";
 import { fitPadding, googleMapsEmbedUrl, googleMapsSearchUrl, type MapPlace } from "./venue-map";
+import { VenueMapController, type VenueMapStatus } from "./venue-map-controller";
 import { drawVenueMap, imageryMaxZoom } from "./venue-map-google";
 
 export type { MapPlace } from "./venue-map";
@@ -10,8 +11,6 @@ export type { MapPlace } from "./venue-map";
 /** How far ahead of the frame, as the page scrolls towards it, Google's script starts loading. */
 const LOAD_AHEAD = "300px 0px";
 
-/** Waiting for Google's map, drawn, or given up on. */
-type MapStatus = "waiting" | "ready" | "failed";
 
 /**
  * A phone or tablet, by its pointer rather than its width: touch is what makes a map's pan and
@@ -69,7 +68,7 @@ export function VenueMap({
   const computerPill = useRef<HTMLAnchorElement>(null);
   const landmarks = useRef<HTMLParagraphElement>(null);
   const [near, setNear] = useState(false);
-  const [status, setStatus] = useState<MapStatus>("waiting");
+  const [status, setStatus] = useState<VenueMapStatus>("waiting");
   const preview = useCoarsePointer();
   const placesKey = JSON.stringify(places);
   const googleMapsUrl = googleMapsSearchUrl(places[0]);
@@ -95,60 +94,44 @@ export function VenueMap({
     return () => observer.disconnect();
   }, []);
 
+  // One controller for this frame's life, kept in a ref: it keeps the map it drew when /home is
+  // hidden and shown again (Next keeps visited pages), so a return to /home costs no new map
+  // against the key's daily cap, and once Google's map has failed it never tries again.
+  const controller = useRef<VenueMapController | null>(null);
+
   useEffect(() => {
-    const frameElement = frame.current;
-    const canvasElement = canvas.current;
-    if (!near || !apiKey || !frameElement || !canvasElement) return;
-    const placeList: MapPlace[] = JSON.parse(placesKey);
-    let cancelled = false;
-    let takeDown: (() => void) | undefined;
-
-    // Once failed, the map is taken down (with any error box Google drew) and stays down.
-    const fail = () => {
-      if (cancelled) return;
-      takeDown?.();
-      takeDown = undefined;
-      setStatus("failed");
-    };
-    const ready = () => {
-      if (!cancelled) setStatus((current) => (current === "failed" ? current : "ready"));
-    };
-    // Google refuses the key (billing, another site, a bad key) after its script has loaded.
-    const stopListening = onGoogleMapsKeyRefused(fail);
-
-    async function draw(key: string, canvasTarget: HTMLElement, frameTarget: HTMLElement) {
-      try {
-        const libraries = await loadGoogleMaps(key);
-        const maxZoom = await imageryMaxZoom(libraries, placeList[0]);
-        if (cancelled) return;
+    if (!near || !apiKey || places.length === 0) return;
+    controller.current ??= new VenueMapController({
+      load: () => loadGoogleMaps(apiKey),
+      maxZoom: (libraries, key) => imageryMaxZoom(libraries, (JSON.parse(key) as MapPlace[])[0]),
+      draw: ({ libraries, placesKey: key, maxZoom, preview: asPreview, onReady }) => {
+        const canvasElement = canvas.current;
+        const frameElement = frame.current;
+        if (!canvasElement || !frameElement) throw new Error("The map's frame has gone");
         const box = (element: Element | null) => element?.getBoundingClientRect() ?? new DOMRect();
-        const padding = fitPadding(
-          box(frameTarget),
-          [box(phonePill.current), box(computerPill.current)],
-          [box(landmarks.current)],
-        );
-        takeDown = drawVenueMap({
+        return drawVenueMap({
           libraries,
-          canvas: canvasTarget,
-          places: placeList,
+          canvas: canvasElement,
+          places: JSON.parse(key) as MapPlace[],
           maxZoom,
-          backgroundColor: getComputedStyle(frameTarget).backgroundColor,
-          preview,
-          padding,
-          onReady: ready,
+          backgroundColor: getComputedStyle(frameElement).backgroundColor,
+          preview: asPreview,
+          padding: fitPadding(
+            box(frameElement),
+            [box(phonePill.current), box(computerPill.current)],
+            [box(landmarks.current)],
+          ),
+          onReady,
         });
-      } catch {
-        fail();
-      }
-    }
-    void draw(apiKey, canvasElement, frameElement);
-
-    return () => {
-      cancelled = true;
-      stopListening();
-      takeDown?.();
-    };
-  }, [near, apiKey, placesKey, preview]);
+      },
+      keyRefused: googleMapsKeyRefused,
+      onKeyRefused: onGoogleMapsKeyRefused,
+      onStatus: setStatus,
+    });
+    const shown = controller.current;
+    shown.show(placesKey, preview);
+    return () => shown.hide();
+  }, [near, apiKey, places.length, placesKey, preview]);
 
   return (
     <div className="relative">
