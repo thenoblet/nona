@@ -5,7 +5,10 @@ import { TEST_DB_ENV, TEST_STORAGE_ENV } from "./test/env";
 // The e2e server runs a production build against the local test database and MinIO (docker compose
 // up -d db minio, then npm run storage:init); the global setup starts the media worker's image
 // beside it (e2e/worker.ts). RESEND_API_KEY is blank so no real email is ever sent: the
-// confirmation job fails instead, which is the intended behaviour. Production refuses to sign guest
+// confirmation job fails instead, which is the intended behaviour. GOOGLE_MAPS_BROWSER_KEY is blank
+// too, as in CI, so a key in .env.local never reaches these tests: the venue map shows its fallback,
+// Google's keyless embed, and the specs that reach it block Google's map requests
+// (e2e/google-maps.ts). Production refuses to sign guest
 // cookies without a secret, so the e2e server gets a test-only one.
 // The admin checks Cloudflare Access tokens as in production, against a local key server
 // (e2e/cloudflare-access.ts). Playwright starts the servers in this order and waits for each, and
@@ -36,6 +39,7 @@ export default defineConfig({
         ...TEST_STORAGE_ENV,
         ALLOW_MODE_PREVIEW: "true",
         RESEND_API_KEY: "",
+        GOOGLE_MAPS_BROWSER_KEY: "",
         GUEST_COOKIE_SECRET: "e2e-only-guest-cookie-secret-not-used-anywhere-else",
         CF_ACCESS_TEAM_DOMAIN: ACCESS_TEAM_DOMAIN,
         CF_ACCESS_AUD: ACCESS_AUDIENCE,

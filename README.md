@@ -180,6 +180,7 @@ in this repository.
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | The R2 API token's keys (see R2 and Cloudflare below). |
 | `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET` | `nona-private` (the originals, as guests sent them, and their manifests) and `nona-public` (the thumbnails, viewing copies and link preview cards the site shows). |
 | `MEDIA_BASE_URL` | Where the public bucket is served, `https://media.nobletxnancy.com`. Without it or any of the R2 settings, guests can't upload and the album can't show. |
+| `GOOGLE_MAPS_BROWSER_KEY` | The "Finding your way" map on the home page (Google Maps, with a pin for each place). A browser key, so guests' browsers see it: in Google Cloud it is restricted by referrer (the site's domain, and `http://localhost:3000/*` for development) and to the Maps JavaScript API only, with a daily load cap. Read when the page is served, so changing it in Dokploy needs only a restart. Without it, or when Google refuses it (billing, referrer) or its script fails, the map falls back to Google's keyless satellite embed of the church, which needs no key, with an "Open in Google Maps" link. |
 | `SLIDESHOW_DELAY_SECONDS` | The venue TV's delay before a new photo or video reaches it: whole seconds from 0 to 900, 180 when unset. Once the couple save a delay under Admin → Photos, theirs wins. |
 
 **Never set `ADMIN_DEV_EMAIL` or `ALLOW_MODE_PREVIEW` in production.** The first stands in for a

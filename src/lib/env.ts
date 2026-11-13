@@ -108,3 +108,13 @@ export function guestCookieSecret(env: Env = process.env): string {
   if (Buffer.byteLength(secret, "utf8") < 32) throw new Error("GUEST_COOKIE_SECRET must be at least 32 bytes");
   return secret;
 }
+
+/**
+ * The Google Maps browser key for the venue map, read when the page is served (not baked in at
+ * build time). It ships to the browser, so it is restricted by referrer and to the Maps JavaScript
+ * API in Google Cloud. Without it the map falls back to Google's keyless satellite embed of the
+ * church, with its "Open in Google Maps" link.
+ */
+export function googleMapsBrowserKey(env: Env = process.env): string | undefined {
+  return env.GOOGLE_MAPS_BROWSER_KEY?.trim() || undefined;
+}

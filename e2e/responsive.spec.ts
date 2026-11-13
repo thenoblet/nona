@@ -8,6 +8,7 @@ import { HEADER_IMAGE } from "../src/emails/components/header-image";
 import { contentDefaults } from "../src/lib/content/defaults";
 import type { RsvpRecord } from "../src/lib/data/types";
 import { renderRsvpConfirmation } from "../src/lib/email/rsvp-confirmation";
+import { blockGoogleMaps } from "./google-maps";
 import { closeStorage, seedMoment, testSql } from "./media-seed";
 
 // No page may scroll sideways on any phone, tablet or laptop (Noblet, 30 Oct). The admin's data
@@ -70,6 +71,8 @@ async function expectNoSidewaysScroll(page: Page, what: string): Promise<void> {
 
 for (const { path, marker } of pages) {
   test.describe(path, () => {
+    // The home page's venue map: no test waits on Google's network.
+    test.beforeEach(async ({ page }) => blockGoogleMaps(page));
     if (path === "/slideshow") test.beforeAll(async ({}, testInfo) => seedSlideshow(testInfo.project.use.baseURL));
     for (const width of widths) {
       test(`does not scroll sideways at ${width}px`, async ({ page }) => {
