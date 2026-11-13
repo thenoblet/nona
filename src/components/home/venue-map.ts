@@ -32,10 +32,13 @@ export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (character) => HTML_ESCAPES[character]);
 }
 
-/** A place's numbered pin and its name tag: one button, named for the place. */
+/**
+ * A place's numbered pin and its name tag: one button, named with the tag it shows and then the
+ * place ("Church: Assemblies of God…"), so a guest using voice control can say what they see.
+ */
 export function pinHtml(place: MapPlace): string {
   return (
-    `<button type="button" class="nona-pin" aria-label="${escapeHtml(place.name)}" aria-expanded="false">` +
+    `<button type="button" class="nona-pin" aria-label="${escapeHtml(`${place.label}: ${place.name}`)}" aria-expanded="false">` +
     PIN_SVG +
     `<span class="nona-pin__n">${escapeHtml(String(place.number))}</span>` +
     `<span class="nona-pin__tag">${escapeHtml(place.label)}</span>` +

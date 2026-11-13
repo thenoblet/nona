@@ -147,7 +147,7 @@ export function VenueMap({
           href={googleMapsUrl}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label="Open the church in Google Maps"
+          aria-label="Tap to open Google Maps: the church"
           className="absolute inset-0 z-[1] hidden pointer-coarse:block"
         >
           <span ref={phonePill} aria-hidden="true" className={PILL}>

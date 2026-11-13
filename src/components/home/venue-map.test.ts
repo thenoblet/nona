@@ -41,9 +41,9 @@ describe("escapeHtml", () => {
 });
 
 describe("pinHtml", () => {
-  it("is a button labelled with the place's name, showing its number and its tag", () => {
+  it("is a button named with the tag it shows and then the place, showing its number and its tag", () => {
     const html = pinHtml(church);
-    expect(html).toMatch(/^<button type="button" class="nona-pin" aria-label="Assemblies of God, Victory Worship Centre" aria-expanded="false">/);
+    expect(html).toMatch(/^<button type="button" class="nona-pin" aria-label="Church: Assemblies of God, Victory Worship Centre" aria-expanded="false">/);
     expect(html).toContain("<svg");
     expect(html).toContain('<span class="nona-pin__n">1</span>');
     expect(html).toContain('<span class="nona-pin__tag">Church</span>');
@@ -54,7 +54,9 @@ describe("pinHtml", () => {
     const html = pinHtml(hostile);
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<img");
-    expect(html).toContain('aria-label="St Mary&#39;s &quot;Hall&quot; &amp; &lt;script&gt;alert(1)&lt;/script&gt;"');
+    expect(html).toContain(
+      'aria-label="&lt;img src=x onerror=&quot;alert(1)&quot;&gt;: St Mary&#39;s &quot;Hall&quot; &amp; &lt;script&gt;alert(1)&lt;/script&gt;"',
+    );
     expect(html).toContain('<span class="nona-pin__tag">&lt;img src=x onerror=&quot;alert(1)&quot;&gt;</span>');
   });
 });

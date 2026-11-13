@@ -53,7 +53,7 @@ test.describe("the venue map without a Google Maps key", () => {
     await expect(button).toHaveAttribute("href", CHURCH_IN_GOOGLE_MAPS);
     await expect(button).toHaveAttribute("target", "_blank");
     await expect(button).toHaveAttribute("rel", "noopener noreferrer");
-    await expect(frame.getByRole("link", { name: "Open the church in Google Maps" })).toHaveCount(0);
+    await expect(frame.getByRole("link", { name: "Tap to open Google Maps: the church" })).toHaveCount(0);
 
     // Only the embed was asked for: never the Maps JavaScript API, which needs the key.
     await expect.poll(() => fromGoogle).toContain("maps.google.com");
@@ -72,7 +72,7 @@ test.describe("the venue map without a Google Maps key", () => {
       const frame = mapFrame(page);
       await frame.scrollIntoViewIfNeeded();
 
-      const overlay = frame.getByRole("link", { name: "Open the church in Google Maps", exact: true });
+      const overlay = frame.getByRole("link", { name: "Tap to open Google Maps: the church", exact: true });
       await expect(overlay).toBeVisible();
       await expect(overlay).toHaveAttribute("href", CHURCH_IN_GOOGLE_MAPS);
       await expect(overlay).toHaveAttribute("target", "_blank");
@@ -82,14 +82,14 @@ test.describe("the venue map without a Google Maps key", () => {
       // in one go, as the section can still be sliding in.
       const cover = await frame.evaluate((frameElement) => {
         const outer = frameElement.getBoundingClientRect();
-        const inner = frameElement.querySelector('a[aria-label="Open the church in Google Maps"]')?.getBoundingClientRect();
+        const inner = frameElement.querySelector('a[aria-label="Tap to open Google Maps: the church"]')?.getBoundingClientRect();
         const centre = document.elementFromPoint(outer.left + outer.width / 2, outer.top + outer.height / 2);
         return {
           gaps: inner ? [inner.top - outer.top, outer.right - inner.right, outer.bottom - inner.bottom, inner.left - outer.left].map((gap) => Math.abs(Math.round(gap))) : null,
           centre: centre?.closest("a")?.getAttribute("aria-label"),
         };
       });
-      expect(cover).toEqual({ gaps: [0, 0, 0, 0], centre: "Open the church in Google Maps" });
+      expect(cover).toEqual({ gaps: [0, 0, 0, 0], centre: "Tap to open Google Maps: the church" });
       await expect(frame.locator("iframe")).toHaveAttribute("inert");
       // No separate button on a phone, and the landmarks still show over the map.
       await expect(frame.getByRole("link", { name: "Open in Google Maps", exact: true })).toHaveCount(0);
