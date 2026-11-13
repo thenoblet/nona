@@ -65,7 +65,7 @@ shows on the site within seconds. `src/content/wedding.ts` holds the built-in te
 shows it for a section until that section is first saved in the admin, and for every section
 whenever the database can't be reached. Once a section has been saved, editing `wedding.ts` no
 longer changes it on the site. Anything still to confirm is in square brackets, like
-`[Start time]` and `[Guest hotel]`.
+`[AS-0000-0000]` and `[Your children policy.]`.
 
 ## Data: Postgres, and what is still a stand-in
 

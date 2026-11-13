@@ -25,17 +25,20 @@ describe("prepareSection", () => {
     venues.church.coords = { lat: " 7.5 ", lng: "-2.25" };
     venues.reception.coords = { lat: "", lng: "" };
     venues.reception.note = "";
-    venues.hotel.coords = { lat: "7", lng: "" };
     const prepared = prepareSection("venues", venues) as Record<string, Record<string, unknown>>;
 
     expect(prepared.church.coords).toEqual({ lat: 7.5, lng: -2.25 });
     expect(prepared.reception).not.toHaveProperty("coords");
     expect(prepared.reception).not.toHaveProperty("note");
-    expect(prepared.hotel.coords).toEqual({ lat: 7, lng: undefined });
 
-    const result = sectionSchemas.venues.safeParse(prepared);
+    // One coordinate alone is kept, for the schema to refuse.
+    venues.reception.coords = { lat: "7", lng: "" };
+    const halfTyped = prepareSection("venues", venues) as Record<string, Record<string, unknown>>;
+    expect(halfTyped.reception.coords).toEqual({ lat: 7, lng: undefined });
+
+    const result = sectionSchemas.venues.safeParse(halfTyped);
     expect(result.success).toBe(false);
-    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["hotel.coords.lng"]);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["reception.coords.lng"]);
   });
 
   it("gives a new wedding-party member a unique id from their name and keeps existing ids", () => {
@@ -104,9 +107,9 @@ describe("prepareSection", () => {
   it("trims the maps links", () => {
     const venues = prepareSection("venues", {
       ...contentDefaults.venues,
-      hotel: { ...contentDefaults.venues.hotel, mapsUrl: " https://maps.example.com/hotel " },
+      reception: { ...contentDefaults.venues.reception, mapsUrl: " https://maps.example.com/reception " },
     }) as Record<string, Record<string, unknown>>;
-    expect(venues.hotel.mapsUrl).toBe("https://maps.example.com/hotel");
+    expect(venues.reception.mapsUrl).toBe("https://maps.example.com/reception");
   });
 
   it("never gives a new member an id the built-in list or a portrait already uses", () => {

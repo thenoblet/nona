@@ -80,8 +80,8 @@ export function describeDate(
 
 /**
  * Reads the store's messages for one section. `path` is the field's place in the section, like
- * "0.startTime" or "hotel.coords.lat", "" for the section as a whole, and null for a message that
- * isn't about a field (such as a newer version having been saved).
+ * "0.startTime" or "reception.coords.lat", "" for the section as a whole, and null for a message
+ * that isn't about a field (such as a newer version having been saved).
  */
 export function parseIssues(key: SectionKey, errors: string[]): { path: string | null; message: string }[] {
   const pattern = new RegExp(`^${key}((?:\\[\\d+\\]|\\.[A-Za-z_][\\w]*)*): (.+)$`, "s");

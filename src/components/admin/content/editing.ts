@@ -3,7 +3,7 @@
 
 export type Path = readonly (string | number)[];
 
-/** "0.startTime" or "hotel.coords.lat": a path written the way the store's messages name fields. */
+/** "0.startTime" or "reception.coords.lat": a path written the way the store's messages name fields. */
 export function pathKey(path: Path): string {
   return path.join(".");
 }

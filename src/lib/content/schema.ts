@@ -13,13 +13,16 @@ export type EventId = (typeof EVENT_IDS)[number];
 /** Each celebration's name in the admin, where the order of the day is grouped by it. */
 export const EVENT_LABELS: Record<GuestEventId, string> = { ceremony: "White wedding", reception: "Reception" };
 
-/** The venues, each typed once under Site text → Venues. */
-export const VENUE_KEYS = ["church", "reception", "hotel"] as const;
+/**
+ * The venues, each typed once under Site text → Venues. Saved text may still have the guest hotel,
+ * from before Where to stay (/stay) replaced it; the venues section reads without it.
+ */
+export const VENUE_KEYS = ["church", "reception"] as const;
 export type VenueKey = (typeof VENUE_KEYS)[number];
 /** Each venue's name in the admin: its heading under Venues, and the choice wherever a venue is picked. */
-export const VENUE_LABELS: Record<VenueKey, string> = { church: "Church", reception: "Reception", hotel: "Hotel" };
+export const VENUE_LABELS: Record<VenueKey, string> = { church: "Church", reception: "Reception" };
 
-/** The venues a celebration can be held at. The hotel is only where guests stay. */
+/** The venues a celebration can be held at. */
 export const CELEBRATION_VENUES = ["church", "reception"] as const satisfies readonly VenueKey[];
 export type CelebrationVenue = (typeof CELEBRATION_VENUES)[number];
 
@@ -157,7 +160,7 @@ const DAY_ONLY_TIME = /^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+\d/i;
  * - Sunday items go to the thanksgiving, and so are left out; Saturday items to the white wedding
  *   until the first item at the reception venue, and to the reception from there on.
  * - An item at its celebration's own venue now takes the place from it; one at another venue keeps
- *   that venue's name as its typed place.
+ *   that venue's name as its typed place. One at the guest hotel, no longer a venue, has no place.
  * - A time is read as a clock time when it is one ("2:30 PM"); a placeholder like "[Time]" or a
  *   day like "Sun 6 Dec" is dropped, and any other words move into the note.
  */
@@ -309,7 +312,8 @@ export const sectionSchemas = {
     (value) => withoutRetired("celebration")(withCelebrations(value)),
     zod.array(scheduleItem).superRefine(checkSchedule),
   ),
-  venues: zod.object({ church: venue, reception: venue, hotel: venue } satisfies Record<VenueKey, typeof venue>),
+  // An object leaves out keys it doesn't know, such as a saved hotel, rather than refusing them.
+  venues: zod.object({ church: venue, reception: venue } satisfies Record<VenueKey, typeof venue>),
   landmarks: zod.array(line),
   faq: zod.array(faqItem),
   travel: zod.array(travelItem),
