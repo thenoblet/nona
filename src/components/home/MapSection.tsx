@@ -1,4 +1,5 @@
 import type { SiteContent } from "@/lib/content/schema";
+import { googleMapsBrowserKey } from "@/lib/env";
 import { Reveal } from "@/components/ui/Reveal";
 import { SectionHeading } from "@/components/ui/Typography";
 import { CopyButton } from "./CopyButton";
@@ -66,6 +67,7 @@ function Place({ place }: { place: Place }) {
   );
 }
 
+/** Renders inside /home's request-time part, so the Google Maps key is read when the page is served. */
 export function MapSection({
   venues,
   landmarks,
@@ -96,6 +98,7 @@ export function MapSection({
                 places={pinsFor(places)}
                 note={{ eyebrow: "Landmarks", text: landmarks.join(" · ") }}
                 label="Satellite map of Tepa showing the church and the reception venue"
+                apiKey={googleMapsBrowserKey()}
               />
             </div>
           </Reveal>
