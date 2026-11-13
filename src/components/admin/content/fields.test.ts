@@ -55,7 +55,6 @@ describe("the celebration editor's place", () => {
     expect(legends).toEqual([
       ["church", "Church"],
       ["reception", "Reception"],
-      ["hotel", "Hotel"],
     ]);
   });
 });

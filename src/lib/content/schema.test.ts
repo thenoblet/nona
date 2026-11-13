@@ -94,12 +94,12 @@ describe("celebration venues", () => {
     ]);
   });
 
-  it("keep the venue a celebration names, and refuse one that holds no celebration", () => {
+  it("keep the venue a celebration names, and refuse a place that isn't one of the venues", () => {
     const value = celebrations();
     value[0].venue = "reception";
     expect(sectionSchemas.celebrations.parse(value)[0].venue).toBe("reception");
 
-    (value[0] as { venue: string }).venue = "hotel";
+    (value[0] as { venue: string }).venue = "garden";
     expect(problems("celebrations", value)).toEqual(["celebrations[0].venue: Choose the church or the reception venue"]);
   });
 
@@ -249,12 +249,16 @@ describe("the order of the day", () => {
       { time: "11:00 am", title: "White wedding", venue: "church", day: "sat" },
       { time: "2:30 PM", title: "Breakfast", venue: "hotel", day: "sat" },
       { time: "Afternoon", title: "Reception dinner", venue: "reception", day: "sat" },
+      { time: "6 pm", title: "Photos at the church", venue: "church", day: "sat" },
     ];
     expect(sectionSchemas.schedule.parse(saved)).toEqual([
       { celebration: "ceremony", title: "Guests arrive", time: "09:30" },
       { celebration: "ceremony", title: "White wedding", time: "11:00" },
-      { celebration: "ceremony", title: "Breakfast", time: "14:30", place: "[Guest hotel], Tepa" },
+      // The guest hotel is no longer a venue, so its item has no place.
+      { celebration: "ceremony", title: "Breakfast", time: "14:30" },
       { celebration: "reception", title: "Reception dinner", note: "Afternoon" },
+      // At a venue other than its celebration's, an item keeps that venue's name as its place.
+      { celebration: "reception", title: "Photos at the church", time: "18:00", place: "Assemblies of God, Victory Worship Centre, Tepa" },
     ]);
   });
 });

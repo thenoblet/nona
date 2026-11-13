@@ -115,6 +115,19 @@ describe("readSiteContent", () => {
     expect(console.error).not.toHaveBeenCalled();
   });
 
+  it("reads a saved venues section that still has the hotel without it, the church and reception as saved", async () => {
+    // As production saved them while Venues had a Hotel group: the couple's own church and
+    // reception, which the built-in text doesn't have, beside the hotel's placeholders.
+    const church = { ...contentDefaults.venues.church, name: "Victory Worship Centre, as saved" };
+    const reception = { ...contentDefaults.venues.reception, gps: "AS-1205-2026" };
+    const hotel = { name: "[Guest hotel]", address: "[Street address], Tepa", gps: "[AX-0000-0000]", mapsUrl: "#map" };
+    await sql`insert into site_content (key, version, value, saved_by) values ('venues', 2, ${sql.json({ church, reception, hotel })}, 'test')`;
+    const { venues } = await readSiteContent();
+    expect(venues).toEqual({ church, reception });
+    expect(await readSection("venues")).toEqual({ value: { church, reception }, version: 2 });
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
   it("falls back to the default for a stored row with a bad shape", async () => {
     await sql`insert into site_content (key, version, value, saved_by) values ('faq', 1, ${sql.json({ nope: 1 })}, 'test')`;
     const content = await readSiteContent();

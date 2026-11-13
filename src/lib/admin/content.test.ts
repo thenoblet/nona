@@ -83,8 +83,8 @@ describe("parseIssues", () => {
       { path: "", message: "Keep the white wedding and the reception, each once" },
       { path: null, message: "nancy@example.com saved a newer version at 21:14 on 30 Oct. Reload to see it." },
     ]);
-    expect(parseIssues("venues", ["venues.hotel.coords.lat: Use a number like 7.019267"])).toEqual([
-      { path: "hotel.coords.lat", message: "Use a number like 7.019267" },
+    expect(parseIssues("venues", ["venues.reception.coords.lat: Use a number like 7.019267"])).toEqual([
+      { path: "reception.coords.lat", message: "Use a number like 7.019267" },
     ]);
     expect(parseIssues("landmarks", ["landmarks[1]: Cannot be empty"])).toEqual([{ path: "1", message: "Cannot be empty" }]);
   });

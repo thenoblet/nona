@@ -53,12 +53,6 @@ export const venues = {
     mapsUrl: "https://www.google.com/maps/dir/?api=1&destination=7.018556,-2.145472",
     note: "About a minute's walk from the church",
   },
-  hotel: {
-    name: "[Guest hotel]",
-    address: "[Street address], Tepa",
-    gps: "[AS-0000-0000]",
-    mapsUrl: "#map",
-  },
 } as const;
 
 /** Landmarks guests can ask for on the way. Shown as a note over the map, not as pins. */
