@@ -1,10 +1,103 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { ACCESS_HEADER, accessToken } from "./cloudflare-access";
+import { blockGoogleMaps } from "./google-maps";
 
 test("the home page shows content saved in the database", async ({ page }) => {
+  await blockGoogleMaps(page);
   await page.goto("/home?mode=before");
   // The page streams in: until the swap, a hidden copy of the question sits beside the visible one.
   await expect(page.getByText("E2E unique question").filter({ visible: true })).toBeVisible();
+});
+
+const CHURCH_IN_GOOGLE_MAPS = "https://www.google.com/maps/search/?api=1&query=7.019267,-2.145361";
+
+/** The visible venue map's frame: the page streams in, and until the swap a hidden copy sits beside the visible one. */
+function mapFrame(page: Page) {
+  return page
+    .locator("#map")
+    .filter({ visible: true })
+    .getByRole("region", { name: "Satellite map of Tepa showing the church and the reception venue" });
+}
+
+test.describe("the venue map without a Google Maps key", () => {
+  test("shows Google's keyless satellite embed of the church, with a button to Google Maps, and never loads Google's script", async ({
+    page,
+  }) => {
+    await blockGoogleMaps(page);
+    const fromGoogle: string[] = [];
+    page.on("request", (request) => {
+      const { hostname } = new URL(request.url());
+      if (/google|gstatic/.test(hostname)) fromGoogle.push(hostname);
+    });
+    await page.goto("/home?mode=before");
+    // Nothing from Google until the map comes near the screen.
+    await page.waitForLoadState("networkidle");
+    expect(fromGoogle).toEqual([]);
+
+    const frame = mapFrame(page);
+    await frame.scrollIntoViewIfNeeded();
+    const embed = frame.locator("iframe");
+    await expect(embed).toHaveAttribute("title", "Satellite map of the church in Tepa");
+    const src = new URL((await embed.getAttribute("src")) ?? "");
+    expect(src.origin + src.pathname).toBe("https://maps.google.com/maps");
+    expect(src.searchParams.get("q")).toBe("7.019267,-2.145361");
+    expect(src.searchParams.get("t")).toBe("k");
+    expect(src.searchParams.get("output")).toBe("embed");
+    await expect(embed).toHaveAttribute("loading", "lazy");
+    // On a computer the embed stays interactive.
+    await expect(embed).not.toHaveAttribute("inert");
+
+    // A computer gets a button to Google Maps, and no link over the whole map.
+    const button = frame.getByRole("link", { name: "Open in Google Maps", exact: true });
+    await expect(button).toBeVisible();
+    await expect(button).toHaveAttribute("href", CHURCH_IN_GOOGLE_MAPS);
+    await expect(button).toHaveAttribute("target", "_blank");
+    await expect(button).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(frame.getByRole("link", { name: "Open the church in Google Maps" })).toHaveCount(0);
+
+    // Only the embed was asked for: never the Maps JavaScript API, which needs the key.
+    await expect.poll(() => fromGoogle).toContain("maps.google.com");
+    expect(fromGoogle).not.toContain("maps.googleapis.com");
+  });
+
+  test("on a phone is one link to Google Maps over the whole frame, so a tap opens the app rather than panning the map", async ({
+    browser,
+    baseURL,
+  }) => {
+    const phone = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await blockGoogleMaps(phone);
+    const page = await phone.newPage();
+    try {
+      await page.goto("/home?mode=before");
+      const frame = mapFrame(page);
+      await frame.scrollIntoViewIfNeeded();
+
+      const overlay = frame.getByRole("link", { name: "Open the church in Google Maps", exact: true });
+      await expect(overlay).toBeVisible();
+      await expect(overlay).toHaveAttribute("href", CHURCH_IN_GOOGLE_MAPS);
+      await expect(overlay).toHaveAttribute("target", "_blank");
+      await expect(overlay).toHaveAttribute("rel", "noopener noreferrer");
+      await expect(overlay.getByText("Tap to open Google Maps")).toBeVisible();
+      // It covers the frame, and a tap in the middle lands on it, not on the map beneath. Measured
+      // in one go, as the section can still be sliding in.
+      const cover = await frame.evaluate((frameElement) => {
+        const outer = frameElement.getBoundingClientRect();
+        const inner = frameElement.querySelector('a[aria-label="Open the church in Google Maps"]')?.getBoundingClientRect();
+        const centre = document.elementFromPoint(outer.left + outer.width / 2, outer.top + outer.height / 2);
+        return {
+          gaps: inner ? [inner.top - outer.top, outer.right - inner.right, outer.bottom - inner.bottom, inner.left - outer.left].map((gap) => Math.abs(Math.round(gap))) : null,
+          centre: centre?.closest("a")?.getAttribute("aria-label"),
+        };
+      });
+      expect(cover).toEqual({ gaps: [0, 0, 0, 0], centre: "Open the church in Google Maps" });
+      await expect(frame.locator("iframe")).toHaveAttribute("inert");
+      // No separate button on a phone, and the landmarks still show over the map.
+      await expect(frame.getByRole("link", { name: "Open in Google Maps", exact: true })).toHaveCount(0);
+      await expect(page.locator("#map").filter({ visible: true }).getByText("Landmarks", { exact: true })).toBeVisible();
+    } finally {
+      await phone.close();
+    }
+  });
 });
 
 const BUILT_IN_RECEPTION_GPS = "AX-0084-3317";
@@ -17,6 +110,7 @@ async function signedIn(browser: Browser, baseURL: string | undefined) {
     extraHTTPHeaders: { [ACCESS_HEADER]: await accessToken() },
     permissions: ["clipboard-read", "clipboard-write"],
   });
+  await blockGoogleMaps(context);
   return { page: await context.newPage(), done: () => context.close() };
 }
 
