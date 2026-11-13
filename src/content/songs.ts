@@ -30,13 +30,13 @@ export const songs: Song[] = [
     ],
   },
   {
-    id: "i-wanna-love-you",
-    title: "I Wanna Love You",
-    artist: "Sarkodie feat. Harmonize",
-    seconds: 174,
+    id: "be-my-woman",
+    title: "Be My Woman",
+    artist: "M.anifest feat. Mi Casa",
+    seconds: 225,
     sources: [
-      { src: "/audio/i-wanna-love-you.webm", type: 'audio/webm; codecs="opus"' },
-      { src: "/audio/i-wanna-love-you.mp3", type: "audio/mpeg" },
+      { src: "/audio/be-my-woman.webm", type: 'audio/webm; codecs="opus"' },
+      { src: "/audio/be-my-woman.mp3", type: "audio/mpeg" },
     ],
   },
   {
@@ -57,6 +57,16 @@ export const songs: Song[] = [
     sources: [
       { src: "/audio/hang-my-boots.webm", type: 'audio/webm; codecs="opus"' },
       { src: "/audio/hang-my-boots.mp3", type: "audio/mpeg" },
+    ],
+  },
+  {
+    id: "i-wanna-love-you",
+    title: "I Wanna Love You",
+    artist: "Sarkodie feat. Harmonize",
+    seconds: 174,
+    sources: [
+      { src: "/audio/i-wanna-love-you.webm", type: 'audio/webm; codecs="opus"' },
+      { src: "/audio/i-wanna-love-you.mp3", type: "audio/mpeg" },
     ],
   },
 ];
