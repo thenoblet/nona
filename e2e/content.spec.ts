@@ -189,10 +189,11 @@ test.describe("the places to stay in the admin", () => {
       await expect(page.getByText("Saved. Guests see it now.")).toBeVisible();
 
       await page.goto("/stay");
-      const card = page.locator("article").filter({ hasText: "E2E Lodge" });
+      // Visible only: until the streamed section swaps in, a hidden copy of it can sit beside it.
+      const card = page.locator("article").filter({ hasText: "E2E Lodge" }).filter({ visible: true });
       await expect(card).toContainText("About 5 km from the church");
       await expect(card.getByRole("link", { name: "Call E2E Lodge on 020 123 4567" })).toHaveAttribute("href", "tel:+233201234567");
-      await expect(page.locator("article").filter({ hasText: "NewLove Guest House" }).first()).toBeVisible();
+      await expect(page.locator("article").filter({ hasText: "NewLove Guest House" }).filter({ visible: true })).toBeVisible();
 
       // The home page's Where to stay card leads here.
       await page.goto("/home?mode=before");
