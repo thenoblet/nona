@@ -5,7 +5,7 @@ import { CELEBRATION_VENUES, EVENT_LABELS, GUEST_EVENT_IDS, VENUE_KEYS, VENUE_LA
 import { endsNextDay } from "@/lib/content/times";
 import { getAt } from "./editing";
 
-// How each section's form is drawn. One editor renders all ten from these, so a section's
+// How each section's form is drawn. One editor renders all of them from these, so a section's
 // fields are listed here rather than in a form of its own.
 
 type Item = unknown;
@@ -235,8 +235,34 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
       { path: ["title"], label: "Title", kind: "text", span: 4 },
       { path: ["text"], label: "Text", kind: "textarea", span: 6 },
       { path: ["link"], label: "Link text", kind: "text", span: 2 },
-      { path: ["href"], label: "Link", kind: "link", span: 4, placeholder: OPTIONAL, hint: LINK_HINT },
+      {
+        path: ["href"],
+        label: "Link",
+        kind: "link",
+        span: 4,
+        placeholder: OPTIONAL,
+        hint: "An https:// link, a page of the site like /stay, or #map for the map on the page.",
+      },
     ],
+  },
+  stays: {
+    layout: "list",
+    legend: named("name", "Place"),
+    fields: [
+      { path: ["name"], label: "Name", kind: "text", span: 4 },
+      { path: ["tag"], label: "Label", kind: "text", span: 2, placeholder: OPTIONAL, hint: "Over the name, e.g. “Closest to the church”." },
+      { path: ["distance"], label: "How far", kind: "text", span: 3, placeholder: "About 1 km from the church" },
+      { path: ["price"], label: "Price", kind: "text", span: 3, placeholder: OPTIONAL },
+      { path: ["phone"], label: "Phone", kind: "text", span: 2, placeholder: OPTIONAL, hint: "Guests tap Call to ring it." },
+      { path: ["mapsUrl"], label: "Google Maps link", kind: "link", span: 4, placeholder: OPTIONAL, hint: "Opens when guests tap Directions." },
+      { path: ["note"], label: "Note", kind: "text", span: 6, placeholder: OPTIONAL, hint: "Under the buttons, e.g. “Book through the main house”." },
+    ],
+    editable: {
+      noun: "place",
+      addLabel: "Add a place to stay",
+      newItem: () => ({ name: "", tag: "", distance: "", price: "", phone: "", mapsUrl: "", note: "" }),
+    },
+    hint: "Guests see these on the Where to stay page, in this order: put the closest first.",
   },
   party: {
     layout: "list",

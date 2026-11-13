@@ -68,6 +68,16 @@ describe("prepareSection", () => {
     });
   });
 
+  it("leaves out a place to stay's empty label, price, phone, map link and note, and trims the rest", () => {
+    const prepared = prepareSection("stays", [
+      { name: " Guest house ", distance: "About 2 km", tag: " ", price: "", phone: " 024 459 0772 ", mapsUrl: " https://maps.app.goo.gl/abc ", note: "" },
+    ]);
+    expect(prepared).toEqual([
+      { name: " Guest house ", distance: "About 2 km", phone: "024 459 0772", mapsUrl: "https://maps.app.goo.gl/abc" },
+    ]);
+    expect(sectionSchemas.stays.safeParse(prepared).success).toBe(true);
+  });
+
   it("reads an order of the day item's typed time and leaves out its empty time, note and place", () => {
     const prepared = prepareSection("schedule", [
       { celebration: "ceremony", time: " 9:30 ", title: "Guests arrive", note: " Please be seated early ", place: "" },

@@ -103,7 +103,8 @@ export function Travel({ travel }: { travel: TravelItem[] }) {
         <Reveal>
           <SectionHeading eyebrow="For our travelling guests" title="Travel & stay" />
         </Reveal>
-        <Reveal>
+        {/* Two cards sit closer together than three, rather than stretching across the page. */}
+        <Reveal className={travel.length < 3 ? "mx-auto w-full lg:max-w-[820px]" : ""}>
           <SwipeRow labels={travel.map((item) => item.title)}>
             {travel.map((item, index) => (
               <article
@@ -113,8 +114,9 @@ export function Travel({ travel }: { travel: TravelItem[] }) {
               >
                 <Halo icon={item.icon} size="xl" />
                 <h3 className="mt-1 mb-0 font-serif text-[32px] font-normal italic">{item.title}</h3>
-                <p className="m-0 font-serif text-xl leading-relaxed text-mocha">{item.text}</p>
-                <TextLink href="#travel" className="mt-auto">
+                {/* A line break the couple type (From Kumasi, then From Accra) shows as one. */}
+                <p className="m-0 font-serif text-xl leading-relaxed whitespace-pre-line text-mocha">{item.text}</p>
+                <TextLink href={item.href ?? "#travel"} className="mt-auto">
                   {item.link}
                 </TextLink>
               </article>

@@ -267,3 +267,41 @@ test.describe("the order of the day in the admin", () => {
     }
   });
 });
+
+test.describe("the places to stay in the admin", () => {
+  test("a place added in the admin shows on the Where to stay page, with a Call button that dials it", async ({ browser, baseURL }) => {
+    const { page, done } = await signedIn(browser, baseURL);
+    try {
+      await page.goto("/admin/content/stays");
+      await page.waitForLoadState("networkidle");
+      await page.getByRole("button", { name: "Add a place to stay" }).click();
+      const added = page.getByRole("group", { name: "Place 4" });
+      await added.getByLabel("How far", { exact: true }).fill("About 5 km from the church");
+      await added.getByLabel("Phone", { exact: true }).fill("020 123 4567");
+      // Last: once it has a name, the place is named by it rather than "Place 4".
+      await added.getByLabel("Name", { exact: true }).fill("E2E Lodge");
+      await page.getByRole("button", { name: "Save where to stay" }).click();
+      await expect(page.getByText("Saved. Guests see it now.")).toBeVisible();
+
+      await page.goto("/stay");
+      // Visible only: until the streamed section swaps in, a hidden copy of it can sit beside it.
+      const card = page.locator("article").filter({ hasText: "E2E Lodge" }).filter({ visible: true });
+      await expect(card).toContainText("About 5 km from the church");
+      await expect(card.getByRole("link", { name: "Call E2E Lodge on 020 123 4567" })).toHaveAttribute("href", "tel:+233201234567");
+      // Two visible cards name it (its own, and a neighbour's directions), so the first of them.
+      await expect(page.locator("article").filter({ hasText: "NewLove Guest House" }).filter({ visible: true }).first()).toBeVisible();
+
+      // The home page's Where to stay card leads here.
+      await page.goto("/home?mode=before");
+      await page.getByRole("link", { name: "See places to stay" }).click();
+      await expect(page).toHaveURL(/\/stay$/);
+    } finally {
+      await page.goto("/admin/content/stays");
+      await page.waitForLoadState("networkidle");
+      await page.getByRole("button", { name: "Remove E2E Lodge" }).click();
+      await page.getByRole("button", { name: "Save where to stay" }).click();
+      await expect(page.getByText("Saved. Guests see it now.")).toBeVisible();
+      await done();
+    }
+  });
+});

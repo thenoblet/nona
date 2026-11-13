@@ -168,6 +168,12 @@ export function prepareSection(
       return prepareSchedule(value);
     case "travel":
       return mapItems(value, (item) => (isObject(item) ? withOptional(item, "href") : item));
+    case "stays":
+      return mapItems(value, (item) =>
+        isObject(item)
+          ? ["tag", "price", "phone", "mapsUrl", "note"].reduce((tidied, key) => withOptional(tidied, key), item)
+          : item,
+      );
     case "party":
       return prepareParty(value, context.portraitIds ?? []);
     case "liveStream":

@@ -31,6 +31,7 @@ describe("contentSections", () => {
       ["landmarks", "Landmarks"],
       ["faq", "Questions"],
       ["travel", "Travel & stay"],
+      ["stays", "Where to stay"],
       ["party", "Wedding party"],
       ["story", "Our story"],
       ["live-stream", "Live stream"],
