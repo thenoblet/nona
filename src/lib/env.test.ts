@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dbConfig, guestCookieSecret, isDbConfigured, mediaBaseUrl, storageConfig } from "./env";
+import { dbConfig, googleMapsBrowserKey, guestCookieSecret, isDbConfigured, mediaBaseUrl, storageConfig } from "./env";
 
 const full = {
   POSTGRES_HOST: "localhost",
@@ -146,6 +146,19 @@ describe("guestCookieSecret", () => {
   it("fails closed without one anywhere else, NODE_ENV unset or unexpected included", () => {
     for (const NODE_ENV of [undefined, "", "staging", "Production", "dev"]) {
       expect(() => guestCookieSecret({ NODE_ENV })).toThrow("Missing guest cookie setting: GUEST_COOKIE_SECRET");
+    }
+  });
+});
+
+describe("googleMapsBrowserKey", () => {
+  it("reads GOOGLE_MAPS_BROWSER_KEY, without stray spaces", () => {
+    expect(googleMapsBrowserKey({ GOOGLE_MAPS_BROWSER_KEY: "browser-key" })).toBe("browser-key");
+    expect(googleMapsBrowserKey({ GOOGLE_MAPS_BROWSER_KEY: " browser-key\n" })).toBe("browser-key");
+  });
+
+  it("has none when it is unset, empty or blank", () => {
+    for (const GOOGLE_MAPS_BROWSER_KEY of [undefined, "", "   "]) {
+      expect(googleMapsBrowserKey({ GOOGLE_MAPS_BROWSER_KEY })).toBeUndefined();
     }
   });
 });
