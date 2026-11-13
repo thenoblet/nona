@@ -21,6 +21,7 @@ import lilian from "../../public/images/party/lilian.jpg";
 import james from "../../public/images/party/james.jpg";
 import dennis from "../../public/images/party/dennis.jpg";
 import afrifa from "../../public/images/party/afrifa.jpg";
+import priscilla from "../../public/images/party/priscilla.jpg";
 import homeHero from "../../public/images/home/hero.jpg";
 
 export type Photo = { src: StaticImageData; alt: string; position?: string };
@@ -100,6 +101,7 @@ export const partyPhotos: Partial<Record<string, Photo>> = {
   james: { src: james, alt: "James, best man", position: "center 30%" },
   dennis: { src: dennis, alt: "Dennis, groomsman", position: "center 30%" },
   afrifa: { src: afrifa, alt: "Afrifa, groomsman", position: "center 30%" },
+  priscilla: { src: priscilla, alt: "Priscilla, bridesmaid", position: "center 30%" },
 };
 
 /*
