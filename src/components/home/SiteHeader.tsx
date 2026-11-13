@@ -11,14 +11,12 @@ type NavItem = {
   label: string;
   /** The words in the phone menu, where there is room for more than on a laptop. */
   menuLabel?: string;
-  /** A small "New" beside it in the phone menu. */
-  isNew?: boolean;
 };
 
 /** The order of the day: "Programme" fits the laptop's row of links, the phone menu says it in full. */
-const programme: NavItem = { href: "/programme", label: "Programme", menuLabel: "Order of the day", isNew: true };
+const programme: NavItem = { href: "/programme", label: "Programme", menuLabel: "Order of the day" };
 /** The places to stay, on their own page. */
-const stay: NavItem = { href: "/stay", label: "Where to stay", isNew: true };
+const stay: NavItem = { href: "/stay", label: "Where to stay" };
 
 const nav: Record<Mode, { links: NavItem[]; cta: NavItem }> = {
   before: {
@@ -175,12 +173,9 @@ export function SiteHeader({ mode, current }: { mode: Mode; current?: string }) 
                     href={link.href}
                     onClick={() => setOpen(false)}
                     aria-current={link.href === current ? "page" : undefined}
-                    className="flex min-h-13 items-center justify-between gap-4 font-serif text-[26px] italic no-underline transition-colors hover:text-ember-ink"
+                    className="flex min-h-13 items-center font-serif text-[26px] italic no-underline transition-colors hover:text-ember-ink"
                   >
                     {link.menuLabel ?? link.label}
-                    {link.isNew ? (
-                      <span className="font-sans text-[10px] not-italic uppercase tracking-[0.22em] text-ember-ink">New</span>
-                    ) : null}
                   </a>
                 </li>
               ))}
