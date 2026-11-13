@@ -349,3 +349,53 @@ describe("RSVP settings", () => {
     });
   });
 });
+
+describe("travel cards", () => {
+  const card = () => structuredClone(contentDefaults.travel[0]);
+
+  it("link to another page of the site, a web page or a place on the page", () => {
+    for (const href of ["/stay", "/programme#reception", "https://maps.app.goo.gl/abc", "#map"]) {
+      expect(problems("travel", [{ ...card(), href }])).toEqual([]);
+    }
+  });
+
+  it("refuse a link that is none of those", () => {
+    expect(problems("travel", [{ ...card(), href: "stay" }])).toEqual([
+      "travel[0].href: Use an https:// link, a page like /stay, or an in-page anchor starting with #",
+    ]);
+    expect(problems("travel", [{ ...card(), href: "http://example.com" }])).toEqual([
+      "travel[0].href: Use an https:// link, a page like /stay, or an in-page anchor starting with #",
+    ]);
+  });
+});
+
+describe("places to stay", () => {
+  const place = () => structuredClone(contentDefaults.stays[0]);
+
+  it("start with the couple's three places, closest first", () => {
+    expect(contentDefaults.stays.map((stay) => [stay.name, stay.phone])).toEqual([
+      ["NewLove Guest House", "024 459 0772"],
+      ["NewLove Guest House, Annex", "024 459 0772"],
+      ["Jesus is Evergreen Hotel", "055 756 8088"],
+    ]);
+  });
+
+  it("need a name and how far it is; the rest is optional", () => {
+    expect(problems("stays", [{ name: "Guest house", distance: "About 2 km from the church" }])).toEqual([]);
+    expect(problems("stays", [{ name: "", distance: "" }])).toEqual(["stays[0].name: Cannot be empty", "stays[0].distance: Cannot be empty"]);
+  });
+
+  it("take a phone number as guests dial it", () => {
+    for (const phone of ["024 459 0772", "0244590772", "+233 24 459 0772"]) {
+      expect(problems("stays", [{ ...place(), phone }])).toEqual([]);
+    }
+    for (const phone of ["024-459-0772", "call 024 459 0772", "0244"]) {
+      expect(problems("stays", [{ ...place(), phone }])).toEqual(["stays[0].phone: Use a phone number like 024 459 0772"]);
+    }
+  });
+
+  it("take only an https:// map link", () => {
+    expect(problems("stays", [{ ...place(), mapsUrl: "#map" }])).toEqual(["stays[0].mapsUrl: Use an https:// link"]);
+    expect(problems("stays", [{ ...place(), mapsUrl: "https://maps.app.goo.gl/a b" }])).toEqual(["stays[0].mapsUrl: Remove the space from the link"]);
+  });
+});

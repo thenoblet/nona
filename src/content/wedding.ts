@@ -152,20 +152,48 @@ export const travel = [
   {
     icon: "bed",
     title: "Where to stay",
-    text: "[Hotel name] is holding rooms for our guests until [date]. Quote [RATE CODE] when booking.",
-    link: "Book a room",
+    text: "Three places close to the church, from GH₵300 a night. Call ahead to book your room.",
+    link: "See places to stay",
+    href: "/stay",
   },
   {
     icon: "pin",
     title: "Getting to Tepa",
-    text: "Coming by road? [Directions to Tepa, how long the drive takes and where to park.]",
-    link: "Travel details",
+    text: "From Kumasi: about 2 hours by road, through Mankranso.\nFrom Accra: about 6 to 7 hours. Drive, or take a bus to Kumasi and a car on to Tepa.",
+    link: "Get directions",
+    href: "https://www.google.com/maps/dir/?api=1&destination=7.019267,-2.145361",
+  },
+] as const;
+
+/**
+ * Where guests can stay, closest to the church first, on the Where to stay page. Distances are by
+ * road from the church, worked out from the couple's map links (Nov 2026).
+ */
+export const stays = [
+  {
+    name: "NewLove Guest House",
+    tag: "Closest to the church",
+    distance: "About 1 km from the church, a few minutes' drive",
+    price: "GH₵300 to 500 a night",
+    phone: "024 459 0772",
+    mapsUrl: "https://maps.app.goo.gl/UjzL2yDffyFWJ6R5A",
   },
   {
-    icon: "heart",
-    title: "While you're here",
-    text: "[Your favourite places to eat and things to see around Tepa]: our personal guide for guests staying a few extra days.",
-    link: "Our local guide",
+    name: "NewLove Guest House, Annex",
+    tag: "A short walk from the main house",
+    distance: "About 1 km from the church, a few minutes' drive",
+    price: "GH₵300 to 500 a night",
+    phone: "024 459 0772",
+    mapsUrl: "https://maps.app.goo.gl/oppnGBDhRX1VJLTz5",
+    note: "Book through the main house",
+  },
+  {
+    name: "Jesus is Evergreen Hotel",
+    tag: "A hotel, a short drive away",
+    distance: "About 3 km from the church, under 10 minutes' drive",
+    price: "GH₵300 to 500 a night",
+    phone: "055 756 8088",
+    mapsUrl: "https://maps.app.goo.gl/brvn8DnUFzVjFfPX9",
   },
 ] as const;
 

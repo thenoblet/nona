@@ -17,6 +17,8 @@ type NavItem = {
 
 /** The order of the day: "Programme" fits the laptop's row of links, the phone menu says it in full. */
 const programme: NavItem = { href: "/programme", label: "Programme", menuLabel: "Order of the day", isNew: true };
+/** The places to stay, on their own page. */
+const stay: NavItem = { href: "/stay", label: "Where to stay", isNew: true };
 
 const nav: Record<Mode, { links: NavItem[]; cta: NavItem }> = {
   before: {
@@ -25,7 +27,7 @@ const nav: Record<Mode, { links: NavItem[]; cta: NavItem }> = {
       { href: "#celebrations", label: "Celebrations" },
       programme,
       { href: "#map", label: "Map" },
-      { href: "#travel", label: "Travel" },
+      stay,
       { href: "#album", label: "Album" },
       { href: "/wishes", label: "Wishes" },
     ],

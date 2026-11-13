@@ -156,6 +156,7 @@ const paths = {
     </>
   ),
   arrowUp: <path d="M12 19V5M6 11l6-6 6 6" />,
+  directions: <path d="M3.5 11l17-7.5-7.5 17-2-7.5z" />,
 } as const;
 
 export type IconName = keyof typeof paths;

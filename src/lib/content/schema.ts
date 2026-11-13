@@ -27,6 +27,14 @@ const link = zod
   .string()
   .regex(/^\S*$/, noSpace)
   .regex(/^(https:\/\/\S+|#\S*)$/, "Use an https:// link or an in-page anchor starting with #");
+/** A card's link may also open another page of the site, such as /stay. */
+const siteLink = zod
+  .string()
+  .regex(/^\S*$/, noSpace)
+  .regex(/^(https:\/\/\S+|\/[a-z0-9-]+(#\S*)?|#\S*)$/, "Use an https:// link, a page like /stay, or an in-page anchor starting with #");
+const httpsLink = zod.string().regex(/^\S*$/, noSpace).regex(/^https:\/\/\S+$/, "Use an https:// link");
+/** A phone number as guests dial it in Ghana: digits and spaces, with an optional + for another country. */
+const phone = line.regex(/^\+?[0-9 ]{9,17}$/, "Use a phone number like 024 459 0772");
 const time = zod.string().regex(TIME_PATTERN, "Use a 24-hour time like 14:30");
 function isRealDate(value: string): boolean {
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -237,7 +245,21 @@ const travelItem = zod.object({
   title: line,
   text,
   link: line,
-  href: link.optional(),
+  href: siteLink.optional(),
+});
+
+/** A place guests can stay, on the Where to stay page. */
+const stay = zod.object({
+  name: line,
+  /** A short label over the name, such as "Closest to the church". */
+  tag: line.optional(),
+  distance: line,
+  price: line.optional(),
+  phone: phone.optional(),
+  /** The couple's Google Maps link to the place. */
+  mapsUrl: httpsLink.optional(),
+  /** A line under the buttons, such as "Book through the main house". */
+  note: line.optional(),
 });
 
 
@@ -271,6 +293,7 @@ export const sectionSchemas = {
   landmarks: zod.array(line),
   faq: zod.array(faqItem),
   travel: zod.array(travelItem),
+  stays: zod.array(stay),
   // Photos are found by id, so two people sharing one would share a portrait.
   party: zod.array(partyMember).superRefine((members, context) => {
     const seen = new Set<string>();
@@ -307,6 +330,7 @@ export type Venue = zod.infer<typeof venue>;
 export type FaqItem = zod.infer<typeof faqItem>;
 export type PartyMember = zod.infer<typeof partyMember>;
 export type TravelItem = zod.infer<typeof travelItem>;
+export type Stay = zod.infer<typeof stay>;
 export type Story = zod.infer<typeof story>;
 export type LiveStream = SiteContent["liveStream"];
 export type RsvpSettings = SiteContent["rsvp"];
