@@ -39,4 +39,24 @@ export const songs: Song[] = [
       { src: "/audio/i-wanna-love-you.mp3", type: "audio/mpeg" },
     ],
   },
+  {
+    id: "me-ne-woa",
+    title: "Me Ne Woa",
+    artist: "M.anifest feat. King Promise",
+    seconds: 222,
+    sources: [
+      { src: "/audio/me-ne-woa.webm", type: 'audio/webm; codecs="opus"' },
+      { src: "/audio/me-ne-woa.mp3", type: "audio/mpeg" },
+    ],
+  },
+  {
+    id: "hang-my-boots",
+    title: "Hang My Boots",
+    artist: "M.anifest feat. King Promise",
+    seconds: 187,
+    sources: [
+      { src: "/audio/hang-my-boots.webm", type: 'audio/webm; codecs="opus"' },
+      { src: "/audio/hang-my-boots.mp3", type: "audio/mpeg" },
+    ],
+  },
 ];
