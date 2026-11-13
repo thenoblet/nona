@@ -28,8 +28,12 @@ export const jost = localFont({
   ],
 });
 
+/**
+ * The script, for the names and headings: held back (up to three seconds) until it arrives rather
+ * than shown first in a fallback serif, whose different size made the hero jump when it swapped.
+ */
 export const pinyon = localFont({
   variable: "--font-pinyon",
-  display: "swap",
+  display: "block",
   src: [{ path: "../fonts/pinyon-script-latin-400-normal.woff2", weight: "400", style: "normal" }],
 });

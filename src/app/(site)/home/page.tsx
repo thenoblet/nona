@@ -120,11 +120,15 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
 }
 
 /** Shown for a moment while the server works out which version to send. */
+/**
+ * While the page is read: the header's bar and the hero's cocoa, at their own sizes, so the page
+ * arrives into place rather than a centred monogram giving way to it. Nothing in it disappears.
+ */
 function HomeLoading() {
   return (
-    <div className="flex min-h-[70dvh] flex-col items-center justify-center gap-4 bg-cocoa text-white">
-      <span className="font-script text-6xl text-ember">{couple.monogram}</span>
-      <span className="text-[11px] uppercase tracking-[0.3em] text-mist">{couple.tag}</span>
+    <div role="status" aria-label={`Loading ${couple.tag}`}>
+      <div className="h-[67px] border-b border-ember/35 bg-cocoa lg:h-[79px]" />
+      <div className="min-h-[calc(100svh-67px)] bg-cocoa lg:min-h-[calc(100svh-79px)]" />
     </div>
   );
 }

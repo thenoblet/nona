@@ -13,8 +13,8 @@ const delay = (ms: number): CSSProperties => ({ animationDelay: `${ms}ms` });
 function Names({ className = "" }: { className?: string }) {
   return (
     <h1
-      className={`m-0 animate-rise font-script text-[64px] leading-[1.05] font-normal text-white sm:text-[96px] lg:text-[140px] ${className}`}
-      style={{ ...delay(300), animationDuration: "1600ms" }}
+      className={`m-0 animate-settle font-script text-[64px] leading-[1.05] font-normal text-white sm:text-[96px] lg:text-[140px] ${className}`}
+      style={{ ...delay(100), animationDuration: "1000ms" }}
     >
       {couple.groom} <span className="text-ember">&amp;</span> {couple.bride}
     </h1>
@@ -26,13 +26,14 @@ const inner = "relative mx-auto flex max-w-[900px] flex-col items-center";
 
 /**
  * The couple's photo behind the names (the admin's "Home hero": the pre-wedding shoot until they
- * choose another), under the cards' cocoa wash so the names stay clear.
+ * choose another), under the cards' cocoa wash so the names stay clear. The built-in photo shows
+ * blurred from the first paint and sharpens as it loads, rather than popping in over the cocoa.
  */
 function HeroBackdrop({ photo }: { photo: SlotPhoto | null }) {
   if (!photo) return null;
   return (
     <div aria-hidden className="absolute inset-0 overflow-hidden">
-      <SitePhoto photo={photo} fill priority decorative sizes="100vw" className="object-cover" />
+      <SitePhoto photo={photo} fill priority blur decorative sizes="100vw" className="object-cover" />
       <div
         className="absolute inset-0"
         style={{ backgroundImage: "linear-gradient(180deg, rgb(61 41 39 / 0.8) 0%, rgb(61 41 39 / 0.7) 45%, rgb(61 41 39 / 0.88) 100%)" }}
@@ -47,22 +48,22 @@ export function HeroBefore({ photo }: { photo: SlotPhoto | null }) {
     <section id="top" className={`${wrap} pt-16 pb-20 sm:pt-22 sm:pb-26`}>
       <HeroBackdrop photo={photo} />
       <div className={`${inner} gap-6 sm:gap-7`}>
-        <Eyebrow tone="ember" className="animate-rise" >Together with their families</Eyebrow>
+        <Eyebrow tone="ember" className="animate-settle">Together with their families</Eyebrow>
         <Names />
         <Ornament draw dot />
-        <p className="m-0 max-w-[620px] animate-rise font-serif text-2xl leading-snug text-linen italic sm:text-[28px]" style={delay(700)}>
+        <p className="m-0 max-w-[620px] animate-settle font-serif text-2xl leading-snug text-linen italic sm:text-[28px]" style={delay(250)}>
           request the pleasure of your company as they begin their forever
         </p>
-        <div className="flex animate-rise flex-col gap-1.5" style={delay(900)}>
+        <div className="flex animate-settle flex-col gap-1.5" style={delay(350)}>
           <p className="m-0 font-serif text-[28px] font-medium tracking-[0.04em] sm:text-[34px]">{wedding.dateLong}</p>
           <p className="m-0 text-[13px] uppercase tracking-[0.24em] text-mist sm:text-sm">
             {wedding.town} · {wedding.region}
           </p>
         </div>
-        <div className="flex w-full animate-rise justify-center" style={delay(1100)}>
+        <div className="flex w-full animate-settle justify-center" style={delay(450)}>
           <Countdown to={wedding.countdownTo} />
         </div>
-        <div className="mt-2 flex animate-rise flex-col items-center gap-2 sm:flex-row sm:gap-6" style={delay(1300)}>
+        <div className="mt-2 flex animate-settle flex-col items-center gap-2 sm:flex-row sm:gap-6" style={delay(550)}>
           <PillLink href="/rsvp" variant="ember" size="lg">
             Respond to your invitation
           </PillLink>
@@ -92,18 +93,18 @@ export function HeroDay({
     <section id="top" className={`${wrap} pt-14 pb-20 sm:pt-20 sm:pb-24`}>
       <HeroBackdrop photo={photo} />
       <div className={`${inner} gap-6`}>
-        <Eyebrow tone="ember" className="animate-rise">
+        <Eyebrow tone="ember" className="animate-settle">
           {todayLabel} · {wedding.town}
         </Eyebrow>
         <Names />
         <Ornament draw dot />
-        <p className="m-0 max-w-[640px] animate-rise font-serif text-2xl leading-snug text-linen italic sm:text-3xl" style={delay(700)}>
+        <p className="m-0 max-w-[640px] animate-settle font-serif text-2xl leading-snug text-linen italic sm:text-3xl" style={delay(250)}>
           Today&apos;s the day. Thank you for being here with us.
         </p>
         {now ? (
           <div
-            className="flex animate-rise flex-wrap items-center justify-center gap-x-3.5 gap-y-1 rounded-[28px] border border-ember/50 px-5 py-3 sm:rounded-full"
-            style={delay(900)}
+            className="flex animate-settle flex-wrap items-center justify-center gap-x-3.5 gap-y-1 rounded-[28px] border border-ember/50 px-5 py-3 sm:rounded-full"
+            style={delay(350)}
           >
             <span className="live-dot" aria-hidden />
             <span className="text-[11px] uppercase tracking-[0.26em] text-ember">Happening now</span>
@@ -112,7 +113,7 @@ export function HeroDay({
             </span>
           </div>
         ) : null}
-        <div className="mt-2 flex w-full animate-rise flex-col items-center gap-2 sm:w-auto sm:flex-row sm:gap-6" style={delay(1100)}>
+        <div className="mt-2 flex w-full animate-settle flex-col items-center gap-2 sm:w-auto sm:flex-row sm:gap-6" style={delay(450)}>
           <PillLink href="/album" variant="ember" size="lg" icon="camera" className="w-full sm:w-auto">
             Share your photos &amp; videos
           </PillLink>
@@ -131,24 +132,24 @@ export function HeroAfter() {
     <section id="top" className={`${wrap} pt-16 pb-20 sm:pt-24 sm:pb-28`}>
       <div className="mx-auto flex max-w-[1160px] flex-col items-center gap-12 lg:flex-row lg:gap-18">
         <div className="flex flex-1 flex-col items-center gap-5.5">
-          <Eyebrow tone="ember" className="animate-rise">
+          <Eyebrow tone="ember" className="animate-settle">
             {wedding.dateShort} · {wedding.town}
           </Eyebrow>
           <h1
-            className="m-0 animate-rise font-script text-[80px] leading-[1.05] font-normal sm:text-[120px] lg:text-[152px]"
-            style={{ ...delay(300), animationDuration: "1600ms" }}
+            className="m-0 animate-settle font-script text-[80px] leading-[1.05] font-normal sm:text-[120px] lg:text-[152px]"
+            style={{ ...delay(100), animationDuration: "1000ms" }}
           >
             Thank you
           </h1>
-          <p className="-mt-2 mb-0 animate-rise font-serif text-[28px] leading-snug text-linen italic sm:text-4xl" style={delay(550)}>
+          <p className="-mt-2 mb-0 animate-settle font-serif text-[28px] leading-snug text-linen italic sm:text-4xl" style={delay(250)}>
             for celebrating with us
           </p>
           <Ornament draw dot />
-          <p className="m-0 max-w-[600px] animate-rise text-base leading-relaxed font-light text-mist sm:text-[17px]" style={delay(800)}>
+          <p className="m-0 max-w-[600px] animate-settle text-base leading-relaxed font-light text-mist sm:text-[17px]" style={delay(350)}>
             Your love, your prayers and your dancing made our weekend. Every photo and video you shared lives here now,
             ready to relive and download.
           </p>
-          <div className="mt-2 flex animate-rise flex-col items-center gap-2 sm:flex-row sm:gap-6" style={delay(1000)}>
+          <div className="mt-2 flex animate-settle flex-col items-center gap-2 sm:flex-row sm:gap-6" style={delay(450)}>
             <PillLink href="#album" variant="ember" size="lg">
               Relive the day
             </PillLink>
@@ -156,7 +157,7 @@ export function HeroAfter() {
               Read your wishes
             </TextLink>
           </div>
-          <p className="mt-3 mb-0 flex animate-rise flex-col items-center font-script text-ember" style={delay(1200)}>
+          <p className="mt-3 mb-0 flex animate-settle flex-col items-center font-script text-ember" style={delay(550)}>
             <Motto amp="text-white" className="text-[34px] sm:text-[40px]" />
             <span className="text-2xl text-linen sm:text-[28px]">
               {couple.groom} &amp; {couple.bride}
