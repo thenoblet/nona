@@ -30,6 +30,36 @@ export const songs: Song[] = [
     ],
   },
   {
+    id: "be-my-woman",
+    title: "Be My Woman",
+    artist: "M.anifest feat. Mi Casa",
+    seconds: 225,
+    sources: [
+      { src: "/audio/be-my-woman.webm", type: 'audio/webm; codecs="opus"' },
+      { src: "/audio/be-my-woman.mp3", type: "audio/mpeg" },
+    ],
+  },
+  {
+    id: "me-ne-woa",
+    title: "Me Ne Woa",
+    artist: "M.anifest feat. King Promise",
+    seconds: 222,
+    sources: [
+      { src: "/audio/me-ne-woa.webm", type: 'audio/webm; codecs="opus"' },
+      { src: "/audio/me-ne-woa.mp3", type: "audio/mpeg" },
+    ],
+  },
+  {
+    id: "hang-my-boots",
+    title: "Hang My Boots",
+    artist: "M.anifest feat. King Promise",
+    seconds: 187,
+    sources: [
+      { src: "/audio/hang-my-boots.webm", type: 'audio/webm; codecs="opus"' },
+      { src: "/audio/hang-my-boots.mp3", type: "audio/mpeg" },
+    ],
+  },
+  {
     id: "i-wanna-love-you",
     title: "I Wanna Love You",
     artist: "Sarkodie feat. Harmonize",
