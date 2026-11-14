@@ -84,12 +84,12 @@ describe("programmeNow", () => {
 describe("the built-in programme", () => {
   it("follows the day by the clock", () => {
     const builtIn = (now: Date) => currentItem(contentDefaults.schedule, contentDefaults.celebrations, now)?.title;
-    expect(builtIn(saturday("09:00"))).toBeUndefined();
-    expect(builtIn(saturday("11:20"))).toBe("Exchange of vows");
-    expect(builtIn(saturday("15:40"))).toBe("First dance");
-    // The reception ends at 7:30 PM.
-    expect(builtIn(saturday("19:29"))).toBe("Closing remarks and appreciation");
-    expect(builtIn(saturday("19:31"))).toBeUndefined();
+    expect(builtIn(saturday("07:00"))).toBeUndefined();
+    expect(builtIn(saturday("09:20"))).toBe("Exchange of vows");
+    expect(builtIn(saturday("13:40"))).toBe("First dance");
+    // The reception ends at 5:30 PM.
+    expect(builtIn(saturday("17:29"))).toBe("Closing remarks and appreciation");
+    expect(builtIn(saturday("17:31"))).toBeUndefined();
   });
 });
 

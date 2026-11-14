@@ -40,8 +40,8 @@ describe("defaults", () => {
 
   it("dates the celebrations, with Saturday's times from the programme", () => {
     expect(contentDefaults.celebrations.map((celebration) => [celebration.date, celebration.startTime, celebration.endTime])).toEqual([
-      ["2026-12-05", "10:00", "14:00"],
-      ["2026-12-05", "14:30", "19:30"],
+      ["2026-12-05", "08:00", "12:00"],
+      ["2026-12-05", "12:30", "17:30"],
     ]);
   });
 });

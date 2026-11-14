@@ -179,14 +179,14 @@ describe("the order of the day", () => {
     const counts = Object.fromEntries(
       ["ceremony", "reception"].map((id) => [id, contentDefaults.schedule.filter((item) => item.celebration === id).length]),
     );
-    expect(counts).toEqual({ ceremony: 19, reception: 20 });
+    expect(counts).toEqual({ ceremony: 19, reception: 18 });
     expect(contentDefaults.schedule.every((item) => item.place === undefined)).toBe(true);
     expect(contentDefaults.schedule.every((item) => item.time !== undefined)).toBe(true);
   });
 
   it("takes a time, a note and a place, each optional", () => {
     const value = schedule();
-    value[0] = { celebration: "ceremony", title: "Guests arrive", time: "09:30", note: "Please be seated early", place: "Church grounds" };
+    value[0] = { celebration: "ceremony", title: "Guests arrive", time: "07:30", note: "Please be seated early", place: "Church grounds" };
     value[1] = { celebration: "ceremony", title: "Processional" };
     expect(problems("schedule", value)).toEqual([]);
   });
@@ -208,7 +208,7 @@ describe("the order of the day", () => {
 
   it("keeps the white wedding's times in order", () => {
     const value = schedule();
-    value[1].time = "09:00";
+    value[1].time = "07:00";
     expect(problems("schedule", value)).toEqual(["schedule[1].time: Earlier than Arrival of guests: times run in order"]);
   });
 
