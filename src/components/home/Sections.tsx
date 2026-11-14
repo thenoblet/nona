@@ -115,7 +115,11 @@ export function Travel({ travel }: { travel: TravelItem[] }) {
               >
                 <Halo icon={item.icon} size="xl" />
                 <h3 className="mt-1 mb-0 font-serif text-[32px] font-normal italic">{item.title}</h3>
-                <TravelText text={item.text} />
+                {/* The text sits in the middle of the room between the title and the link, so a
+                    shorter card's space is shared above and below it; titles and links still line up. */}
+                <div className="flex w-full flex-1 flex-col justify-center">
+                  <TravelText text={item.text} />
+                </div>
                 <TextLink href={item.href ?? "#travel"} className="mt-auto">
                   {item.link}
                 </TextLink>
