@@ -44,6 +44,8 @@
   --shadow-seg: 0 1px 2px rgb(61 41 39 / 0.12), 0 4px 10px rgb(61 41 39 / 0.1);
 
   --animate-rise: rise 1000ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  /* The hero's words: a fade in place, so nothing moves while the page is still arriving. */
+  --animate-settle: settle 700ms ease-out both;
   --animate-ping-soft: ping-soft 1800ms ease-out infinite;
   --animate-bar: bar 900ms ease-in-out infinite;
   --animate-nudge: nudge 1400ms cubic-bezier(0.3, 0.7, 0.3, 1) 1500ms 3 both;
@@ -57,6 +59,10 @@
   --animate-caption-in: caption-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
   --animate-countdown: fill 6000ms linear both;
 
+  @keyframes settle {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
   @keyframes rise {
     from { opacity: 0; translate: 0 22px; }
     to { opacity: 1; translate: 0 0; }
