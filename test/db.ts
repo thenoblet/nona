@@ -15,7 +15,7 @@ export async function resetDb(): Promise<void> {
   const config = testDbConfig("resetDb only empties");
   const sql = postgres({ ...config, max: 1 });
   try {
-    await sql`TRUNCATE rsvps, rsvp_flag_dismissals, site_content, guests, media, wishes, site_images, upload_events, settings`;
+    await sql`TRUNCATE rsvps, rsvp_flag_dismissals, site_content, guests, media, wishes, site_images, upload_events, settings, admin_viewers`;
   } finally {
     await sql.end();
   }

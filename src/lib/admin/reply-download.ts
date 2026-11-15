@@ -1,5 +1,5 @@
 import { connection } from "next/server";
-import { AdminAccessError, requireAdmin } from "@/lib/admin/access";
+import { AdminAccessError, requireViewerOrCouple } from "@/lib/admin/access";
 import { toCsv } from "@/lib/admin/csv";
 import { replyColumns, replyCsvRows } from "@/lib/admin/replies";
 import { toXlsx } from "@/lib/admin/xlsx";
@@ -16,14 +16,14 @@ const formats = {
 } as const;
 
 /**
- * Every current reply as a file to download, for the couple only: CSV for any tool, or an Excel
+ * Every current reply as a file to download, for the couple or a viewer: CSV for any tool, or an Excel
  * workbook that opens with its header bold and frozen and phone numbers kept as typed.
  */
 export async function downloadReplies(format: keyof typeof formats): Promise<Response> {
   // Request time only: a build without the Access settings must never prerender the refusal.
   await connection();
   try {
-    await requireAdmin();
+    await requireViewerOrCouple();
   } catch (error) {
     if (error instanceof AdminAccessError) {
       return new Response("This page is for the couple.", {

@@ -43,6 +43,8 @@ export default defineConfig({
         GUEST_COOKIE_SECRET: "e2e-only-guest-cookie-secret-not-used-anywhere-else",
         CF_ACCESS_TEAM_DOMAIN: ACCESS_TEAM_DOMAIN,
         CF_ACCESS_AUD: ACCESS_AUDIENCE,
+        // The couple, as the tests sign in; anyone else gets in only as a viewer added under People.
+        ADMIN_COUPLE_EMAILS: "couple@example.com,nancy@example.com",
         NODE_EXTRA_CA_CERTS: ACCESS_CERT,
       },
     },

@@ -11,14 +11,15 @@ vi.mock("next/server", () => ({
   connection: async () => {},
 }));
 
-const admin = vi.hoisted(() => ({ allowed: false }));
+// Who is signed in: nobody the admin knows (refused), the couple, or a viewer.
+const admin = vi.hoisted(() => ({ allowed: false, role: "couple" as "couple" | "viewer" }));
 vi.mock("@/lib/admin/access", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/admin/access")>();
   return {
     ...real,
-    requireAdmin: async () => {
+    requireViewerOrCouple: async () => {
       if (!admin.allowed) throw new real.AdminAccessError();
-      return { email: "couple@example.com" };
+      return { email: `${admin.role}@example.com`, role: admin.role };
     },
   };
 });
@@ -28,6 +29,7 @@ import { GET } from "./route";
 beforeEach(async () => {
   await resetDb();
   admin.allowed = false;
+  admin.role = "couple";
   await saveRsvp({
     fullName: "Ama Owusu",
     phone: "024 000 0000",
@@ -67,6 +69,14 @@ describe("GET /admin/rsvps.csv", () => {
     );
     expect(lines[1]).toMatch(/^Ama Owusu,024 000 0000,ama@example\.com,2 people,Yes,No,,,'=Odo,\d{4}-\d{2}-\d{2} \d{2}:\d{2},Not sent,$/);
     expect(lines).toHaveLength(3);
+  });
+
+  it("gives a viewer the same CSV: downloading is reading", async () => {
+    admin.allowed = true;
+    admin.role = "viewer";
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Ama Owusu,024 000 0000");
   });
 
   it("lists each flag in words and leaves out replies moved into a history", async () => {

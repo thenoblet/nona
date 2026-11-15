@@ -22,7 +22,16 @@ function earlierLabel(count: number): string {
 const badgeTone = { sent: "ok", queued: "wait", failed: "bad", none: "none" } as const;
 
 /** Search and filters run here over the list the gated page passed down (a few hundred replies at most). */
-export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; celebrations: CelebrationColumn[] }) {
+export function RepliesList({
+  replies,
+  celebrations,
+  readOnly = false,
+}: {
+  replies: ReplyRow[];
+  celebrations: CelebrationColumn[];
+  /** A viewer's list: flags in words, with no Keep or Remove buttons. */
+  readOnly?: boolean;
+}) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ReplyFilter>("all");
   // The serial changes with every message, so the same message twice still moves focus.
@@ -122,9 +131,18 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
                     </div>
                     {row.otherNames && <div className="admin-guest-contact">With {row.otherNames}</div>}
                     {row.song && <div className="admin-guest-contact">Song: {row.song}</div>}
-                    {row.flags.length > 0 && (
-                      <ReplyFlags replyId={row.id} replyName={row.fullName} flags={row.flags} onDone={announce} />
-                    )}
+                    {row.flags.length > 0 &&
+                      (readOnly ? (
+                        <ul className="admin-flag-list admin-flags">
+                          {row.flags.map((flag) => (
+                            <li key={flag.otherId}>
+                              <span className="admin-flag-note">{flag.note}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <ReplyFlags replyId={row.id} replyName={row.fullName} flags={row.flags} onDone={announce} />
+                      ))}
                     {row.earlier.length > 0 && (
                       <details className="admin-history">
                         <summary>{earlierLabel(row.earlier.length)}</summary>
@@ -135,7 +153,9 @@ export function RepliesList({ replies, celebrations }: { replies: ReplyRow[]; ce
                         ))}
                       </details>
                     )}
-                    <ReplyDelete replyId={row.id} replyName={row.fullName} earlierCount={row.earlier.length} onDone={announce} />
+                    {!readOnly && (
+                      <ReplyDelete replyId={row.id} replyName={row.fullName} earlierCount={row.earlier.length} onDone={announce} />
+                    )}
                   </td>
                   <td className="admin-party" data-label="Party">
                     {row.partySize}

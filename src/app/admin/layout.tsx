@@ -1,6 +1,6 @@
 import { Suspense, type ReactNode } from "react";
 import type { Metadata } from "next";
-import { AdminTabs, AdminTabLinks } from "@/components/admin/AdminTabs";
+import { RoleTabs } from "@/components/admin/RoleTabs";
 import { LeaveLink } from "@/components/admin/LeaveLink";
 import "./admin.css";
 
@@ -18,9 +18,10 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           <LeaveLink href="/admin/rsvps" className="admin-brand">
             Noblet &amp; Nancy <span>· admin</span>
           </LeaveLink>
-          {/* usePathname can suspend during a prerender, so the tabs keep their links either way. */}
-          <Suspense fallback={<AdminTabLinks currentPath={null} />}>
-            <AdminTabs />
+          {/* The tabs depend on who is signed in, so none show until that is known: a viewer never
+              sees the couple's tabs flash up. */}
+          <Suspense fallback={<nav className="admin-tabs" aria-label="Admin sections" />}>
+            <RoleTabs />
           </Suspense>
           <LeaveLink href="/" className="admin-viewsite">
             View site ↗

@@ -176,6 +176,7 @@ in this repository.
 | `EMAIL_REPLY_TO` | Where a guest's reply to the email goes. Several addresses, separated by commas, all receive it. |
 | `CF_ACCESS_TEAM_DOMAIN` | The Cloudflare Access team domain as a bare host (`<team>.cloudflareaccess.com`, without `https://`). |
 | `CF_ACCESS_AUD` | The Access application's audience tag. With either of these two missing, the admin refuses everyone. |
+| `ADMIN_COUPLE_EMAILS` | The couple's sign-in emails, separated by commas (any capitals): everything in the admin. Anyone else Access lets in gets in only as a viewer the couple added under Admin → People. Unset, everyone Access lets in who isn't a viewer has everything, as before viewers existed, and the People page warns about it. Changing it needs a restart. |
 | `R2_ENDPOINT` | R2's S3 address for the account, `https://<account id>.r2.cloudflarestorage.com`. |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | The R2 API token's keys (see R2 and Cloudflare below). |
 | `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET` | `nona-private` (the originals, as guests sent them, and their manifests) and `nona-public` (the thumbnails, viewing copies and link preview cards the site shows). |
@@ -188,9 +189,20 @@ signed-in admin on a developer's machine; the second lets anyone preview the wed
 thank-you versions of the homepage before their dates.
 
 The admin is reachable only through a Cloudflare Access application that covers `/admin` and
-everything under it (`/admin*`), allowing only the couple. The app checks the signed Access token
-on every admin page, download and action itself, so a request that reaches the server some other
-way gets nothing.
+everything under it (`/admin*`). The app checks the signed Access token on every admin page,
+download and action itself, so a request that reaches the server some other way gets nothing.
+
+**Giving someone view-only access.** A viewer can read the Replies list and download it as Excel or
+CSV, and nothing else: no other tab, no settings, no buttons that change a reply, and every admin
+action and route refuses them on the server too. To add one:
+
+1. In Cloudflare Zero Trust, add their email to the admin application's Access policy, so they can
+   sign in at all.
+2. In the admin, under People, add the same email.
+
+They then open `/admin` and land on Replies, marked "View only". Removing them under People stops
+them at once; remove them from the Access policy too to stop them signing in at all. Each addition
+and removal is kept with who made it and when.
 
 The database is backed up every night at 02:30 UTC by Dokploy, to a private Cloudflare R2 bucket.
 Backups are kept forever.
