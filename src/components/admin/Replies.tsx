@@ -12,9 +12,10 @@ function count(amount: number, one: string, many: string): string {
 
 /**
  * The replies page's data: the RSVP settings, totals per celebration, then every current reply.
- * Render it only inside AdminGate.
+ * Render it only inside AdminGate. `readOnly` is a viewer's page: the list and the downloads, with
+ * no settings and no buttons that change a reply (the actions refuse a viewer too).
  */
-export async function Replies() {
+export async function Replies({ readOnly = false }: { readOnly?: boolean }) {
   const [replies, histories, totals, { celebrations, rsvp }, settings] = await Promise.all([
     listRsvps(),
     rsvpHistories(),
@@ -35,6 +36,7 @@ export async function Replies() {
           <p className="admin-lede">
             Newest first. {rsvp.open ? `Replies are due ${accraDayAndFullMonth(rsvp.replyBy)}.` : "RSVPs are closed."}
           </p>
+          {readOnly && <p className="admin-lede">You can read and download this list. Only Noblet and Nancy can change it.</p>}
         </div>
         {/* Plain links: the file downloads, and an expired sign-in still reaches the login page. */}
         <div className="admin-downloads">
@@ -47,14 +49,16 @@ export async function Replies() {
         </div>
       </div>
 
-      <RsvpSettings
-        open={settings.value.open}
-        replyBy={settings.value.replyBy}
-        replyByLabel={accraDayAndFullMonth(settings.value.replyBy)}
-        closedMessage={settings.value.closedMessage}
-        version={settings.version}
-        closedSince={settings.closed ? `${accraDateTime(settings.closed.savedAt.toISOString())} by ${settings.closed.savedBy}` : null}
-      />
+      {!readOnly && (
+        <RsvpSettings
+          open={settings.value.open}
+          replyBy={settings.value.replyBy}
+          replyByLabel={accraDayAndFullMonth(settings.value.replyBy)}
+          closedMessage={settings.value.closedMessage}
+          version={settings.version}
+          closedSince={settings.closed ? `${accraDateTime(settings.closed.savedAt.toISOString())} by ${settings.closed.savedBy}` : null}
+        />
+      )}
 
       <section className="admin-stats" aria-label="Totals">
         {celebrations.map((celebration) => {
@@ -83,7 +87,7 @@ export async function Replies() {
       </section>
       <p className="admin-footnote">Guest counts add up party sizes, counting “4 or more” as 4.</p>
 
-      <RepliesList replies={rows} celebrations={columns} />
+      <RepliesList replies={rows} celebrations={columns} readOnly={readOnly} />
     </>
   );
 }

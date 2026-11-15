@@ -106,6 +106,13 @@
       "when": 1793571362101,
       "tag": "0014_violet_gorgon",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794774548239,
+      "tag": "0015_wakeful_blade",
+      "breakpoints": true
     }
   ]
 }

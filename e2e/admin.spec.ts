@@ -79,3 +79,56 @@ test("a Cloudflare Access token for another application is refused like none at 
   expect((await request.get("/admin/rsvps.xlsx", { headers: otherApplication })).status()).toBe(403);
   expect((await request.get("/admin/rsvps.xlsx", { headers: signedIn })).status()).toBe(200);
 });
+
+test("a viewer the couple add reads and downloads the Replies list, changes nothing, and loses access when removed", async ({ browser, baseURL }) => {
+  const viewerEmail = "e2e-viewer@example.com";
+  const couple = await browser.newContext({ baseURL, extraHTTPHeaders: { [ACCESS_HEADER]: await accessToken() } });
+  const viewer = await browser.newContext({ baseURL, extraHTTPHeaders: { [ACCESS_HEADER]: await accessToken({ email: viewerEmail }) } });
+  try {
+    // Before the couple add them, Access letting them through is not enough.
+    const viewerPage = await viewer.newPage();
+    await viewerPage.goto("/admin/rsvps");
+    // The visible one: a streamed piece can also sit, hidden, in the page until it is swapped in.
+    await expect(viewerPage.getByText("This page is for the couple.").filter({ visible: true })).toBeVisible();
+
+    const couplePage = await couple.newPage();
+    await couplePage.goto("/admin/people");
+    await couplePage.waitForLoadState("networkidle");
+    await couplePage.getByLabel("Their email").fill("E2E-Viewer@example.com");
+    await couplePage.getByRole("button", { name: "Add viewer" }).click();
+    await expect(couplePage.getByRole("status").filter({ hasText: `Added ${viewerEmail}` })).toBeVisible();
+    await expect(couplePage.getByRole("listitem").filter({ hasText: viewerEmail })).toContainText("by couple@example.com");
+
+    // The viewer's Replies: the list and the downloads, marked View only, with nothing that changes it.
+    await viewerPage.goto("/admin/rsvps");
+    await expect(viewerPage.getByRole("heading", { name: "Replies", level: 1 })).toBeVisible();
+    await expect(viewerPage.getByText("View only").filter({ visible: true })).toBeVisible();
+    const tabs = viewerPage.getByRole("navigation", { name: "Admin sections" }).getByRole("link");
+    await expect(tabs).toHaveText(["Replies"]);
+    await expect(viewerPage.getByRole("region", { name: "RSVP settings" })).toHaveCount(0);
+    await expect(viewerPage.getByRole("button", { name: /^Delete / })).toHaveCount(0);
+    await expect(viewerPage.getByRole("button", { name: /^Keep / })).toHaveCount(0);
+    expect((await viewer.request.get("/admin/rsvps.csv")).status()).toBe(200);
+    expect((await viewer.request.get("/admin/rsvps.xlsx")).status()).toBe(200);
+
+    // Every other part of the admin sends them back to Replies.
+    for (const path of ["/admin/photos", "/admin/content/faq", "/admin/photos/site", "/admin/people"]) {
+      await viewerPage.goto(path);
+      await expect(viewerPage).toHaveURL(/\/admin\/rsvps$/);
+    }
+
+    // Removed, they are refused again.
+    await couplePage.goto("/admin/people");
+    await couplePage.waitForLoadState("networkidle");
+    await couplePage.getByRole("button", { name: `Remove ${viewerEmail}` }).click();
+    await couplePage.getByRole("button", { name: "Yes, remove" }).click();
+    await expect(couplePage.getByRole("status").filter({ hasText: "Removed" })).toBeVisible();
+    await viewerPage.goto("/admin/rsvps");
+    // The visible one: a streamed piece can also sit, hidden, in the page until it is swapped in.
+    await expect(viewerPage.getByText("This page is for the couple.").filter({ visible: true })).toBeVisible();
+    expect((await viewer.request.get("/admin/rsvps.csv")).status()).toBe(403);
+  } finally {
+    await couple.close();
+    await viewer.close();
+  }
+});

@@ -50,6 +50,8 @@
   text-decoration: none; color: var(--admin-muted); border-bottom: 2px solid transparent; white-space: nowrap;
 }
 .admin .admin-tabs a[aria-current="page"] { color: var(--admin-text); border-bottom-color: var(--admin-accent); font-weight: 600; }
+/* A viewer's label beside their one tab, so the missing tabs read as intended. */
+.admin-viewonly { align-self: center; margin-left: 8px; padding: 3px 10px; border-radius: 999px; background: var(--admin-accent-soft); color: var(--admin-accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .admin .admin-viewsite { display: inline-flex; align-items: center; min-height: 44px; margin-left: auto; white-space: nowrap; text-decoration: none; font-size: 14px; }
 @media (max-width: 599px) {
   .admin-topbar-inner { gap: 0 12px; padding-top: 6px; }
@@ -674,3 +676,19 @@
   border-bottom: 2px solid var(--admin-accent); font-size: 17px; font-weight: 700; overflow-wrap: anywhere;
 }
 .admin-group-count { color: var(--admin-muted); font-size: 13px; font-weight: 500; }
+
+/* People with access: who can open the admin. */
+.admin-people-card { margin: 0 0 20px; padding: 14px 16px 16px; background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--admin-radius); max-width: 720px; }
+.admin-people-card h2 { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
+.admin-people-card summary { cursor: pointer; font-weight: 600; min-height: 32px; }
+.admin-people-steps ol { margin: 4px 0 8px; padding-left: 22px; display: grid; gap: 4px; list-style: decimal; }
+.admin-people-list { list-style: none; margin: 10px 0; padding: 0; display: grid; }
+.admin-people-list > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 10px 0; border-top: 1px solid var(--admin-soft); }
+.admin-people-list > li:first-child { border-top: 0; }
+.admin-people-list .admin-confirm { flex-basis: 100%; }
+.admin-people-who { display: grid; gap: 2px; min-width: 0; }
+.admin-people-email { font-weight: 600; overflow-wrap: anywhere; }
+.admin-people-empty { margin: 10px 0; color: var(--admin-muted); }
+.admin-people-add { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 12px; }
+.admin-people-add .admin-field { flex: 1 1 260px; }
+.admin-people-add .admin-btn { margin-top: 23px; }

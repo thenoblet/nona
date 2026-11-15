@@ -456,6 +456,29 @@ export const uploadEvents = pgTable(
   ],
 );
 
+/**
+ * The people the couple let read the Replies list and download it, but change nothing ("viewers").
+ * Each also needs letting through Cloudflare Access. Removing one sets removed_at, so the list of
+ * who had access, added and removed by whom, stays; one email has at most one current row.
+ */
+export const adminViewers = pgTable(
+  "admin_viewers",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    /** Lowercased and trimmed, as Access emails are compared. */
+    email: text("email").notNull(),
+    addedAt: timestamp("added_at", withTimezone).notNull().defaultNow(),
+    addedBy: text("added_by").notNull(),
+    removedAt: timestamp("removed_at", withTimezone),
+    removedBy: text("removed_by"),
+  },
+  (table) => [
+    uniqueIndex("admin_viewers_current_email_unique").on(table.email).where(sql`${table.removedAt} is null`),
+    check("admin_viewers_email_lowercase", sql`${table.email} = lower(btrim(${table.email}))`),
+    check("admin_viewers_removed_together", sql`(${table.removedAt} is null) = (${table.removedBy} is null)`),
+  ],
+);
+
 /** Switches and markers shared by the app and the worker, one JSON value per key (settings.ts). */
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
