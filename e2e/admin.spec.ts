@@ -27,6 +27,11 @@ test("without Cloudflare Access the admin shows no replies and refuses the CSV",
   expect(csv.headers()["cache-control"]).toBe("private, no-store");
   expect(await csv.text()).not.toContain("E2E Admin Check");
 
+  const excel = await request.get("/admin/rsvps.xlsx");
+  expect(excel.status()).toBe(403);
+  expect(excel.headers()["cache-control"]).toBe("private, no-store");
+  expect(await excel.text()).not.toContain("E2E Admin Check");
+
   const admin = await request.get("/admin", { maxRedirects: 0 });
   expect(admin.status()).toBe(307);
   expect(admin.headers()["location"]).toBe("/admin/rsvps");
@@ -71,4 +76,6 @@ test("a Cloudflare Access token for another application is refused like none at 
   expect(replies).toContain("RSVP settings");
   expect(replies).not.toContain("This page is for the couple.");
   expect((await request.get("/admin/rsvps.csv", { headers: signedIn })).status()).toBe(200);
+  expect((await request.get("/admin/rsvps.xlsx", { headers: otherApplication })).status()).toBe(403);
+  expect((await request.get("/admin/rsvps.xlsx", { headers: signedIn })).status()).toBe(200);
 });
