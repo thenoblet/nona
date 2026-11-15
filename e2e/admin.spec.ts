@@ -88,7 +88,8 @@ test("a viewer the couple add reads and downloads the Replies list, changes noth
     // Before the couple add them, Access letting them through is not enough.
     const viewerPage = await viewer.newPage();
     await viewerPage.goto("/admin/rsvps");
-    await expect(viewerPage.getByText("This page is for the couple.")).toBeVisible();
+    // The visible one: a streamed piece can also sit, hidden, in the page until it is swapped in.
+    await expect(viewerPage.getByText("This page is for the couple.").filter({ visible: true })).toBeVisible();
 
     const couplePage = await couple.newPage();
     await couplePage.goto("/admin/people");
@@ -101,7 +102,7 @@ test("a viewer the couple add reads and downloads the Replies list, changes noth
     // The viewer's Replies: the list and the downloads, marked View only, with nothing that changes it.
     await viewerPage.goto("/admin/rsvps");
     await expect(viewerPage.getByRole("heading", { name: "Replies", level: 1 })).toBeVisible();
-    await expect(viewerPage.getByText("View only")).toBeVisible();
+    await expect(viewerPage.getByText("View only").filter({ visible: true })).toBeVisible();
     const tabs = viewerPage.getByRole("navigation", { name: "Admin sections" }).getByRole("link");
     await expect(tabs).toHaveText(["Replies"]);
     await expect(viewerPage.getByRole("region", { name: "RSVP settings" })).toHaveCount(0);
@@ -123,7 +124,8 @@ test("a viewer the couple add reads and downloads the Replies list, changes noth
     await couplePage.getByRole("button", { name: "Yes, remove" }).click();
     await expect(couplePage.getByRole("status").filter({ hasText: "Removed" })).toBeVisible();
     await viewerPage.goto("/admin/rsvps");
-    await expect(viewerPage.getByText("This page is for the couple.")).toBeVisible();
+    // The visible one: a streamed piece can also sit, hidden, in the page until it is swapped in.
+    await expect(viewerPage.getByText("This page is for the couple.").filter({ visible: true })).toBeVisible();
     expect((await viewer.request.get("/admin/rsvps.csv")).status()).toBe(403);
   } finally {
     await couple.close();
