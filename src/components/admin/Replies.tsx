@@ -36,10 +36,15 @@ export async function Replies() {
             Newest first. {rsvp.open ? `Replies are due ${accraDayAndFullMonth(rsvp.replyBy)}.` : "RSVPs are closed."}
           </p>
         </div>
-        {/* A plain link: the file downloads, and an expired sign-in still reaches the login page. */}
-        <a className="admin-btn" href="/admin/rsvps.csv">
-          Download CSV
-        </a>
+        {/* Plain links: the file downloads, and an expired sign-in still reaches the login page. */}
+        <div className="admin-downloads">
+          <a className="admin-btn" href="/admin/rsvps.xlsx">
+            Download Excel
+          </a>
+          <a className="admin-btn" href="/admin/rsvps.csv">
+            Download CSV
+          </a>
+        </div>
       </div>
 
       <RsvpSettings
