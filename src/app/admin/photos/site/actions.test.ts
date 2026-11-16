@@ -130,8 +130,10 @@ describe("saveSlotAction", () => {
     expect(result).toMatchObject({ ok: true, slot: { state: "builtin", edited: true, alt: "Us, 2019", focal: { x: 0.2, y: 0.7 } } });
     expect(await readLiveSiteImage("story-met-arch")).toMatchObject({ mediaId: null, alt: "Us, 2019", focal: { x: 0.2, y: 0.7 } });
 
-    expect(await saveSlotAction({ slot: "party-bernice", mediaId: null, alt: "Bernice", focal: { x: 0.5, y: 0.5 } })).toMatchObject({
+    // Ama: someone the couple add to the wedding party in the admin, so with no built-in portrait.
+    expect(await saveSlotAction({ slot: "party-ama", mediaId: null, alt: "Ama", focal: { x: 0.5, y: 0.5 } })).toMatchObject({
       ok: false,
+      error: "Add a photo first: this one has no built-in photo.",
     });
   });
 
@@ -178,7 +180,7 @@ describe("restoreSlotAction", () => {
     await saveSlotAction({ slot: "landing-cover", mediaId, alt: "Cover", focal: { x: 0.5, y: 0.5 } });
     const cover = await readLiveSiteImage("landing-cover");
     expect(await restoreSlotAction("landing-print", cover!.id)).toMatchObject({ ok: false });
-    expect(await restoreSlotAction("party-bernice", "builtin")).toMatchObject({ ok: false });
+    expect(await restoreSlotAction("party-ama", "builtin")).toMatchObject({ ok: false });
   });
 
   it("refuses anyone but the couple", async () => {

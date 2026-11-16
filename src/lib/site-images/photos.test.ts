@@ -22,12 +22,14 @@ beforeEach(async () => {
 
 describe("what a guest page shows in a slot", () => {
   it("is the built-in photo until the couple save one", async () => {
-    const photos = slotPhotos(await getSiteImages(), contentDefaults.party);
+    // Ama: someone the couple add to the wedding party in the admin, so with no built-in portrait.
+    const party = [...contentDefaults.party, { id: "ama", name: "Ama", role: "Bridesmaid" }];
+    const photos = slotPhotos(await getSiteImages(), party);
     expect(photos["landing-cover"]).toMatchObject({ kind: "builtin", alt: builtinPhoto("landing-cover")?.alt });
     expect(photos["story-met-arch"]?.kind).toBe("builtin");
     // The pre-wedding shoot behind the hero; nothing for a member with no portrait yet.
     expect(photos["home-hero"]).toMatchObject({ kind: "builtin", alt: builtinPhoto("home-hero")?.alt });
-    expect(photos["party-bernice"]).toBeNull();
+    expect(photos["party-ama"]).toBeNull();
     expect(photos["party-lilian"]?.kind).toBe("builtin");
   });
 
