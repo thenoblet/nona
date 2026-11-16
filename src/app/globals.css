@@ -124,6 +124,24 @@
   a {
     color: inherit;
   }
+  /*
+   * The phone tab bar's room: the page ends that far above the bottom, so its last line clears the
+   * bar, and the dock floats above it. Nothing on laptops, or on pages without the bar.
+   */
+  :root {
+    --tabbar-space: 0px;
+  }
+  @media (width < 64rem) {
+    :root:has([data-tab-bar]) {
+      --tabbar-space: calc(64px + env(safe-area-inset-bottom));
+    }
+  }
+  body {
+    padding-bottom: var(--tabbar-space);
+    /* The page reaches the screen's edges (viewport-fit=cover); in landscape it keeps clear of the notch. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
   /* Sections sit below the sticky header when jumped to. */
   [id] {
     scroll-margin-top: 88px;

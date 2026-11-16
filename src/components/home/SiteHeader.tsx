@@ -57,8 +57,8 @@ const opening = "duration-400 ease-[cubic-bezier(0.16,1,0.3,1)]";
 const closing = "duration-200 ease-[cubic-bezier(0.4,0,1,1)]";
 
 /**
- * Phones: monogram, the main action and a menu button that drops a paper panel
- * of links over the dimmed page. Desktop (lg): the links sit inline.
+ * Phones: monogram and a menu button that drops a paper panel of links over the dimmed page; the
+ * main action is the tab bar's middle button. Desktop (lg): the links and the main action sit inline.
  *
  * On another page than the home page (`current`, such as "/programme"), the home page's links lead
  * back to it, and that page's own link is marked as the one you are on.
@@ -120,7 +120,7 @@ export function SiteHeader({ mode, current }: { mode: Mode; current?: string }) 
           <div className="flex items-center gap-2">
             <Link
               href={cta.href}
-              className="press inline-flex min-h-11 items-center rounded-full bg-ember px-5 text-xs font-medium uppercase tracking-[0.2em] text-cocoa no-underline shadow-[var(--shadow-pill-dark)] sm:px-6.5"
+              className="press hidden min-h-11 items-center rounded-full bg-ember px-5 text-xs font-medium uppercase tracking-[0.2em] text-cocoa no-underline shadow-[var(--shadow-pill-dark)] sm:px-6.5 lg:inline-flex"
             >
               {cta.label}
             </Link>

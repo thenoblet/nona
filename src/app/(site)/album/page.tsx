@@ -159,7 +159,8 @@ async function readOwnGuest(): Promise<OwnGuest | null> {
 function AlbumHeadBody({ sharing }: { sharing: Sharing }) {
   const open = sharing.state === "open";
   return (
-    <div className="mt-4 flex flex-col gap-4">
+    // #share: where the phone tab bar's Share button lands, on the photo and video buttons.
+    <div id="share" className="mt-4 flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <p className="m-0 flex items-center gap-2.5 text-[11px] uppercase tracking-[0.3em] text-ember">
           {open ? <span className="live-dot" aria-hidden /> : null}

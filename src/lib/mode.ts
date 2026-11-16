@@ -18,8 +18,14 @@ export function modeAt(now: Date): Mode {
   return "after";
 }
 
-const previewAllowed =
+/** Whether `?mode=` may preview another version: read on the server, and handed to the client as a prop. */
+export const previewAllowed =
   process.env.NODE_ENV !== "production" || process.env.ALLOW_MODE_PREVIEW === "true";
+
+/** The version a `?mode=` value asks for, or null when it names none. */
+export function previewedMode(value: string | null | undefined): Mode | null {
+  return value === "before" || value === "day" || value === "after" ? value : null;
+}
 
 /**
  * `?mode=day` or `?mode=after` previews another version.
@@ -27,8 +33,6 @@ const previewAllowed =
  */
 export function resolveMode(now: Date, preview?: string | string[] | null): Mode {
   const value = Array.isArray(preview) ? preview[0] : preview;
-  if (previewAllowed && (value === "before" || value === "day" || value === "after")) {
-    return value;
-  }
-  return modeAt(now);
+  const previewed = previewAllowed ? previewedMode(value) : null;
+  return previewed ?? modeAt(now);
 }

@@ -34,6 +34,9 @@ export const viewport: Viewport = {
   themeColor: "#3D2927",
   width: "device-width",
   initialScale: 1,
+  // The page reaches the screen's edges, so the phone tab bar sits on the home bar's strip; what
+  // has to stay clear of the notch and the home bar uses the safe-area insets.
+  viewportFit: "cover",
 };
 
 /**
