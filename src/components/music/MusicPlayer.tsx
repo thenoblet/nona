@@ -155,6 +155,9 @@ const closing = "duration-200 ease-[cubic-bezier(0.4,0,1,1)]";
 export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
   const music = useMusic();
   const [open, setOpen] = useState(false);
+  // The playlist card's contents are drawn the first time it opens, not sent with every page: most
+  // guests never open it, and every song in it would add to each page's HTML.
+  const [playlistOpened, setPlaylistOpened] = useState(false);
   // Where the guest is dragging the seek bar. The audio only moves on release:
   // seeking on every step re-downloads the song again and again on mobile data.
   const [scrub, setScrub] = useState<number | null>(null);
@@ -410,116 +413,122 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
         id="playlist-card"
         role="region"
         aria-label="Our playlist"
-        // Moved up or down the screen, the card fits the room on its side and scrolls inside.
+        // The card fits the room above the pill (or, moved up or down the screen, the room on its
+        // side) and scrolls inside, however long the playlist grows.
         style={placed ? { maxHeight: placed.roomPx } : undefined}
         className={`absolute overflow-y-auto overscroll-contain ${onLeft ? "left-0" : "right-0"} ${
           placed?.below ? `top-[calc(100%+12px)] ${onLeft ? "origin-top-left" : "origin-top-right"}` : `bottom-[calc(100%+12px)] ${onLeft ? "origin-bottom-left" : "origin-bottom-right"}`
-        } w-[min(340px,calc(100vw-32px))] rounded-[var(--radius-paper)] bg-white px-2.5 pt-1.5 pb-2 text-cocoa shadow-[0_1px_2px_rgb(61_41_39/0.08),0_18px_44px_rgb(61_41_39/0.18)] transition-[opacity,scale,translate,visibility] ${
+        } max-h-[calc(100dvh-var(--tabbar-space)-112px)] w-[min(340px,calc(100vw-32px))] rounded-[var(--radius-paper)] bg-white px-2.5 pt-1.5 pb-2 text-cocoa max-sm:w-[min(296px,calc(100vw-32px))] max-sm:px-2 max-sm:pt-1 max-sm:pb-1.5 shadow-[0_1px_2px_rgb(61_41_39/0.08),0_18px_44px_rgb(61_41_39/0.18)] transition-[opacity,scale,translate,visibility] ${
           open ? `visible translate-y-0 scale-100 opacity-100 ${opening}` : `invisible translate-y-1.5 scale-95 opacity-0 ${closing}`
         }`}
       >
-        <div className="flex items-center justify-between gap-2 border-b border-hairline pb-1 pl-2">
-          <span className="font-script text-[26px] leading-tight">Songs for the two of us</span>
-          <button
-            type="button"
-            onClick={close}
-            aria-label="Close our playlist"
-            className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-cocoa transition-colors hover:bg-tray"
-          >
-            <Icon name="close" size={18} strokeWidth={1.7} />
-          </button>
-        </div>
+        {playlistOpened ? (
+          <>
+            {/* Phones get a smaller card: everything in it a size down, every button still easy to tap. */}
+            <div className="flex items-center justify-between gap-2 border-b border-hairline pb-1 pl-2 max-sm:pb-0.5">
+              <span className="font-script text-[26px] leading-tight max-sm:text-[21px]">Songs for the two of us</span>
+              <button
+                type="button"
+                onClick={close}
+                aria-label="Close our playlist"
+                className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-cocoa transition-colors hover:bg-tray max-sm:size-10"
+              >
+                <Icon name="close" size={16} strokeWidth={1.7} />
+              </button>
+            </div>
 
-        <div className="flex flex-col border-b border-hairline px-2 pt-2.5 pb-2">
-          <div className="relative h-6">
-            <div aria-hidden className="absolute inset-x-0 top-2.5 h-1 rounded-sm bg-hairline" />
-            <div
-              aria-hidden
-              className="pointer-events-none absolute top-2.5 left-0 h-1 rounded-sm bg-ember"
-              style={{ width: `calc(8px + (100% - 16px) * ${frac.toFixed(4)})` }}
-            />
-            <input
-              type="range"
-              className="seek absolute inset-0 m-0 h-6 w-full"
-              min={0}
-              max={Math.round(music.duration)}
-              step={1}
-              value={Math.floor(shown)}
-              onChange={(event) => setScrub(Number(event.target.value))}
-              onPointerUp={commitSeek}
-              onPointerCancel={commitSeek}
-              onTouchEnd={commitSeek}
-              onKeyUp={commitSeek}
-              onBlur={commitSeek}
-              aria-label={`Position in ${song.title}`}
-              aria-valuetext={`${clock(shown)} of ${clock(music.duration)}`}
-            />
-          </div>
-          <div className="flex justify-between text-[11px] tracking-wide text-mocha">
-            <span>{clock(shown)}</span>
-            <span>{clock(music.duration)}</span>
-          </div>
-          <div className="-mt-1 flex items-center justify-center gap-6">
-            <button
-              type="button"
-              onClick={music.prev}
-              aria-label="Previous song"
-              className="press flex size-11 cursor-pointer items-center justify-center rounded-full hover:bg-tray"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
-                <path d="M6 5v14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                <path d="M19 5.5L9 12l10 6.5z" fill="currentColor" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={music.toggle}
-              aria-pressed={music.playing}
-              aria-label={`${music.playing ? "Pause" : "Play"} ${song.title}`}
-              className="press flex size-12 cursor-pointer items-center justify-center rounded-full bg-ember text-cocoa shadow-[var(--shadow-pill-ember)]"
-            >
-              {music.playing ? <PauseGlyph size={18} /> : <PlayGlyph size={18} />}
-            </button>
-            <button
-              type="button"
-              onClick={music.next}
-              aria-label="Next song"
-              className="press flex size-11 cursor-pointer items-center justify-center rounded-full hover:bg-tray"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
-                <path d="M18 5v14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                <path d="M5 5.5L15 12 5 18.5z" fill="currentColor" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <ol className="m-0 flex list-none flex-col gap-0.5 p-0 pt-1.5">
-          {songs.map((listed, index) => {
-            const current = index === music.track;
-            const on = current && music.playing;
-            return (
-              <li key={listed.id}>
+            <div className="flex flex-col border-b border-hairline px-2 pt-2.5 pb-2 max-sm:pt-1.5 max-sm:pb-1.5">
+              <div className="relative h-6">
+                <div aria-hidden className="absolute inset-x-0 top-2.5 h-1 rounded-sm bg-hairline" />
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute top-2.5 left-0 h-1 rounded-sm bg-ember"
+                  style={{ width: `calc(8px + (100% - 16px) * ${frac.toFixed(4)})` }}
+                />
+                <input
+                  type="range"
+                  className="seek absolute inset-0 m-0 h-6 w-full"
+                  min={0}
+                  max={Math.round(music.duration)}
+                  step={1}
+                  value={Math.floor(shown)}
+                  onChange={(event) => setScrub(Number(event.target.value))}
+                  onPointerUp={commitSeek}
+                  onPointerCancel={commitSeek}
+                  onTouchEnd={commitSeek}
+                  onKeyUp={commitSeek}
+                  onBlur={commitSeek}
+                  aria-label={`Position in ${song.title}`}
+                  aria-valuetext={`${clock(shown)} of ${clock(music.duration)}`}
+                />
+              </div>
+              <div className="flex justify-between text-[11px] tracking-wide text-mocha max-sm:text-[10px]">
+                <span>{clock(shown)}</span>
+                <span>{clock(music.duration)}</span>
+              </div>
+              <div className="-mt-1 flex items-center justify-center gap-6 max-sm:gap-5">
                 <button
                   type="button"
-                  onClick={() => (current ? music.toggle() : music.playTrack(index))}
-                  aria-pressed={on}
-                  aria-label={`${on ? "Pause" : "Play"} ${listed.title}`}
-                  className={`flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[var(--radius-paper)] border-0 px-2 py-1.5 text-left transition-colors hover:bg-blush ${current ? "bg-blush" : "bg-transparent"}`}
+                  onClick={music.prev}
+                  aria-label="Previous song"
+                  className="press flex size-11 cursor-pointer items-center justify-center rounded-full hover:bg-tray"
                 >
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-halo text-ember">
-                    {on ? <Bars playing loading={loading} /> : <PlayGlyph size={11} />}
-                  </span>
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate font-serif text-[17px] leading-tight italic">{listed.title}</span>
-                    <span className="truncate text-[11px] tracking-wide text-mocha">{listed.artist}</span>
-                  </span>
-                  <span className="shrink-0 text-[11px] tracking-wide text-mocha">{clock(listed.seconds)}</span>
+                  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                    <path d="M6 5v14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M19 5.5L9 12l10 6.5z" fill="currentColor" />
+                  </svg>
                 </button>
-              </li>
-            );
-          })}
-        </ol>
+                <button
+                  type="button"
+                  onClick={music.toggle}
+                  aria-pressed={music.playing}
+                  aria-label={`${music.playing ? "Pause" : "Play"} ${song.title}`}
+                  className="press flex size-12 cursor-pointer items-center justify-center rounded-full bg-ember text-cocoa shadow-[var(--shadow-pill-ember)] max-sm:size-11"
+                >
+                  {music.playing ? <PauseGlyph size={18} /> : <PlayGlyph size={18} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={music.next}
+                  aria-label="Next song"
+                  className="press flex size-11 cursor-pointer items-center justify-center rounded-full hover:bg-tray"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                    <path d="M18 5v14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M5 5.5L15 12 5 18.5z" fill="currentColor" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <ol className="m-0 flex list-none flex-col gap-0.5 p-0 pt-1.5 max-sm:gap-0 max-sm:pt-1">
+              {songs.map((listed, index) => {
+                const current = index === music.track;
+                const on = current && music.playing;
+                return (
+                  <li key={listed.id}>
+                    <button
+                      type="button"
+                      onClick={() => (current ? music.toggle() : music.playTrack(index))}
+                      aria-pressed={on}
+                      aria-label={`${on ? "Pause" : "Play"} ${listed.title}`}
+                      className={`flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[var(--radius-paper)] border-0 px-2 py-1.5 text-left transition-colors hover:bg-blush max-sm:min-h-11 max-sm:gap-2.5 max-sm:py-1 ${current ? "bg-blush" : "bg-transparent"}`}
+                    >
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-halo text-ember max-sm:size-7">
+                        {on ? <Bars playing loading={loading} /> : <PlayGlyph size={11} />}
+                      </span>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate font-serif text-[17px] leading-tight italic max-sm:text-[15px]">{listed.title}</span>
+                        <span className="truncate text-[11px] tracking-wide text-mocha max-sm:text-[10px]">{listed.artist}</span>
+                      </span>
+                      <span className="shrink-0 text-[11px] tracking-wide text-mocha max-sm:text-[10px]">{clock(listed.seconds)}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ) : null}
       </div>
 
       <div
@@ -572,7 +581,10 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
         <button
           ref={toggleButton}
           type="button"
-          onClick={() => setOpen((isOpen) => !isOpen)}
+          onClick={() => {
+            setPlaylistOpened(true);
+            setOpen((isOpen) => !isOpen);
+          }}
           aria-expanded={open}
           aria-controls="playlist-card"
           aria-label={open ? "Hide our playlist" : "Show our playlist"}
