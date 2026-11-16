@@ -36,7 +36,8 @@ function useTyping(): boolean {
 }
 
 /**
- * The bar itself: white, a hairline on top, a soft shadow upwards, 64 px over the home bar's strip.
+ * The bar itself: white, a hairline on top, a soft shadow upwards, 64 px with the hairline, over the
+ * home bar's strip.
  * Phones only. `data-tab-bar` makes room for it at the foot of the page (globals.css).
  */
 function Frame({ hidden = false, children }: { hidden?: boolean; children?: ReactNode }) {
@@ -48,7 +49,7 @@ function Frame({ hidden = false, children }: { hidden?: boolean; children?: Reac
         hidden ? "translate-y-[calc(100%+40px)]" : "translate-y-0"
       }`}
     >
-      <ul className="mx-auto flex h-16 max-w-[560px] list-none items-stretch p-0">{children}</ul>
+      <ul className="mx-auto flex h-[63px] max-w-[560px] list-none items-stretch p-0">{children}</ul>
     </nav>
   );
 }
