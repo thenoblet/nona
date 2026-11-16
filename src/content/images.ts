@@ -22,6 +22,7 @@ import james from "../../public/images/party/james.jpg";
 import dennis from "../../public/images/party/dennis.jpg";
 import afrifa from "../../public/images/party/afrifa.jpg";
 import bernice from "../../public/images/party/bernice.jpg";
+import jacqueline from "../../public/images/party/jacqueline.jpg";
 import priscilla from "../../public/images/party/priscilla.jpg";
 import rahina from "../../public/images/party/rahina.jpg";
 import homeHero from "../../public/images/home/hero.jpg";
@@ -104,6 +105,7 @@ export const partyPhotos: Partial<Record<string, Photo>> = {
   dennis: { src: dennis, alt: "Dennis, groomsman", position: "center 30%" },
   afrifa: { src: afrifa, alt: "Afrifa, groomsman", position: "center 30%" },
   bernice: { src: bernice, alt: "Bernice, bridesmaid", position: "center 30%" },
+  jacqueline: { src: jacqueline, alt: "Jacqueline, bridesmaid", position: "center 30%" },
   priscilla: { src: priscilla, alt: "Priscilla, bridesmaid", position: "center 30%" },
   rahina: { src: rahina, alt: "Rahina, bridesmaid", position: "center 30%" },
 };
