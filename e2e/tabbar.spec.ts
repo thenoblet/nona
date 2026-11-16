@@ -75,29 +75,46 @@ test("phones get a tab bar that follows the wedding, and laptops keep the header
   await laptop.close();
 });
 
+/**
+ * Whether the music shows as the round button (tucked) or the pill. The other one stays in the page,
+ * faded out and `inert`: out of reach of taps, keys and screen readers. Playwright's role queries
+ * don't reliably leave inert elements out, and count a faded one as visible, so this checks both
+ * attributes directly.
+ */
+async function expectTucked(page: Page, tucked: boolean) {
+  const pill = page.locator("[data-music-player] > div:has(> [aria-label$=' our song'])");
+  const roundButton = page.locator("[data-music-player] > button");
+  const [hidden, shown] = tucked ? [pill, roundButton] : [roundButton, pill];
+  await expect(hidden).toHaveAttribute("inert", "");
+  await expect(hidden).toHaveCSS("opacity", "0");
+  await expect(shown).not.toHaveAttribute("inert");
+  await expect(shown).toHaveCSS("opacity", "1");
+}
+
 test("the music pill tucks into a round button, stays tucked across pages, and opens again", async ({ browser, baseURL }) => {
   const context = await phone(browser, baseURL);
   const page = await context.newPage();
   await page.goto("/home");
   const roundButton = page.getByRole("button", { name: /^Open the music player/ });
 
+  await expectTucked(page, false);
   await page.getByRole("button", { name: "Make the music player smaller" }).click();
-  await expect(roundButton).toBeVisible();
+  await expectTucked(page, true);
   await expect(roundButton).toBeFocused();
   // The note is for eyes; the round button's own name says the same to a screen reader.
   await expect(page.locator("[data-music-player] p", { hasText: /Tap here to open/ })).toHaveCSS("opacity", "1");
-  await expect(page.getByRole("button", { name: "Play our song" })).toBeHidden();
 
   // The player lives in the layout, so another page keeps it tucked; so does coming back later.
   await bar(page).getByRole("link", { name: "Programme" }).click();
   await expect(page).toHaveURL(/\/programme$/);
-  await expect(roundButton).toBeVisible();
+  await expectTucked(page, true);
   await page.reload();
-  await expect(roundButton).toBeVisible();
+  await expectTucked(page, true);
 
   await roundButton.click();
-  await expect(page.getByRole("button", { name: "Play our song" })).toBeFocused();
+  await expectTucked(page, false);
+  await expect(page.locator("[aria-label='Play our song']")).toBeFocused();
   await page.reload();
-  await expect(page.getByRole("button", { name: "Make the music player smaller" })).toBeVisible();
+  await expectTucked(page, false);
   await context.close();
 });
