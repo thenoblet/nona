@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type PointerE
 import { songs } from "@/content/songs";
 import { Icon, PauseGlyph, PlayGlyph } from "@/components/ui/Icon";
 import { useMusic } from "./MusicProvider";
+import { placeSpot, readSpot, snapSpot, type Room, type Side, type Spot } from "./spot";
 import { PEEK_MS, openPill, pillShown, tuckReducer } from "./tuck";
 
 function clock(time: number) {
@@ -15,6 +16,17 @@ function clock(time: number) {
 const TUCKED_KEY = "nona:music-tucked";
 /** Whether this browser has shown the note on where the music went, the first time it was tucked. */
 const HINT_KEY = "nona:music-tuck-hint-seen";
+/** Where the guest moved the round button to, kept across pages and visits (src/components/music/spot.ts). */
+const SPOT_KEY = "nona:music-spot";
+/** Phones, where the round button can be moved; laptops keep it in the corner. */
+const PHONE = "(width < 64rem)";
+/** The round button's size, and how far a finger moves before a tap becomes a drag. */
+const BUTTON_PX = 54;
+const DRAG_PX = 8;
+/** Space kept between the button and the header above, or the tab bar below. */
+const CLEARANCE_PX = 12;
+/** How long the button takes to glide to its side once let go. */
+const GLIDE_MS = 250;
 /** How long that note shows. */
 const HINT_MS = 4000;
 /** How far to the right the pill has to be dragged to tuck it away. */
@@ -29,6 +41,64 @@ function remembered(key: string): boolean {
   } catch {
     return false;
   }
+}
+
+function storedText(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storeText(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Not remembered; the button still sits where it was put until the page is left.
+  }
+}
+
+/**
+ * The band the moved button may rest in on this screen: below the sticky header and above the
+ * phone tab bar (measured as laid out, so a bar that has stepped aside for the keyboard still counts).
+ */
+function measureRoom(): Room {
+  // Below the notch or the status bar too, where a header has scrolled away.
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;top:0;visibility:hidden;padding-top:env(safe-area-inset-top)";
+  document.body.append(probe);
+  let headerBottom = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+  probe.remove();
+  for (const header of document.querySelectorAll("header")) {
+    const position = getComputedStyle(header).position;
+    if (position === "sticky" || position === "fixed") headerBottom = Math.max(headerBottom, header.getBoundingClientRect().bottom);
+  }
+  const bar = document.querySelector<HTMLElement>("[data-tab-bar]");
+  const barHeight = bar && getComputedStyle(bar).display !== "none" ? bar.offsetHeight : 0;
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    topLimit: Math.max(0, headerBottom) + CLEARANCE_PX,
+    bottomLimit: window.innerHeight - barHeight - CLEARANCE_PX,
+  };
+}
+
+/**
+ * Where the moved button sits on this screen, whether its playlist and note open below it, and how
+ * tall the playlist may be there.
+ */
+type Placed = { side: Side; topPx: number; below: boolean; roomPx: number };
+
+function place(spot: Spot | null): Placed | null {
+  if (!spot || !window.matchMedia(PHONE).matches) return null;
+  const room = measureRoom();
+  const placed = placeSpot(spot, BUTTON_PX, room);
+  if (!placed) return null;
+  // The playlist card and the first-tuck note open on whichever side of the button has more room.
+  const roomAbove = placed.topPx - room.topLimit;
+  const roomBelow = room.bottomLimit - placed.topPx - BUTTON_PX;
+  return { ...placed, below: roomBelow > roomAbove, roomPx: Math.max(roomAbove, roomBelow) - CLEARANCE_PX };
 }
 
 function remember(key: string, value: boolean) {
@@ -77,6 +147,10 @@ const closing = "duration-200 ease-[cubic-bezier(0.4,0,1,1)]";
  * The › at its end, or a swipe to the right, tucks the pill into a round button with the dancing
  * bars and a ring that fills as the song plays; a tap opens it again. When a new song starts while
  * it is tucked, the pill opens for a few seconds to show the song's name, then tucks itself back.
+ *
+ * On phones the round button can be dragged anywhere; let go, it glides to the nearer side at that
+ * height, clear of the header and the tab bar, and the pill opens, tucks and peeks from there. On
+ * the left the pill mirrors: its ‹ comes first, and a swipe to the left tucks it.
  */
 export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
   const music = useMusic();
@@ -106,11 +180,53 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
   const [swipe, setSwipe] = useState(0);
   const showPill = pillShown(tuck);
 
+  // Where the guest moved the round button (as this browser remembers it), and where that is on
+  // this screen (none: the corner).
+  const spot = useRef<Spot | null>(null);
+  const [placed, setPlaced] = useState<Placed | null>(null);
+  // A drag of the round button: where it started, where on the button the finger is, and how far it
+  // has gone.
+  const dragStart = useRef<{ across: number; down: number; grabX: number; grabY: number } | null>(null);
+  const dragging = useRef(false);
+  const [drag, setDrag] = useState<{ across: number; down: number } | null>(null);
+  // Where the button's middle was let go, so it can glide from there to its side.
+  const droppedAt = useRef<{ x: number; y: number } | null>(null);
+  const side: Side = placed?.side ?? "right";
+  const onLeft = side === "left";
+
   useLayoutEffect(() => {
     if (remembered(TUCKED_KEY)) dispatch({ type: "restore", tucked: true });
     const frame = requestAnimationFrame(() => setAnimated(true));
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  // Put the button at its remembered spot, and again whenever the screen changes size or turns.
+  useLayoutEffect(() => {
+    spot.current = readSpot(storedText(SPOT_KEY));
+    const update = () => setPlaced(place(spot.current));
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+
+  // Let go: glide from where the finger left it to its side.
+  useLayoutEffect(() => {
+    const dropped = droppedAt.current;
+    const button = tuckedButton.current;
+    droppedAt.current = null;
+    if (!dropped || !button || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const now = button.getBoundingClientRect();
+    const across = dropped.x - (now.left + now.width / 2);
+    const down = dropped.y - (now.top + now.height / 2);
+    button.animate([{ translate: `${across}px ${down}px` }, { translate: "0 0" }], {
+      duration: GLIDE_MS,
+      easing: "cubic-bezier(0.16,1,0.3,1)",
+    });
+  }, [placed]);
 
   // A new song while tucked: the pill peeks, and screen readers hear its name.
   useEffect(() => {
@@ -173,7 +289,8 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
   function onSwipeMove(event: ReactPointerEvent<HTMLDivElement>) {
     const start = swipeStart.current;
     if (!start) return;
-    const across = event.clientX - start.across;
+    // Towards the side the player sits on: right in the corner, left when it was moved to the left.
+    const across = (event.clientX - start.across) * (onLeft ? -1 : 1);
     const down = event.clientY - start.down;
     if (!swiping.current) {
       // Mostly up or down: the page is scrolling, not a swipe.
@@ -186,6 +303,47 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     setSwipe(Math.max(0, across));
+  }
+
+  function onDragStart(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0 || !window.matchMedia(PHONE).matches) return;
+    const box = event.currentTarget.getBoundingClientRect();
+    dragStart.current = {
+      across: event.clientX,
+      down: event.clientY,
+      grabX: event.clientX - (box.left + box.width / 2),
+      grabY: event.clientY - (box.top + box.height / 2),
+    };
+    dragging.current = false;
+    // Hold on to the pointer from the start, so a quick flick that leaves the button still drags it.
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function onDragMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const start = dragStart.current;
+    if (!start) return;
+    const moved = { across: event.clientX - start.across, down: event.clientY - start.down };
+    if (!dragging.current) {
+      if (Math.hypot(moved.across, moved.down) < DRAG_PX) return;
+      dragging.current = true;
+      setHint(false);
+    }
+    setDrag(moved);
+  }
+
+  function onDragEnd(event: ReactPointerEvent<HTMLButtonElement>) {
+    const start = dragStart.current;
+    if (dragging.current && start) {
+      // The button's middle under the finger (not its box, which the lift's scale skews).
+      const middle = { x: event.clientX - start.grabX, y: event.clientY - start.grabY };
+      const next = snapSpot(middle, BUTTON_PX, measureRoom());
+      droppedAt.current = middle;
+      storeText(SPOT_KEY, JSON.stringify(next));
+      spot.current = next;
+      setPlaced(place(next));
+    }
+    dragStart.current = null;
+    setDrag(null);
   }
 
   function onSwipeEnd() {
@@ -234,12 +392,29 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
   }
 
   return (
-    <div ref={root} data-music-player className="relative">
+    <div
+      ref={root}
+      data-music-player
+      data-side={placed ? side : undefined}
+      className={placed ? "fixed z-50" : "relative"}
+      style={
+        placed
+          ? {
+              top: placed.topPx,
+              [side]: `calc(14px + env(safe-area-inset-${side}))`,
+            }
+          : undefined
+      }
+    >
       <div
         id="playlist-card"
         role="region"
         aria-label="Our playlist"
-        className={`absolute right-0 bottom-[calc(100%+12px)] w-[min(340px,calc(100vw-32px))] origin-bottom-right rounded-[var(--radius-paper)] bg-white px-2.5 pt-1.5 pb-2 text-cocoa shadow-[0_1px_2px_rgb(61_41_39/0.08),0_18px_44px_rgb(61_41_39/0.18)] transition-[opacity,scale,translate,visibility] ${
+        // Moved up or down the screen, the card fits the room on its side and scrolls inside.
+        style={placed ? { maxHeight: placed.roomPx } : undefined}
+        className={`absolute overflow-y-auto overscroll-contain ${onLeft ? "left-0" : "right-0"} ${
+          placed?.below ? `top-[calc(100%+12px)] ${onLeft ? "origin-top-left" : "origin-top-right"}` : `bottom-[calc(100%+12px)] ${onLeft ? "origin-bottom-left" : "origin-bottom-right"}`
+        } w-[min(340px,calc(100vw-32px))] rounded-[var(--radius-paper)] bg-white px-2.5 pt-1.5 pb-2 text-cocoa shadow-[0_1px_2px_rgb(61_41_39/0.08),0_18px_44px_rgb(61_41_39/0.18)] transition-[opacity,scale,translate,visibility] ${
           open ? `visible translate-y-0 scale-100 opacity-100 ${opening}` : `invisible translate-y-1.5 scale-95 opacity-0 ${closing}`
         }`}
       >
@@ -368,10 +543,10 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
         }}
         onFocus={keepIfPeeking}
         inert={!showPill}
-        style={swipe > 0 ? { translate: `${swipe}px 0`, opacity: Math.max(0.3, 1 - swipe / 160), transition: "none" } : undefined}
-        className={`flex min-h-12 origin-bottom-right touch-pan-y items-center gap-0.5 rounded-full bg-white p-0.5 pl-1 text-cocoa shadow-[var(--shadow-pill-white)] sm:min-h-14 sm:gap-1 sm:p-2 ${
+        style={swipe > 0 ? { translate: `${onLeft ? -swipe : swipe}px 0`, opacity: Math.max(0.3, 1 - swipe / 160), transition: "none" } : undefined}
+        className={`flex min-h-12 ${onLeft ? "origin-bottom-left" : "origin-bottom-right"} touch-pan-y items-center gap-0.5 rounded-full bg-white p-0.5 pl-1 text-cocoa shadow-[var(--shadow-pill-white)] sm:min-h-14 sm:gap-1 sm:p-2 ${
           animated ? "transition-[opacity,scale,translate] motion-reduce:transition-none" : ""
-        } ${showPill ? `scale-100 opacity-100 ${opening}` : `pointer-events-none absolute right-0 bottom-0 scale-50 opacity-0 ${closing}`}`}
+        } ${showPill ? `scale-100 opacity-100 ${opening}` : `pointer-events-none absolute ${onLeft ? "left-0" : "right-0"} bottom-0 scale-50 opacity-0 ${closing}`}`}
       >
         <button
           ref={playButton}
@@ -420,10 +595,10 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
           type="button"
           onClick={tuckAway}
           aria-label="Make the music player smaller"
-          className="flex h-11 w-8 shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-mocha"
+          className={`flex h-11 w-8 shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-mocha ${onLeft ? "order-first" : ""}`}
         >
           <span className="flex size-[30px] items-center justify-center rounded-full transition-colors hover:bg-tray">
-            <Icon name="chevron" size={16} strokeWidth={1.8} className="-rotate-90" />
+            <Icon name="chevron" size={16} strokeWidth={1.8} className={onLeft ? "rotate-90" : "-rotate-90"} />
           </span>
         </button>
       </div>
@@ -433,11 +608,36 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
         ref={tuckedButton}
         type="button"
         onClick={openAgain}
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={() => {
+          dragStart.current = null;
+          dragging.current = false;
+          setDrag(null);
+        }}
+        // A drag is not a tap: letting go never opens the pill.
+        onClickCapture={(event) => {
+          if (!dragging.current) return;
+          dragging.current = false;
+          event.preventDefault();
+          event.stopPropagation();
+        }}
         inert={showPill}
+        style={
+          drag
+            ? {
+                translate: `${drag.across}px ${drag.down}px`,
+                scale: "1.1",
+                boxShadow: "0 2px 4px rgb(61 41 39 / 0.10), 0 22px 44px rgb(61 41 39 / 0.34)",
+                transition: "none",
+              }
+            : undefined
+        }
         aria-label={`Open the music player. ${music.playing ? "Now playing" : "Paused"}: ${song.title}`}
-        className={`flex size-[54px] origin-bottom-right cursor-pointer items-center justify-center rounded-full border-0 bg-white p-0 shadow-[var(--shadow-pill-white)] ${
+        className={`flex size-[54px] ${onLeft ? "origin-bottom-left" : "origin-bottom-right"} cursor-pointer touch-none items-center justify-center rounded-full border-0 bg-white p-0 shadow-[var(--shadow-pill-white)] ${
           animated ? "transition-[opacity,scale] motion-reduce:transition-none" : ""
-        } ${showPill ? `pointer-events-none absolute right-0 bottom-0 scale-50 opacity-0 ${closing}` : `relative scale-100 opacity-100 ${opening}`}`}
+        } ${showPill ? `pointer-events-none absolute ${onLeft ? "left-0" : "right-0"} bottom-0 scale-50 opacity-0 ${closing}` : `relative scale-100 opacity-100 ${opening}`}`}
       >
         <svg aria-hidden viewBox="0 0 54 54" className="absolute inset-0 -rotate-90">
           <circle cx="27" cy="27" r="25" fill="none" stroke="var(--color-tray)" strokeWidth="2.5" />
@@ -462,7 +662,9 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
       {/* The first time it is tucked: where the music went. */}
       <p
         aria-hidden
-        className={`pointer-events-none absolute right-0 bottom-[calc(100%+12px)] m-0 w-max max-w-[220px] rounded-xl bg-cocoa px-3.5 py-2.5 text-[13px] leading-snug text-white shadow-[var(--shadow-pill-white)] transition-opacity duration-300 after:absolute after:top-full after:right-5 after:border-6 after:border-transparent after:border-t-cocoa ${
+        className={`pointer-events-none absolute ${onLeft ? "left-0 after:left-5" : "right-0 after:right-5"} ${
+          placed?.below ? "top-[calc(100%+12px)] after:bottom-full after:border-b-cocoa" : "bottom-[calc(100%+12px)] after:top-full after:border-t-cocoa"
+        } m-0 w-max max-w-[220px] rounded-xl bg-cocoa px-3.5 py-2.5 text-[13px] leading-snug text-white shadow-[var(--shadow-pill-white)] transition-opacity duration-300 after:absolute after:border-6 after:border-transparent ${
           hint && !showPill ? "opacity-100" : "opacity-0"
         }`}
       >
