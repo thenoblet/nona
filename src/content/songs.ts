@@ -69,4 +69,14 @@ export const songs: Song[] = [
       { src: "/audio/i-wanna-love-you.mp3", type: "audio/mpeg" },
     ],
   },
+  {
+    id: "odo-aduro",
+    title: "Odo Aduro",
+    artist: "Afrifa",
+    seconds: 137,
+    sources: [
+      { src: "/audio/odo-aduro.webm", type: 'audio/webm; codecs="opus"' },
+      { src: "/audio/odo-aduro.mp3", type: "audio/mpeg" },
+    ],
+  },
 ];
