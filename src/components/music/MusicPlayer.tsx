@@ -1,13 +1,43 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { songs } from "@/content/songs";
 import { Icon, PauseGlyph, PlayGlyph } from "@/components/ui/Icon";
 import { useMusic } from "./MusicProvider";
+import { PEEK_MS, openPill, pillShown, tuckReducer } from "./tuck";
 
-function clock(t: number) {
-  const s = Math.max(0, Math.floor(t));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+function clock(time: number) {
+  const seconds = Math.max(0, Math.floor(time));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/** Whether the guest tucked the player away, kept across pages and visits. */
+const TUCKED_KEY = "nona:music-tucked";
+/** Whether this browser has shown the note on where the music went, the first time it was tucked. */
+const HINT_KEY = "nona:music-tuck-hint-seen";
+/** How long that note shows. */
+const HINT_MS = 4000;
+/** How far to the right the pill has to be dragged to tuck it away. */
+const SWIPE_PX = 48;
+/** The progress ring's length: a circle of radius 25. */
+const RING = 2 * Math.PI * 25;
+
+/** Browser storage can be missing or refuse (private windows, blocked site data): then nothing is remembered. */
+function remembered(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function remember(key: string, value: boolean) {
+  try {
+    if (value) localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
+  } catch {
+    // Not remembered; the player still works.
+  }
 }
 
 /** Four bars that dance while music plays, and pulse softly while it loads. */
@@ -20,12 +50,12 @@ export function Bars({ playing, loading = false }: { playing: boolean; loading?:
   ];
   return (
     <span className={`flex items-end gap-[3px] ${loading ? "animate-pulse" : ""}`} aria-hidden>
-      {bars.map(([h, delay]) => (
+      {bars.map(([height, delay]) => (
         <span
           key={delay}
           className="block w-[3px] origin-bottom rounded-sm bg-ember"
           style={{
-            height: h,
+            height,
             animation: playing && !loading ? `bar 900ms ease-in-out ${delay}ms infinite` : undefined,
             transform: playing && !loading ? undefined : "scaleY(0.45)",
           }}
@@ -43,6 +73,10 @@ const closing = "duration-200 ease-[cubic-bezier(0.4,0,1,1)]";
  * The floating music pill with its playlist card.
  * The playlist button grows the card out of the pill's corner; the ✕ on either,
  * a tap anywhere else, or Escape puts it away. Phones get a slimmer pill.
+ *
+ * The › at its end, or a swipe to the right, tucks the pill into a round button with the dancing
+ * bars and a ring that fills as the song plays; a tap opens it again. When a new song starts while
+ * it is tucked, the pill opens for a few seconds to show the song's name, then tucks itself back.
  */
 export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
   const music = useMusic();
@@ -52,7 +86,113 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
   const [scrub, setScrub] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const toggleButton = useRef<HTMLButtonElement>(null);
+  const playButton = useRef<HTMLButtonElement>(null);
+  const tuckedButton = useRef<HTMLButtonElement>(null);
   const song = songs[music.track];
+
+  const [tuck, dispatch] = useReducer(tuckReducer, openPill);
+  const [hint, setHint] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  // Tucking and opening glide, but what this browser remembered shows as it is, with no animation.
+  const [animated, setAnimated] = useState(false);
+  // Where focus goes once the pill or the round button is on screen: where the guest's hand was.
+  // The hidden one is `inert` (out of reach of taps, keys and screen readers) rather than
+  // `invisible`, which would refuse focus at the very start of its fade in.
+  const focusNext = useRef<"play" | "tucked" | null>(null);
+  const lastTrack = useRef(music.track);
+  // A swipe on the pill: where it started, and how far right it has gone.
+  const swipeStart = useRef<{ across: number; down: number } | null>(null);
+  const swiping = useRef(false);
+  const [swipe, setSwipe] = useState(0);
+  const showPill = pillShown(tuck);
+
+  useLayoutEffect(() => {
+    if (remembered(TUCKED_KEY)) dispatch({ type: "restore", tucked: true });
+    const frame = requestAnimationFrame(() => setAnimated(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  // A new song while tucked: the pill peeks, and screen readers hear its name.
+  useEffect(() => {
+    if (lastTrack.current === music.track) return;
+    lastTrack.current = music.track;
+    // Someone using the player by keyboard keeps it as it is, rather than lose their place.
+    if (!tuck.tucked || root.current?.contains(document.activeElement)) return;
+    dispatch({ type: "songChanged" });
+    setAnnouncement(`Now playing ${songs[music.track].title}`);
+  }, [music.track, tuck.tucked]);
+
+  useEffect(() => {
+    if (!tuck.peeking) return;
+    const timer = setTimeout(() => dispatch({ type: "peekEnded" }), PEEK_MS);
+    return () => clearTimeout(timer);
+  }, [tuck.peeking, music.track]);
+
+  useEffect(() => {
+    if (!hint) return;
+    const timer = setTimeout(() => setHint(false), HINT_MS);
+    return () => clearTimeout(timer);
+  }, [hint]);
+
+  useEffect(() => {
+    if (focusNext.current === "play") playButton.current?.focus();
+    if (focusNext.current === "tucked") tuckedButton.current?.focus();
+    focusNext.current = null;
+  }, [tuck.tucked]);
+
+  function tuckAway() {
+    setOpen(false);
+    dispatch({ type: "tuck" });
+    remember(TUCKED_KEY, true);
+    focusNext.current = "tucked";
+    if (!remembered(HINT_KEY)) {
+      remember(HINT_KEY, true);
+      setHint(true);
+    }
+  }
+
+  function openAgain() {
+    dispatch({ type: "open" });
+    remember(TUCKED_KEY, false);
+    setHint(false);
+    focusNext.current = "play";
+  }
+
+  /** A tap or focus on the pill while it peeks keeps it open. */
+  function keepIfPeeking() {
+    if (!tuck.peeking) return;
+    dispatch({ type: "touched" });
+    remember(TUCKED_KEY, false);
+  }
+
+  function onSwipeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    swipeStart.current = { across: event.clientX, down: event.clientY };
+    swiping.current = false;
+  }
+
+  function onSwipeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = swipeStart.current;
+    if (!start) return;
+    const across = event.clientX - start.across;
+    const down = event.clientY - start.down;
+    if (!swiping.current) {
+      // Mostly up or down: the page is scrolling, not a swipe.
+      if (Math.abs(down) > 10 && Math.abs(down) > Math.abs(across)) {
+        swipeStart.current = null;
+        return;
+      }
+      if (across < 8) return;
+      swiping.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    setSwipe(Math.max(0, across));
+  }
+
+  function onSwipeEnd() {
+    if (swiping.current && swipe >= SWIPE_PX) tuckAway();
+    swipeStart.current = null;
+    setSwipe(0);
+  }
 
   useEffect(() => {
     if (autoplay) music.requestAutoplay();
@@ -62,11 +202,11 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
 
   useEffect(() => {
     if (!open) return;
-    const onPointer = (e: PointerEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    const onPointer = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
       setOpen(false);
       toggleButton.current?.focus();
     };
@@ -130,7 +270,7 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
               max={Math.round(music.duration)}
               step={1}
               value={Math.floor(shown)}
-              onChange={(e) => setScrub(Number(e.target.value))}
+              onChange={(event) => setScrub(Number(event.target.value))}
               onPointerUp={commitSeek}
               onPointerCancel={commitSeek}
               onTouchEnd={commitSeek}
@@ -180,26 +320,26 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
         </div>
 
         <ol className="m-0 flex list-none flex-col gap-0.5 p-0 pt-1.5">
-          {songs.map((s, i) => {
-            const current = i === music.track;
+          {songs.map((listed, index) => {
+            const current = index === music.track;
             const on = current && music.playing;
             return (
-              <li key={s.id}>
+              <li key={listed.id}>
                 <button
                   type="button"
-                  onClick={() => (current ? music.toggle() : music.playTrack(i))}
+                  onClick={() => (current ? music.toggle() : music.playTrack(index))}
                   aria-pressed={on}
-                  aria-label={`${on ? "Pause" : "Play"} ${s.title}`}
+                  aria-label={`${on ? "Pause" : "Play"} ${listed.title}`}
                   className={`flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[var(--radius-paper)] border-0 px-2 py-1.5 text-left transition-colors hover:bg-blush ${current ? "bg-blush" : "bg-transparent"}`}
                 >
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-halo text-ember">
                     {on ? <Bars playing loading={loading} /> : <PlayGlyph size={11} />}
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate font-serif text-[17px] leading-tight italic">{s.title}</span>
-                    <span className="truncate text-[11px] tracking-wide text-mocha">{s.artist}</span>
+                    <span className="truncate font-serif text-[17px] leading-tight italic">{listed.title}</span>
+                    <span className="truncate text-[11px] tracking-wide text-mocha">{listed.artist}</span>
                   </span>
-                  <span className="shrink-0 text-[11px] tracking-wide text-mocha">{clock(s.seconds)}</span>
+                  <span className="shrink-0 text-[11px] tracking-wide text-mocha">{clock(listed.seconds)}</span>
                 </button>
               </li>
             );
@@ -207,8 +347,34 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
         </ol>
       </div>
 
-      <div className="flex min-h-12 items-center gap-0.5 rounded-full bg-white p-0.5 pl-1 text-cocoa shadow-[var(--shadow-pill-white)] sm:min-h-14 sm:gap-1 sm:p-2">
+      <div
+        onPointerDown={(event) => {
+          keepIfPeeking();
+          onSwipeStart(event);
+        }}
+        onPointerMove={onSwipeMove}
+        onPointerUp={onSwipeEnd}
+        onPointerCancel={() => {
+          swipeStart.current = null;
+          swiping.current = false;
+          setSwipe(0);
+        }}
+        // A swipe that ends on a button is not a tap on it.
+        onClickCapture={(event) => {
+          if (!swiping.current) return;
+          swiping.current = false;
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onFocus={keepIfPeeking}
+        inert={!showPill}
+        style={swipe > 0 ? { translate: `${swipe}px 0`, opacity: Math.max(0.3, 1 - swipe / 160), transition: "none" } : undefined}
+        className={`flex min-h-12 origin-bottom-right touch-pan-y items-center gap-0.5 rounded-full bg-white p-0.5 pl-1 text-cocoa shadow-[var(--shadow-pill-white)] sm:min-h-14 sm:gap-1 sm:p-2 ${
+          animated ? "transition-[opacity,scale,translate] motion-reduce:transition-none" : ""
+        } ${showPill ? `scale-100 opacity-100 ${opening}` : `pointer-events-none absolute right-0 bottom-0 scale-50 opacity-0 ${closing}`}`}
+      >
         <button
+          ref={playButton}
           type="button"
           onClick={music.toggle}
           aria-pressed={music.playing}
@@ -231,7 +397,7 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
         <button
           ref={toggleButton}
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpen((isOpen) => !isOpen)}
           aria-expanded={open}
           aria-controls="playlist-card"
           aria-label={open ? "Hide our playlist" : "Show our playlist"}
@@ -250,7 +416,61 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
             className={`absolute transition-[opacity,rotate] ${open ? `rotate-0 opacity-100 ${opening}` : `-rotate-90 opacity-0 ${closing}`}`}
           />
         </button>
+        <button
+          type="button"
+          onClick={tuckAway}
+          aria-label="Make the music player smaller"
+          className="flex h-11 w-8 shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-mocha"
+        >
+          <span className="flex size-[30px] items-center justify-center rounded-full transition-colors hover:bg-tray">
+            <Icon name="chevron" size={16} strokeWidth={1.8} className="-rotate-90" />
+          </span>
+        </button>
       </div>
+
+      {/* Tucked: a round button with the dancing bars, or a play triangle when paused, and a ring that fills as the song plays. */}
+      <button
+        ref={tuckedButton}
+        type="button"
+        onClick={openAgain}
+        inert={showPill}
+        aria-label={`Open the music player. ${music.playing ? "Now playing" : "Paused"}: ${song.title}`}
+        className={`flex size-[54px] origin-bottom-right cursor-pointer items-center justify-center rounded-full border-0 bg-white p-0 shadow-[var(--shadow-pill-white)] ${
+          animated ? "transition-[opacity,scale] motion-reduce:transition-none" : ""
+        } ${showPill ? `pointer-events-none absolute right-0 bottom-0 scale-50 opacity-0 ${closing}` : `relative scale-100 opacity-100 ${opening}`}`}
+      >
+        <svg aria-hidden viewBox="0 0 54 54" className="absolute inset-0 -rotate-90">
+          <circle cx="27" cy="27" r="25" fill="none" stroke="var(--color-tray)" strokeWidth="2.5" />
+          <circle
+            cx="27"
+            cy="27"
+            r="25"
+            fill="none"
+            stroke="var(--color-ember)"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray={RING}
+            strokeDashoffset={RING * (1 - frac)}
+            className={frac > 0 ? "" : "opacity-0"}
+          />
+        </svg>
+        <span className="flex size-9 items-center justify-center rounded-full bg-halo text-ember">
+          {music.playing ? <Bars playing loading={loading} /> : <PlayGlyph size={13} className="translate-x-px" />}
+        </span>
+      </button>
+
+      {/* The first time it is tucked: where the music went. */}
+      <p
+        aria-hidden
+        className={`pointer-events-none absolute right-0 bottom-[calc(100%+12px)] m-0 w-max max-w-[220px] rounded-xl bg-cocoa px-3.5 py-2.5 text-[13px] leading-snug text-white shadow-[var(--shadow-pill-white)] transition-opacity duration-300 after:absolute after:top-full after:right-5 after:border-6 after:border-transparent after:border-t-cocoa ${
+          hint && !showPill ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        {music.playing ? "Music is still playing. Tap here to open it." : "Tap here to open the music."}
+      </p>
+      <p aria-live="polite" className="sr-only">
+        {tuck.tucked ? announcement : ""}
+      </p>
     </div>
   );
 }

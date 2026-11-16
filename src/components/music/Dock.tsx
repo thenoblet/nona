@@ -11,11 +11,12 @@ const SLOT_ID = "dock-slot";
  * adds with <DockItem> (the "Share a moment" button on the wedding weekend, or the
  * album's minimised uploads). Phones: full width with the page's item on the left,
  * music on the right; a row too narrow for both puts the page's item above. Clear of
- * a phone's rounded corners and home bar (the safe-area insets).
+ * a phone's rounded corners and home bar (the safe-area insets), and above the phone tab bar,
+ * clear of its raised middle button (22 px over the bar) by 12 px.
  */
 export function Dock({ autoplay = false }: { autoplay?: boolean }) {
   return (
-    <div className="pointer-events-none fixed right-[calc(1rem_+_env(safe-area-inset-right))] bottom-[calc(1rem_+_env(safe-area-inset-bottom))] left-[calc(1rem_+_env(safe-area-inset-left))] z-50 flex flex-wrap-reverse items-end justify-end gap-3 sm:right-[calc(1.25rem_+_env(safe-area-inset-right))] sm:bottom-[calc(1.25rem_+_env(safe-area-inset-bottom))] sm:left-[calc(1.25rem_+_env(safe-area-inset-left))]">
+    <div className="pointer-events-none fixed right-[calc(1rem_+_env(safe-area-inset-right))] bottom-[max(calc(1rem_+_env(safe-area-inset-bottom)),calc(var(--tabbar-space)_+_34px))] left-[calc(1rem_+_env(safe-area-inset-left))] z-50 flex flex-wrap-reverse items-end justify-end gap-3 sm:right-[calc(1.25rem_+_env(safe-area-inset-right))] sm:bottom-[max(calc(1.25rem_+_env(safe-area-inset-bottom)),calc(var(--tabbar-space)_+_34px))] sm:left-[calc(1.25rem_+_env(safe-area-inset-left))]">
       <div id={SLOT_ID} className="pointer-events-auto mr-auto flex sm:mr-0 empty:hidden" />
       <div className="pointer-events-auto">
         <MusicPlayer autoplay={autoplay} />
