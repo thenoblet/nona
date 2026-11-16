@@ -118,3 +118,70 @@ test("the music pill tucks into a round button, stays tucked across pages, and o
   await expectTucked(page, false);
   await context.close();
 });
+
+/** Drags the round button from its middle to (x, y) in small steps, as a finger would, and lets go. */
+async function dragRoundButton(page: Page, to: { x: number; y: number }) {
+  const box = (await page.locator("[data-music-player] > button").boundingBox())!;
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 12 });
+  await page.mouse.up();
+}
+
+const roundButtonBox = async (page: Page) => (await page.locator("[data-music-player] > button").boundingBox())!;
+
+test("on a phone the tucked music button can be moved, and settles on the nearer side", async ({ browser, baseURL }) => {
+  const context = await phone(browser, baseURL);
+  const page = await context.newPage();
+  await page.goto("/programme");
+  await page.getByRole("button", { name: "Make the music player smaller" }).click();
+  await expectTucked(page, true);
+
+  // Dropped left of the middle, it settles 14 px from the left edge at that height, still tucked:
+  // letting go is not a tap.
+  await dragRoundButton(page, { x: 150, y: 420 });
+  // (Polled: it glides there for a quarter of a second.)
+  await expect.poll(async () => Math.round((await roundButtonBox(page)).x)).toBe(14);
+  await expect.poll(async () => Math.round((await roundButtonBox(page)).y)).toBe(420 - 27);
+  await expectTucked(page, true);
+
+  // It stays there on another page and after a reload.
+  await bar(page).getByRole("link", { name: "Stay" }).click();
+  await expect(page).toHaveURL(/\/stay$/);
+  await expect.poll(async () => Math.round((await roundButtonBox(page)).x)).toBe(14);
+  await page.reload();
+  await expect.poll(async () => Math.round((await roundButtonBox(page)).x)).toBe(14);
+
+  // A tap opens the pill from there: on the left, its tuck button comes first and points left.
+  await page.locator("[data-music-player] > button").click();
+  await expectTucked(page, false);
+  const pill = page.locator("[data-music-player] > div:has(> [aria-label$=' our song'])");
+  expect(Math.round((await pill.boundingBox())!.x)).toBe(14);
+  const tuckBox = (await page.getByRole("button", { name: "Make the music player smaller" }).boundingBox())!;
+  const playBox = (await page.getByRole("button", { name: "Play our song" }).boundingBox())!;
+  expect(tuckBox.x).toBeLessThan(playBox.x);
+  await page.getByRole("button", { name: "Make the music player smaller" }).click();
+  await expectTucked(page, true);
+  expect(Math.round((await roundButtonBox(page)).x)).toBe(14);
+
+  // Dropped on the tab bar, it stops 12 px above it; dropped on the top edge, it stays on screen.
+  await dragRoundButton(page, { x: 330, y: 836 });
+  const barTop = (await bar(page).boundingBox())!.y;
+  await expect.poll(async () => Math.round((await roundButtonBox(page)).x)).toBe(390 - 14 - 54);
+  await expect.poll(async () => Math.round((await roundButtonBox(page)).y + 54)).toBe(Math.round(barTop - 12));
+  await dragRoundButton(page, { x: 330, y: 2 });
+  await expect.poll(async () => Math.round((await roundButtonBox(page)).y)).toBeGreaterThanOrEqual(12);
+  await context.close();
+
+  // Laptops keep it in the corner.
+  const laptop = await browser.newPage({ baseURL, viewport: { width: 1280, height: 800 } });
+  await laptop.goto("/programme");
+  await laptop.getByRole("button", { name: "Make the music player smaller" }).click();
+  await expectTucked(laptop, true);
+  const corner = await roundButtonBox(laptop);
+  await dragRoundButton(laptop, { x: 200, y: 300 });
+  await expectTucked(laptop, true);
+  expect(await roundButtonBox(laptop)).toEqual(corner);
+  await laptop.close();
+});
