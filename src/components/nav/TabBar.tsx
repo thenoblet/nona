@@ -27,6 +27,9 @@ function useTyping(): boolean {
     const onFocusOut = (event: FocusEvent) => setTyping(opensKeyboard(event.relatedTarget));
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
+    // A field the guest tapped before the page finished loading already has focus.
+    const sync = () => setTyping(opensKeyboard(document.activeElement));
+    sync();
     return () => {
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
