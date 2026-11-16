@@ -435,9 +435,9 @@ export function MusicPlayer({ autoplay = false }: { autoplay?: boolean }) {
         onClick={openAgain}
         inert={showPill}
         aria-label={`Open the music player. ${music.playing ? "Now playing" : "Paused"}: ${song.title}`}
-        className={`relative flex size-[54px] origin-bottom-right cursor-pointer items-center justify-center rounded-full border-0 bg-white p-0 shadow-[var(--shadow-pill-white)] ${
+        className={`flex size-[54px] origin-bottom-right cursor-pointer items-center justify-center rounded-full border-0 bg-white p-0 shadow-[var(--shadow-pill-white)] ${
           animated ? "transition-[opacity,scale] motion-reduce:transition-none" : ""
-        } ${showPill ? `pointer-events-none absolute right-0 bottom-0 scale-50 opacity-0 ${closing}` : `scale-100 opacity-100 ${opening}`}`}
+        } ${showPill ? `pointer-events-none absolute right-0 bottom-0 scale-50 opacity-0 ${closing}` : `relative scale-100 opacity-100 ${opening}`}`}
       >
         <svg aria-hidden viewBox="0 0 54 54" className="absolute inset-0 -rotate-90">
           <circle cx="27" cy="27" r="25" fill="none" stroke="var(--color-tray)" strokeWidth="2.5" />
