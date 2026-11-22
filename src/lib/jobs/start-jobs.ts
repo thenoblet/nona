@@ -1,4 +1,6 @@
-import { CONFIRMATION_QUEUE, getBoss, QUEUES } from "./boss";
+import { CONFIRMATION_QUEUE, FINAL_EMAIL_QUEUE, getBoss, QUEUES } from "./boss";
+import { requeueWaitingFinalEmails } from "./final-emails";
+import { handleFinalEmail } from "./handle-final-email";
 import { handleRsvpConfirmation } from "./handle-rsvp-confirmation";
 import { createMediaQueues } from "./media-queues";
 import { requeueUnsentConfirmations } from "./rsvp-confirmation";
@@ -13,6 +15,8 @@ export async function startJobs(): Promise<void> {
   await boss.createQueue(QUEUES.rsvpConfirmation, CONFIRMATION_QUEUE);
   // createQueue leaves a queue that already exists as it was, so bring its settings up to date.
   await boss.updateQueue(QUEUES.rsvpConfirmation, CONFIRMATION_QUEUE);
+  await boss.createQueue(QUEUES.finalEmail, FINAL_EMAIL_QUEUE);
+  await boss.updateQueue(QUEUES.finalEmail, FINAL_EMAIL_QUEUE);
   // Before any worker starts: a failure here retries the whole start-up, which must not leave a
   // second confirmation worker running.
   await createMediaQueues(boss);
@@ -28,6 +32,18 @@ export async function startJobs(): Promise<void> {
       }
     },
   );
+  // The final emails go one at a time (a batch of one, pg-boss's default), so a send to everyone
+  // keeps within Resend's rate.
+  await boss.work<{ id: string }, void, { includeMetadata: true }>(
+    QUEUES.finalEmail,
+    { includeMetadata: true },
+    async (jobs) => {
+      for (const job of jobs) {
+        await handleFinalEmail(job.data.id, { retryCount: job.retryCount, retryLimit: job.retryLimit });
+      }
+    },
+  );
+  await requeueWaitingFinalEmails();
   // Replies whose confirmation never reached the queue (the cap, a failed enqueue, or a restart
   // before after() ran) get another chance.
   await requeueUnsentConfirmations();

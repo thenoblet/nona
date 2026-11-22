@@ -479,6 +479,56 @@ export const adminViewers = pgTable(
   ],
 );
 
+/**
+ * The final emails the couple send from the admin once replies close (src/lib/data/final-emails.ts):
+ * "details" to guests coming, "thanks" to guests who aren't. One row per email, written when it is
+ * queued. A guest gets each kind once: one row per kind and address, tests aside.
+ */
+export const finalEmails = pgTable(
+  "final_emails",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    kind: text("kind").$type<"details" | "thanks">().notNull(),
+    /** A test the couple sent themselves, written from a guest's reply; tests may repeat. */
+    test: boolean("test").notNull().default(false),
+    /** The reply the email is written from; null once the couple delete that reply. */
+    rsvpId: uuid("rsvp_id").references((): AnyPgColumn => rsvps.id, { onDelete: "set null" }),
+    email: text("email").notNull(),
+    /** The address as the replies compare it (emailKey), so one address gets one email. */
+    emailKey: text("email_key").notNull(),
+    /** One press of Send: the emails queued together. */
+    batchId: uuid("batch_id").notNull(),
+    status: text("status").$type<"queued" | "sent" | "failed">().notNull().default("queued"),
+    /** Why the last try failed, as the email service said it; no guest details of ours. */
+    error: text("error"),
+    queuedAt: timestamp("queued_at", withTimezone).notNull().defaultNow(),
+    queuedBy: text("queued_by").notNull(),
+    sentAt: timestamp("sent_at", withTimezone),
+  },
+  (table) => [
+    uniqueIndex("final_emails_kind_email_unique").on(table.kind, table.emailKey).where(sql`not ${table.test}`),
+    index("final_emails_batch_idx").on(table.batchId),
+    check("final_emails_kind", sql`${table.kind} in ('details', 'thanks')`),
+    check("final_emails_status", sql`${table.status} in ('queued', 'sent', 'failed')`),
+  ],
+);
+
+/**
+ * Guests without an email whom the couple sent the same message on WhatsApp, as they ticked them
+ * off in the admin: one row per kind and phone number while ticked.
+ */
+export const finalWhatsapp = pgTable(
+  "final_whatsapp",
+  {
+    kind: text("kind").$type<"details" | "thanks">().notNull(),
+    /** The number as the replies compare it (phoneKey). */
+    phoneKey: text("phone_key").notNull(),
+    markedAt: timestamp("marked_at", withTimezone).notNull().defaultNow(),
+    markedBy: text("marked_by").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.kind, table.phoneKey] })],
+);
+
 /** Switches and markers shared by the app and the worker, one JSON value per key (settings.ts). */
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
