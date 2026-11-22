@@ -35,13 +35,24 @@ const confirmations = vi.hoisted(() => ({
 vi.mock("./handle-rsvp-confirmation", () => ({
   handleRsvpConfirmation: confirmations.handle,
 }));
+const finals = vi.hoisted(() => ({
+  handle: vi.fn(async () => {}),
+}));
+vi.mock("./handle-final-email", () => ({
+  handleFinalEmail: finals.handle,
+}));
+vi.mock("./final-emails", () => ({
+  requeueWaitingFinalEmails: async () => {
+    queue.order.push("requeue final");
+  },
+}));
 vi.mock("./rsvp-confirmation", () => ({
   requeueUnsentConfirmations: async () => {
     queue.order.push("requeue");
   },
 }));
 
-import { CONFIRMATION_QUEUE, QUEUES } from "./boss";
+import { CONFIRMATION_QUEUE, FINAL_EMAIL_QUEUE, QUEUES } from "./boss";
 import { MEDIA_QUEUE_OPTIONS, MEDIA_QUEUES } from "./media-queues";
 import { startJobs } from "./start-jobs";
 
@@ -55,6 +66,7 @@ beforeEach(() => {
   queue.updateQueue.mockClear();
   queue.work.mockClear();
   confirmations.handle.mockClear();
+  finals.handle.mockClear();
 });
 
 describe("startJobs", () => {
@@ -67,9 +79,27 @@ describe("startJobs", () => {
     expect(confirmationSteps).toEqual([
       `createQueue ${QUEUES.rsvpConfirmation}`,
       `updateQueue ${QUEUES.rsvpConfirmation}`,
+      `createQueue ${QUEUES.finalEmail}`,
+      `updateQueue ${QUEUES.finalEmail}`,
       `work ${QUEUES.rsvpConfirmation}`,
+      `work ${QUEUES.finalEmail}`,
+      "requeue final",
       "requeue",
     ]);
+  });
+
+  it("brings the final emails' queue up to date and hands each job's email and attempt to its handler", async () => {
+    await startJobs();
+    expect(queue.createQueue).toHaveBeenCalledWith(QUEUES.finalEmail, FINAL_EMAIL_QUEUE);
+    expect(queue.updateQueue).toHaveBeenCalledWith(QUEUES.finalEmail, FINAL_EMAIL_QUEUE);
+    const [, options, worker] = queue.work.mock.calls[1] as unknown as [
+      string,
+      unknown,
+      (jobs: { data: { id: string }; retryCount: number; retryLimit: number }[]) => Promise<void>,
+    ];
+    expect(options).toEqual({ includeMetadata: true });
+    await worker([{ data: { id: "email-1" }, retryCount: 1, retryLimit: 13 }]);
+    expect(finals.handle.mock.calls).toEqual([["email-1", { retryCount: 1, retryLimit: 13 }]]);
   });
 
   it("creates every media queue with its options, so the app can send media jobs before the worker first runs", async () => {
@@ -89,7 +119,7 @@ describe("startJobs", () => {
 
   it("starts no media worker: the media worker takes those jobs", async () => {
     await startJobs();
-    expect(queue.work.mock.calls.map(([name]) => name)).toEqual([QUEUES.rsvpConfirmation]);
+    expect(queue.work.mock.calls.map(([name]) => name)).toEqual([QUEUES.rsvpConfirmation, QUEUES.finalEmail]);
   });
 
   it("hands each job's reply and attempt to the confirmation's handler, one job after another", async () => {
