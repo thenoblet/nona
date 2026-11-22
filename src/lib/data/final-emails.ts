@@ -118,3 +118,13 @@ export async function setWhatsappMark(kind: FinalKind, phoneKey: string, sent: b
       .where(and(eq(finalWhatsapp.kind, kind), eq(finalWhatsapp.phoneKey, phoneKey)));
   }
 }
+
+/** "Try the failed again": the kind's failed emails wait again; their ids, for new jobs. */
+export async function retryFailedFinalEmails(kind: FinalKind): Promise<string[]> {
+  const rows = await getDb()
+    .update(finalEmails)
+    .set({ status: "queued", error: null })
+    .where(and(eq(finalEmails.kind, kind), eq(finalEmails.status, "failed"), eq(finalEmails.test, false)))
+    .returning({ id: finalEmails.id });
+  return rows.map((row) => row.id);
+}
