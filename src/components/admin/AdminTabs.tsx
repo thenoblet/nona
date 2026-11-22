@@ -12,6 +12,7 @@ export const coupleTabs: AdminTab[] = [
   { href: "/admin/photos", label: "Photos" },
   { href: "/admin/content", label: "Site text" },
   { href: "/admin/photos/site", label: "Site photos" },
+  { href: "/admin/emails", label: "Emails" },
   { href: "/admin/people", label: "People" },
 ];
 

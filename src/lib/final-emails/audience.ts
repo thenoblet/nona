@@ -54,3 +54,9 @@ export function finalAudience(replies: readonly RsvpRecord[], kind: FinalKind): 
   }
   return { byEmail, merged, byWhatsapp };
 }
+
+/** The newest reply of the audience, with or without an email: whom a preview or test is written for. */
+export function newestReply(audience: Audience): RsvpRecord | null {
+  const replies = [...audience.byEmail.map((recipient) => recipient.reply), ...audience.byWhatsapp.map((recipient) => recipient.reply)];
+  return replies.toSorted((first, second) => second.receivedAt.localeCompare(first.receivedAt))[0] ?? null;
+}
