@@ -36,7 +36,8 @@ test("phones get a tab bar that follows the wedding, and laptops keep the header
   await expect(bar(page).locator("[aria-current]")).toHaveCount(0);
   await bar(page).getByRole("link", { name: "Share" }).click();
   await expect(page).toHaveURL(/\/album#share$/);
-  await expect(page.locator("#share")).toBeInViewport();
+  // Visible only: until the streamed section swaps in, a hidden copy of it can sit beside it.
+  await expect(page.locator("#share").filter({ visible: true })).toBeInViewport();
 
   await page.goto("/home?mode=after");
   await expect(bar(page).getByRole("link")).toHaveText(["Home", "Relive", "Wishes"]);
