@@ -266,6 +266,17 @@ const travelItem = zod.object({
   href: siteLink.optional(),
 });
 
+/**
+ * Someone guests can call or WhatsApp for help on the day (finding their way, the venues), since
+ * the couple won't have their phones. Shown on Today, the home page and the RSVP thank-you.
+ */
+const helper = zod.object({
+  name: line,
+  phone,
+  /** What they help with, such as "Directions and parking". */
+  note: line.optional(),
+});
+
 /** A place guests can stay, on the Where to stay page. */
 const stay = zod.object({
   name: line,
@@ -318,6 +329,7 @@ export const sectionSchemas = {
   faq: zod.array(faqItem),
   travel: zod.array(travelItem),
   stays: zod.array(stay),
+  helpers: zod.array(helper),
   // Photos are found by id, so two people sharing one would share a portrait.
   party: zod.array(partyMember).superRefine((members, context) => {
     const seen = new Set<string>();
@@ -347,6 +359,7 @@ export type SectionKey = keyof typeof sectionSchemas;
 export const sectionKeys = Object.keys(sectionSchemas) as SectionKey[];
 
 export type SiteContent = { [TKey in SectionKey]: zod.infer<(typeof sectionSchemas)[TKey]> };
+export type Helper = SiteContent["helpers"][number];
 
 export type Celebration = zod.infer<typeof celebration>;
 export type ScheduleItem = zod.infer<typeof scheduleItem>;

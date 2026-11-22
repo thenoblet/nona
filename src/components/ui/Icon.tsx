@@ -73,6 +73,12 @@ const paths = {
       <path d="M16 10l5-3v10l-5-3" />
     </>
   ),
+  /** A speech bubble: a WhatsApp chat. */
+  chat: (
+    <>
+      <path d="M20.5 11.6a8.4 8.4 0 0 1-12.3 7.4L3.5 20.5l1.5-4.6a8.4 8.4 0 1 1 15.5-4.3z" />
+    </>
+  ),
   mic: (
     <>
       <rect x="9" y="3" width="6" height="11" rx="3" />

@@ -4,7 +4,8 @@ import Image from "next/image";
 import { useEffect, useRef } from "react";
 import { couple } from "@/content/wedding";
 import { celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
-import type { Celebration, SiteContent } from "@/lib/content/schema";
+import type { Celebration, Helper, SiteContent } from "@/lib/content/schema";
+import { HelpCard } from "@/components/help/HelpCard";
 import { photos } from "@/content/images";
 import { PillAnchor, PillLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
@@ -18,12 +19,14 @@ export function ReplySent({
   celebrations,
   venues,
   siteUrl,
+  helpers,
   values,
   onChange,
 }: {
   celebrations: Celebration[];
   venues: SiteContent["venues"];
   siteUrl: string;
+  helpers: Helper[];
   values: RsvpValues;
   onChange: () => void;
 }) {
@@ -144,6 +147,13 @@ export function ReplySent({
             ))}
           </ul>
         </>
+      ) : null}
+      {accepted.length > 0 ? (
+        <HelpCard
+          helpers={helpers}
+          heading="Need a hand getting here?"
+          className="mt-3 animate-rise self-stretch"
+        />
       ) : null}
       <button
         type="button"

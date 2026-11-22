@@ -13,6 +13,7 @@ import { HappeningNow } from "@/components/today/HappeningNow";
 import { OrderOfDay } from "@/components/today/OrderOfDay";
 import { liveStreamState } from "@/lib/content/live";
 import { QuickActions } from "@/components/today/QuickActions";
+import { HelpCard } from "@/components/help/HelpCard";
 
 export const metadata: Metadata = { title: "Today" };
 
@@ -44,6 +45,23 @@ export default function TodayPage() {
             )}
           />
         }
+        helpLink={
+          <ByDay
+            fallback={null}
+            render={(content) =>
+              content.helpers.length > 0 ? (
+                <a
+                  href="#help"
+                  className="-mt-1 inline-flex min-h-11 items-center gap-2 self-start text-xs uppercase tracking-[0.2em] text-mist no-underline"
+                >
+                  <Icon name="phone" size={15} className="text-ember" />
+                  Lost or need help? Call us
+                </a>
+              ) : null
+            }
+          />
+        }
+        help={<ByDay fallback={null} render={(content) => <HelpCard helpers={content.helpers} heading="Need a hand today?" />} />}
         quickActions={
           <ByDay
             fallback={<div className="h-56 animate-pulse rounded-[var(--radius-paper)] bg-white" />}
@@ -66,10 +84,14 @@ type TodaySlots = {
   happeningNow: ReactNode;
   orderOfDay: ReactNode;
   quickActions: ReactNode;
+  /** "Lost or need help? Call us", to the help card; nothing when there are no helpers. */
+  helpLink: ReactNode;
+  /** Who to call for help, under the quick actions. */
+  help: ReactNode;
 };
 
 /** The page's static chrome, with a slot for each piece that depends on the schedule. */
-function TodayLayout({ dayLabel: dayLabelSlot, happeningNow, orderOfDay, quickActions }: TodaySlots) {
+function TodayLayout({ dayLabel: dayLabelSlot, happeningNow, orderOfDay, quickActions, helpLink, help }: TodaySlots) {
   return (
     <>
       <header className="bg-cocoa text-white">
@@ -95,6 +117,7 @@ function TodayLayout({ dayLabel: dayLabelSlot, happeningNow, orderOfDay, quickAc
             </span>
             Leave us a wish
           </Link>
+          {helpLink}
         </div>
       </header>
 
@@ -109,6 +132,7 @@ function TodayLayout({ dayLabel: dayLabelSlot, happeningNow, orderOfDay, quickAc
         <section aria-label="Quick actions" className={`${column} px-4 pt-6 pb-8`}>
           {quickActions}
         </section>
+        <div className={`${column} px-4 pb-2 empty:hidden`}>{help}</div>
         <p className="pt-7 text-center">
           <Motto className="text-[30px] text-ember" />
         </p>

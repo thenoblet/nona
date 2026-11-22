@@ -69,7 +69,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <Colours />
             <Party party={party} photos={photos} />
             <Gallery photos={photos} />
-            <Travel travel={travel} />
+            <Travel travel={travel} helpers={content.helpers} />
             <RsvpBand rsvp={rsvp} />
             <AlbumTeaser />
             <Faq faq={faq} />
