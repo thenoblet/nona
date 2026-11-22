@@ -40,7 +40,8 @@ export function HelpCard({
         {helpers.map((helper) => (
           <li key={`${helper.name} ${helper.phone}`} className="flex items-center gap-2.5 border-t border-hairline py-3">
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate font-serif text-[20px] leading-tight italic">{helper.name}</span>
+              {/* A long name wraps rather than losing its end on a small phone. */}
+              <span className="font-serif text-[20px] leading-tight [overflow-wrap:anywhere] italic">{helper.name}</span>
               <span className="text-[12px] tracking-[0.08em] text-mocha">{helper.phone}</span>
               {helper.note ? <span className="text-[12.5px] leading-snug text-mocha">{helper.note}</span> : null}
             </span>
@@ -56,10 +57,13 @@ export function HelpCard({
             <a
               href={telHref(helper.phone)}
               aria-label={`Call ${helper.name}, ${helper.phone}`}
-              className="press flex min-h-11 shrink-0 items-center gap-2 rounded-full bg-cocoa px-4 text-[11px] uppercase tracking-[0.18em] text-white no-underline"
+              className="press flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 rounded-full bg-cocoa px-4 text-[11px] uppercase tracking-[0.18em] text-white no-underline max-[359px]:px-0"
             >
               <Icon name="phone" size={15} className="text-ember" />
-              Call
+              {/* Under 360 px wide the pill is a round button, so the name keeps its room. */}
+              <span aria-hidden className="max-[359px]:hidden">
+                Call
+              </span>
             </a>
           </li>
         ))}
