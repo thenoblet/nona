@@ -393,3 +393,22 @@ describe("places to stay", () => {
     expect(problems("stays", [{ ...place(), mapsUrl: "https://maps.app.goo.gl/a b" }])).toEqual(["stays[0].mapsUrl: Remove the space from the link"]);
   });
 });
+
+describe("helpers", () => {
+  it("keeps a name, a phone number and an optional note on what they help with", () => {
+    const parsed = sectionSchemas.helpers.safeParse([
+      { name: "Daniel Afriyie", phone: "055 936 8495" },
+      { name: "Edward Asamoah", phone: "+233 24 417 3796", note: "Directions and parking" },
+    ]);
+    expect(parsed.success).toBe(true);
+  });
+
+  it("refuses a number that isn't a phone number, and an empty name", () => {
+    expect(sectionSchemas.helpers.safeParse([{ name: "Daniel", phone: "call me" }]).success).toBe(false);
+    expect(sectionSchemas.helpers.safeParse([{ name: "", phone: "055 936 8495" }]).success).toBe(false);
+  });
+
+  it("can be empty: then there is no help card", () => {
+    expect(sectionSchemas.helpers.safeParse([]).success).toBe(true);
+  });
+});

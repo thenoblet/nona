@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import type { EventId } from "@/content/wedding";
-import type { Celebration, SiteContent } from "@/lib/content/schema";
+import type { Celebration, Helper, SiteContent } from "@/lib/content/schema";
 import type { Answer } from "@/lib/data/types";
 import { submitRsvp } from "@/app/(site)/rsvp/actions";
 import { initialRsvpState, type RsvpState, type RsvpValues } from "./options";
@@ -14,10 +14,13 @@ export function RsvpForm({
   celebrations,
   venues,
   siteUrl,
+  helpers,
 }: {
   celebrations: Celebration[];
   venues: SiteContent["venues"];
   siteUrl: string;
+  /** Who to call for help on the day, shown on the thank-you to a guest who is coming. */
+  helpers: Helper[];
 }) {
   const [state, dispatch, pending] = useActionState(submitRsvp, initialRsvpState);
   const [answers, setAnswers] = useState<RsvpValues["answers"]>({});
@@ -30,6 +33,7 @@ export function RsvpForm({
         celebrations={celebrations}
         venues={venues}
         siteUrl={siteUrl}
+        helpers={helpers}
         values={state.values}
         onChange={() => setReopened(state)}
       />

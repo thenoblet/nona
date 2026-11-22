@@ -264,6 +264,28 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
     },
     hint: "Guests see these on the Where to stay page, in this order: put the closest first.",
   },
+  helpers: {
+    layout: "list",
+    legend: named("name", "Helper"),
+    fields: [
+      { path: ["name"], label: "Name", kind: "text", span: 3 },
+      { path: ["phone"], label: "Phone", kind: "text", span: 3, hint: "Guests tap Call or WhatsApp." },
+      {
+        path: ["note"],
+        label: "What they help with",
+        kind: "text",
+        span: 6,
+        placeholder: OPTIONAL,
+        hint: "Under their number, e.g. “Directions and parking”.",
+      },
+    ],
+    editable: {
+      noun: "helper",
+      addLabel: "Add a helper",
+      newItem: () => ({ name: "", phone: "", note: "" }),
+    },
+    hint: "Guests see these on Today, the home page and the RSVP thank-you, in this order. With none, the help card doesn't show.",
+  },
   party: {
     layout: "list",
     legend: named("name", "Member"),

@@ -1,7 +1,8 @@
 import Image from "next/image";
 import { colours, couple, wedding } from "@/content/wedding";
 import { accraDayAndFullMonth } from "@/lib/accra";
-import type { FaqItem, PartyMember, RsvpSettings, TravelItem } from "@/lib/content/schema";
+import type { FaqItem, Helper, PartyMember, RsvpSettings, TravelItem } from "@/lib/content/schema";
+import { HelpCard } from "@/components/help/HelpCard";
 import { photos } from "@/content/images";
 import { portraitOf, type SlotPhoto, type SlotPhotos } from "@/lib/site-images/photos";
 import { PillLink, TextLink } from "@/components/ui/Button";
@@ -97,7 +98,7 @@ export function Party({ party, photos: slotPhotos }: { party: PartyMember[]; pho
 
 const travelTilts = ["0.5deg", "-0.6deg", "0.4deg"];
 
-export function Travel({ travel }: { travel: TravelItem[] }) {
+export function Travel({ travel, helpers }: { travel: TravelItem[]; helpers: Helper[] }) {
   return (
     <section id="travel" className="bg-tray px-5 pt-20 pb-24 sm:px-6 sm:pt-28 sm:pb-30">
       <div className="mx-auto flex max-w-[1160px] flex-col gap-14 sm:gap-16">
@@ -127,6 +128,11 @@ export function Travel({ travel }: { travel: TravelItem[] }) {
             ))}
           </SwipeRow>
         </Reveal>
+        {helpers.length > 0 ? (
+          <Reveal className="mx-auto w-full max-w-xl">
+            <HelpCard helpers={helpers} heading="Need a hand getting here?" />
+          </Reveal>
+        ) : null}
       </div>
     </section>
   );
