@@ -33,6 +33,7 @@ export const contentSections = [
   { key: "faq", slug: "faq", label: "Questions" },
   { key: "travel", slug: "travel", label: "Travel & stay" },
   { key: "stays", slug: "stays", label: "Where to stay" },
+  { key: "helpers", slug: "help", label: "Help on the day" },
   { key: "party", slug: "party", label: "Wedding party" },
   { key: "story", slug: "story", label: "Our story" },
   { key: "liveStream", slug: "live-stream", label: "Live stream" },

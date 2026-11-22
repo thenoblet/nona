@@ -2,7 +2,7 @@ import { PgBoss, type QueueOptions } from "pg-boss";
 import { dbConfig } from "@/lib/env";
 import { errorMessage } from "@/lib/log-error";
 
-export const QUEUES = { rsvpConfirmation: "email-rsvp-confirmation" } as const;
+export const QUEUES = { rsvpConfirmation: "email-rsvp-confirmation", finalEmail: "email-final" } as const;
 
 // Next loads this file once per server bundle, so a module variable would start several queues.
 // The globalThis key is shared by every bundle in the process.
@@ -59,3 +59,9 @@ export const CONFIRMATION_QUEUE = {
   retryBackoff: true,
   retryDelayMax: 4 * 60 * 60,
 } as const satisfies QueueOptions;
+
+/**
+ * The final emails' retries: the same as the confirmation's, for the same reason. Sending to
+ * everyone at once can pass Resend's daily limit, and the rest then go out over the next day.
+ */
+export const FINAL_EMAIL_QUEUE = CONFIRMATION_QUEUE;

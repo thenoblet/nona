@@ -177,6 +177,16 @@ export const stays = [
   },
 ] as const;
 
+/**
+ * Who guests can call for help on the day: the RSVP contacts on the printed invitation. The couple
+ * change them in the admin (Site text, Help on the day).
+ */
+export const helpers = [
+  { name: "Daniel Afriyie", phone: "055 936 8495" },
+  { name: "Edward Asamoah", phone: "024 417 3796" },
+  { name: "Prince Brobbey", phone: "055 151 9910" },
+] as const;
+
 export const faq = [
   {
     question: "Can I bring a plus-one?",

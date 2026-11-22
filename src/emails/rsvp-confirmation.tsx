@@ -1,8 +1,9 @@
-import { Button, Column, Container, Head, Heading, Html, Preview, Row, Section, Text } from "react-email";
+import { Button, Container, Head, Heading, Html, Preview, Section, Text } from "react-email";
 import { CelebrationCard, type ConfirmationCelebration } from "./components/CelebrationCard";
 import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
 import { OutlookFixedWidth } from "./components/OutlookOnly";
+import { PersonalLinkCard } from "./components/PersonalLinkCard";
 import { sampleReply } from "./components/sample";
 import { clientStyles, colours, fontFaces, fonts } from "./components/theme";
 
@@ -146,62 +147,6 @@ export default function RsvpConfirmation({ guestName, celebrations, siteUrl, per
         </Section>
       </body>
     </Html>
-  );
-}
-
-/**
- * The guest's personal link, as a card like the album's own "Your personal link": the same name,
- * so the guest knows it again there, the ask to open it before sharing a first photo (Ruling CG),
- * and a button that opens it. The plain text keeps the heading, the line and the link's address.
- */
-function PersonalLinkCard({ link }: { link: string }) {
-  return (
-    <Section tdClassName="nn-pad" style={{ padding: "12px 34px 0" }}>
-      <Section
-        style={{
-          backgroundColor: colours.white,
-          border: `1px solid ${colours.ticket}`,
-          borderRadius: "14px",
-          borderCollapse: "separate",
-        }}
-      >
-        <Row>
-          <Column className="nn-ticket" style={{ padding: "14px 18px 16px", textAlign: "center" }}>
-            <Heading
-              as="h2"
-              style={{
-                margin: 0,
-                textAlign: "center",
-                fontFamily: fonts.serif,
-                fontStyle: "italic",
-                fontWeight: 500,
-                fontSize: "20px",
-                lineHeight: "24px",
-                color: colours.cocoa,
-              }}
-            >
-              Your personal link
-            </Heading>
-            <Text style={{ ...paragraph, margin: "4px auto 12px", maxWidth: "340px", fontSize: "13px", lineHeight: "19px" }}>
-              Open it on your phone before you share your first photo, so your photos stay together.
-            </Text>
-            <Button
-              href={link}
-              style={{
-                ...smallCaps,
-                fontSize: "10px",
-                padding: "11px 22px",
-                borderRadius: "999px",
-                backgroundColor: colours.ember,
-                color: colours.cocoa,
-              }}
-            >
-              Open my link
-            </Button>
-          </Column>
-        </Row>
-      </Section>
-    </Section>
   );
 }
 

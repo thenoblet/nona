@@ -1,24 +1,14 @@
 import { createElement } from "react";
 import { render, toPlainText } from "react-email";
 import { unwrapOutlookOnly } from "@/emails/components/OutlookOnly";
-import RsvpConfirmation, { type ConfirmationCelebration } from "@/emails/rsvp-confirmation";
-import { buildIcs, celebrationEvent, googleCalendarUrl } from "@/lib/calendar/ics";
-import { celebrationPlace } from "@/lib/content/place";
+import RsvpConfirmation from "@/emails/rsvp-confirmation";
+import { buildIcs, celebrationEvent } from "@/lib/calendar/ics";
+import { emailCelebrations } from "./celebrations";
 import type { SiteContent } from "@/lib/content/schema";
 import type { RsvpRecord } from "@/lib/data/types";
 import { plainName } from "@/lib/rsvp/normalize";
 
 const SUBJECT = "Your reply to Noblet & Nancy";
-
-/** "05" reads as "5"; a day the couple wrote some other way is shown as written. */
-const dayOfMonth = (day: string) => (/^\d+$/.test(day) ? String(Number(day)) : day);
-
-/** The ticket stub's day: "Sat", "05", "Dec". A day written some other way is shown as written. */
-const stubFor = (weekday: string, day: string, month: string) => ({
-  weekday: weekday.slice(0, 3),
-  day: /^\d+$/.test(day) ? String(Number(day)).padStart(2, "0") : day,
-  month: month.slice(0, 3),
-});
 
 /**
  * The confirmation email for a reply, rendered from the template in `src/emails`. The same reply
@@ -34,30 +24,10 @@ export async function renderRsvpConfirmation(
   siteUrl: string,
   personalLink: string | null = null,
 ): Promise<{ subject: string; text: string; html: string; ics: string | null }> {
-  const answered = content.celebrations.filter(
-    (celebration) => rsvp.answers[celebration.id],
-  );
-  const attending = answered.filter(
+  const attending = content.celebrations.filter(
     (celebration) => rsvp.answers[celebration.id] === "yes",
   );
-  const celebrations: ConfirmationCelebration[] = answered.map((celebration) => {
-    const comingTo = rsvp.answers[celebration.id] === "yes";
-    const { place, gps } = celebrationPlace(celebration, content.venues);
-    return {
-      id: celebration.id,
-      name: celebration.name,
-      date: `${celebration.weekday} ${dayOfMonth(celebration.day)} ${celebration.month}`,
-      stub: stubFor(celebration.weekday, celebration.day, celebration.month),
-      time: celebration.time,
-      place,
-      gps,
-      placeDetail: celebration.placeDetail,
-      attending: comingTo,
-      googleCalendarUrl: comingTo
-        ? googleCalendarUrl(celebrationEvent(celebration, content.venues, siteUrl))
-        : null,
-    };
-  });
+  const celebrations = emailCelebrations(rsvp, content, siteUrl);
 
   const html = unwrapOutlookOnly(
     await render(

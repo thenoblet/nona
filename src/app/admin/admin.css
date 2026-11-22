@@ -692,3 +692,21 @@
 .admin-people-add { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 12px; }
 .admin-people-add .admin-field { flex: 1 1 260px; }
 .admin-people-add .admin-btn { margin-top: 23px; }
+
+/* Emails: the final emails to everyone who replied. */
+.admin-emails-stats { margin-bottom: 16px; }
+.admin-emails-notice { max-width: 980px; margin: 0 0 16px; }
+.admin-emails-card { max-width: 980px; }
+.admin-emails-grid { display: grid; gap: 16px 20px; margin-top: 12px; }
+@media (min-width: 900px) { .admin-emails-grid { grid-template-columns: minmax(0, 1fr) 380px; align-items: start; } }
+.admin-emails-controls { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.admin-emails-count { margin: 0; font-size: 14px; }
+.admin-emails-progress { max-width: 420px; }
+.admin-emails-failures { display: grid; gap: 6px; justify-items: start; }
+.admin-emails-failures .admin-people-list { width: 100%; margin: 0; }
+.admin-emails-preview { display: grid; gap: 6px; min-width: 0; }
+.admin-emails-preview .admin-label { margin: 0; }
+.admin-emails-preview iframe { width: 100%; height: 560px; border: 1px solid var(--admin-border); border-radius: 10px; background: #f7efea; }
+.admin-emails-guest .admin-emails-who { display: grid; flex: 1 1 200px; min-width: 0; }
+.admin-emails-wa { display: inline-flex; align-items: center; text-decoration: none; }
+.admin-emails-tick { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; font-size: 14px; cursor: pointer; }
