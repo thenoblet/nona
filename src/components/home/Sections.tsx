@@ -72,6 +72,20 @@ function Portrait({ photo, name, role, large }: { photo: SlotPhoto | null; name:
   );
 }
 
+/** The most portraits a laptop fits on one row; past that, a lone one would wrap onto a row of its own. */
+const PARTY_ROW_MOST = 7;
+
+/**
+ * How wide the row of bridesmaids and groomsmen may grow on a laptop. Up to seven fit on one row; more
+ * split into two even rows (eight as four and four) instead of leaving one alone underneath. Each
+ * portrait is 140 px with 36 px between them (`sm:w-[140px]`, `sm:gap-x-9`).
+ */
+export function partyRowWidth(count: number): string | undefined {
+  if (count <= PARTY_ROW_MOST) return undefined;
+  const perRow = Math.ceil(count / 2);
+  return `${perRow * 140 + (perRow - 1) * 36}px`;
+}
+
 export function Party({ party, photos: slotPhotos }: { party: PartyMember[]; photos: SlotPhotos }) {
   const leads = party.filter((member) => member.lead);
   const rest = party.filter((member) => !member.lead);
@@ -86,7 +100,10 @@ export function Party({ party, photos: slotPhotos }: { party: PartyMember[]; pho
             <Portrait key={member.id} photo={portraitOf(slotPhotos, member.id)} name={member.name} role={member.role} large />
           ))}
         </div>
-        <div className="grid grid-cols-2 justify-items-center gap-x-4 gap-y-10 sm:flex sm:flex-wrap sm:justify-center sm:gap-x-9">
+        <div
+          className="mx-auto grid w-full grid-cols-2 justify-items-center gap-x-4 gap-y-10 sm:flex sm:flex-wrap sm:justify-center sm:gap-x-9"
+          style={{ maxWidth: partyRowWidth(rest.length) }}
+        >
           {rest.map((member) => (
             <Portrait key={member.id} photo={portraitOf(slotPhotos, member.id)} name={member.name} role={member.role} />
           ))}

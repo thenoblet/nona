@@ -119,6 +119,9 @@ export const party: PartyMember[] = [
   { id: "priscilla", name: "Priscilla", role: "Bridesmaid" },
   { id: "afrifa", name: "Afrifa", role: "Groomsman" },
   { id: "dennis", name: "Dennis", role: "Groomsman" },
+  { id: "peter", name: "Peter", role: "Groomsman" },
+  // No portrait yet: the site shows a "coming soon" oval until one is added.
+  { id: "kwabee", name: "Kwabee", role: "Groomsman" },
 ];
 
 export const colours = [

@@ -19,6 +19,7 @@ import chrysanthemumsPortrait from "../../public/images/flowers/chrysanthemums-p
 import daisiesWrapped from "../../public/images/flowers/daisies-wrapped.jpg";
 import lilian from "../../public/images/party/lilian.jpg";
 import james from "../../public/images/party/james.jpg";
+import peter from "../../public/images/party/peter.jpg";
 import dennis from "../../public/images/party/dennis.jpg";
 import afrifa from "../../public/images/party/afrifa.jpg";
 import bernice from "../../public/images/party/bernice.jpg";
@@ -102,6 +103,7 @@ export const homeHeroPhoto: Photo = { src: homeHero, alt: "Noblet and Nancy", po
 export const partyPhotos: Partial<Record<string, Photo>> = {
   lilian: { src: lilian, alt: "Lilian, maid of honour", position: "center 40%" },
   james: { src: james, alt: "James, best man", position: "center 30%" },
+  peter: { src: peter, alt: "Peter, groomsman", position: "center 30%" },
   dennis: { src: dennis, alt: "Dennis, groomsman", position: "center 30%" },
   afrifa: { src: afrifa, alt: "Afrifa, groomsman", position: "center 30%" },
   bernice: { src: bernice, alt: "Bernice, bridesmaid", position: "center 30%" },
