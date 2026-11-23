@@ -113,12 +113,15 @@ export const story = {
 export const party: PartyMember[] = [
   { id: "lilian", name: "Lilian", role: "Maid of honour", lead: true },
   { id: "james", name: "James", role: "Best man", lead: true },
+  { id: "peter", name: "Peter", role: "Best man", lead: true },
   { id: "bernice", name: "Bernice", role: "Bridesmaid" },
   { id: "jacqueline", name: "Jacqueline", role: "Bridesmaid" },
   { id: "rahina", name: "Rahina", role: "Bridesmaid" },
   { id: "priscilla", name: "Priscilla", role: "Bridesmaid" },
   { id: "afrifa", name: "Afrifa", role: "Groomsman" },
   { id: "dennis", name: "Dennis", role: "Groomsman" },
+  // No portrait yet: the site shows a "coming soon" oval until one is added.
+  { id: "kwabee", name: "Kwabee", role: "Groomsman" },
 ];
 
 export const colours = [
