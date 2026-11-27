@@ -14,6 +14,7 @@ import { SwipeRow } from "@/components/ui/SwipeRow";
 import { Eyebrow, Motto, SectionHeading } from "@/components/ui/Typography";
 import { QrCode } from "@/components/ui/QrCode";
 import { TravelText } from "./TravelText";
+import mcPortrait from "../../../public/images/party/mc.jpg";
 import { albumUrl, displayUrl, qrSvg } from "@/lib/qr";
 
 export function Colours() {
@@ -86,6 +87,59 @@ export function partyRowWidth(count: number): string | undefined {
   return `${perRow * 140 + (perRow - 1) * 36}px`;
 }
 
+
+/* DESIGN PROTOTYPE: the MC. Variant from the environment so screenshots can switch. */
+const HOST_VARIANT = process.env.NEXT_PUBLIC_HOST_VARIANT ?? "card";
+
+function HostOval({ size }: { size: "card" | "row" }) {
+  const box = size === "card" ? "h-[160px] w-[120px] sm:h-[186px] sm:w-[140px]" : "h-[160px] w-[120px] sm:h-[186px] sm:w-[140px]";
+  return (
+    <div className={`oval relative flex-none ${box}`}>
+      <div aria-hidden className="oval-ring absolute top-[-8px] left-2 h-full w-full rounded-[50%] border border-ember" />
+      <div className="absolute inset-0 overflow-hidden rounded-[50%] bg-tile">
+        <Image src={mcPortrait} alt="International MC, master of ceremonies" fill sizes="140px" className="object-cover" style={{ objectPosition: "center 30%" }} />
+      </div>
+    </div>
+  );
+}
+
+function Host() {
+  if (HOST_VARIANT === "row") {
+    return (
+      <div className="mx-auto flex w-full max-w-[560px] flex-col items-center gap-8 pt-2">
+        <div className="flex w-full items-center gap-4">
+          <span aria-hidden className="h-px flex-1 bg-hairline" />
+          <Eyebrow tone="ember">Hosting the day</Eyebrow>
+          <span aria-hidden className="h-px flex-1 bg-hairline" />
+        </div>
+        <figure className="m-0 flex flex-col items-center gap-2.5 text-center">
+          <HostOval size="row" />
+          <figcaption className="mt-2 flex flex-col gap-0.5">
+            <span className="font-serif text-2xl italic">International MC</span>
+            <span className="text-[11px] uppercase tracking-[0.22em] text-mocha">Master of ceremonies</span>
+          </figcaption>
+        </figure>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="paper-card mx-auto mt-2 flex w-full max-w-[600px] flex-col items-center gap-6 rounded-[var(--radius-paper)] bg-white px-6 pt-10 pb-8 text-center shadow-[var(--shadow-paper)] sm:flex-row sm:gap-9 sm:px-11 sm:py-9 sm:text-left"
+      style={{ transform: "rotate(-0.4deg)" }}
+    >
+      <HostOval size="card" />
+      <div className="flex flex-col gap-1.5">
+        <Eyebrow tone="ember">Your host for the day</Eyebrow>
+        <p className="m-0 font-serif text-[34px] leading-tight italic">International MC</p>
+        <p className="m-0 text-[11px] uppercase tracking-[0.22em] text-mocha">Master of ceremonies</p>
+        <p className="m-0 mt-2.5 font-serif text-lg leading-[1.55] text-mocha">
+          He will guide you through the reception and let you know what comes next.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function Party({ party, photos: slotPhotos }: { party: PartyMember[]; photos: SlotPhotos }) {
   const leads = party.filter((member) => member.lead);
   const rest = party.filter((member) => !member.lead);
@@ -108,6 +162,7 @@ export function Party({ party, photos: slotPhotos }: { party: PartyMember[]; pho
             <Portrait key={member.id} photo={portraitOf(slotPhotos, member.id)} name={member.name} role={member.role} />
           ))}
         </div>
+        <Host />
       </div>
     </section>
   );

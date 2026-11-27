@@ -1,3 +1,5 @@
+import Image from "next/image";
+import mcPortrait from "../../../public/images/party/mc.jpg";
 import { TextLink } from "@/components/ui/Button";
 import { stateOf, type ProgrammeNow } from "@/components/today/day";
 import { celebrationPlace } from "@/lib/content/place";
@@ -62,6 +64,16 @@ export function ProgrammeCelebration({
               </span>
             ))}
           </p>
+          {celebration.id === "reception" ? (
+            <p className="m-0 mt-2 flex items-center gap-2.5 text-[13px] text-mocha lg:text-sm">
+              <span className="relative size-8 flex-none overflow-hidden rounded-full bg-tile ring-1 ring-ember ring-offset-2 ring-offset-white">
+                <Image src={mcPortrait} alt="" fill sizes="32px" className="object-cover" style={{ objectPosition: "center 25%" }} />
+              </span>
+              <span>
+                Hosted by <span className="font-serif text-[17px] text-cocoa italic">International MC</span>
+              </span>
+            </p>
+          ) : null}
           <div className="mt-0.5 lg:hidden">{directions}</div>
         </div>
         <div className="hidden flex-none lg:block">{directions}</div>
