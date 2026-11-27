@@ -1,10 +1,11 @@
 import Image from "next/image";
 import { colours, couple, wedding } from "@/content/wedding";
 import { accraDayAndFullMonth } from "@/lib/accra";
-import type { FaqItem, Helper, PartyMember, RsvpSettings, TravelItem } from "@/lib/content/schema";
+import type { FaqItem, Helper, Host, PartyMember, RsvpSettings, TravelItem } from "@/lib/content/schema";
 import { HelpCard } from "@/components/help/HelpCard";
 import { photos } from "@/content/images";
 import { portraitOf, type SlotPhoto, type SlotPhotos } from "@/lib/site-images/photos";
+import { HOST_SLOT_ID } from "@/lib/site-images/slots";
 import { PillLink, TextLink } from "@/components/ui/Button";
 import { Halo } from "@/components/ui/Halo";
 import { Icon } from "@/components/ui/Icon";
@@ -86,7 +87,37 @@ export function partyRowWidth(count: number): string | undefined {
   return `${perRow * 140 + (perRow - 1) * 36}px`;
 }
 
-export function Party({ party, photos: slotPhotos }: { party: PartyMember[]; photos: SlotPhotos }) {
+/**
+ * The MC, under the wedding party: his own card, since he isn't one of the bridal party. A photo
+ * beside the words on a laptop, above them on a phone. Without his photo, the card keeps the words.
+ */
+export function HostCard({ host, photo }: { host: Host; photo: SlotPhoto | null }) {
+  return (
+    // Tilted like the travel cards, by `transform`, which a paper card's hover sets flat again.
+    <div
+      className="paper-card mx-auto mt-2 flex w-full max-w-[600px] flex-col items-center gap-6 rounded-[var(--radius-paper)] bg-white px-6 pt-10 pb-8 text-center shadow-[var(--shadow-paper)] sm:flex-row sm:gap-9 sm:px-11 sm:py-9 sm:text-left"
+      style={{ transform: "rotate(-0.4deg)" }}
+    >
+      {photo ? (
+        <div className="oval relative h-[160px] w-[120px] flex-none sm:h-[186px] sm:w-[140px]">
+          <div aria-hidden className="oval-ring absolute top-[-8px] left-2 h-full w-full rounded-[50%] border border-ember" />
+          <div className="absolute inset-0 overflow-hidden rounded-[50%] bg-tile">
+            <SitePhoto photo={photo} fill blur sizes="140px" className="object-cover" />
+          </div>
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-1.5">
+        <Eyebrow tone="ember">Your host for the day</Eyebrow>
+        <p className="m-0 font-serif text-[34px] leading-tight italic">{host.name}</p>
+        <p className="m-0 text-[11px] uppercase tracking-[0.22em] text-mocha">{host.role}</p>
+        {host.note ? <p className="m-0 mt-2.5 font-serif text-lg leading-[1.55] text-mocha">{host.note}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+/** The wedding party, then the MC's card when `host` is given and not hidden. */
+export function Party({ party, photos: slotPhotos, host }: { party: PartyMember[]; photos: SlotPhotos; host?: Host }) {
   const leads = party.filter((member) => member.lead);
   const rest = party.filter((member) => !member.lead);
   return (
@@ -108,6 +139,11 @@ export function Party({ party, photos: slotPhotos }: { party: PartyMember[]; pho
             <Portrait key={member.id} photo={portraitOf(slotPhotos, member.id)} name={member.name} role={member.role} />
           ))}
         </div>
+        {host && !host.hidden ? (
+          <Reveal>
+            <HostCard host={host} photo={slotPhotos[HOST_SLOT_ID] ?? null} />
+          </Reveal>
+        ) : null}
       </div>
     </section>
   );

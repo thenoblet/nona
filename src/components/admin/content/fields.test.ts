@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { contentDefaults } from "@/lib/content/defaults";
 import { VENUE_LABELS } from "@/lib/content/schema";
-import { fieldsInOrder, groupedIndexes, sectionSpecs, type GroupsSpec, type ListSpec } from "./fields";
+import { fieldsInOrder, groupedIndexes, inSentence, sectionSpecs, type GroupsSpec, type ListSpec } from "./fields";
 
 const celebrationFields = (sectionSpecs.celebrations as ListSpec).fields;
 const savedVenues = { venues: contentDefaults.venues };
@@ -128,5 +128,13 @@ describe("the celebration editor's Ends field", () => {
     expect(hintFor("18:00", null)).toBeUndefined();
     expect(hintFor("18:00", "2:0")).toBeUndefined();
     expect(hintFor("18:00", "18:00")).toBeUndefined();
+  });
+});
+
+describe("inSentence", () => {
+  it("lowers a section's name for the save button, but keeps capitals like MC", () => {
+    expect(inSentence("Help on the day")).toBe("help on the day");
+    expect(inSentence("Travel & stay")).toBe("travel & stay");
+    expect(inSentence("MC")).toBe("MC");
   });
 });

@@ -3,7 +3,7 @@ import { contentDefaults } from "@/lib/content/defaults";
 import { allSlots, isSlotId, previewOf, previewSlotId, slotDefinition, SLOT_GROUPS } from "./slots";
 
 describe("the slots", () => {
-  it("are the spec's: landing cover and print, home hero, invitation band, story, gallery, the four cards, and one per member", () => {
+  it("are the spec's: landing cover and print, home hero, invitation band, story, gallery, the four cards, one per member, and the MC", () => {
     const slots = allSlots(contentDefaults.party);
     const ids = slots.map((slot) => slot.id);
     expect(ids.slice(0, 18)).toEqual([
@@ -26,7 +26,7 @@ describe("the slots", () => {
       "preview-album",
       "preview-wishes",
     ]);
-    expect(ids.slice(18)).toEqual(contentDefaults.party.map((member) => `party-${member.id}`));
+    expect(ids.slice(18)).toEqual([...contentDefaults.party.map((member) => `party-${member.id}`), "host-portrait"]);
     expect(new Set(slots.map((slot) => slot.group))).toEqual(new Set(SLOT_GROUPS.map((group) => group.id)));
     // Every slot lists sizes up to twice its widest CSS width.
     for (const slot of slots) expect(slot.maxWidth).toBeGreaterThan(0);
@@ -52,5 +52,12 @@ describe("the slots", () => {
     expect(slotDefinition("party-lilian", contentDefaults.party)).toMatchObject({ name: "Lilian", where: "Maid of honour", shape: "oval" });
     expect(slotDefinition("party-gone", contentDefaults.party)).toMatchObject({ name: "gone" });
     expect(slotDefinition("nope")).toBeNull();
+  });
+
+  it("keeps the MC's portrait among the wedding party's, an oval, after the members", () => {
+    const host = slotDefinition("host-portrait");
+    expect(host).toMatchObject({ group: "party", name: "MC", shape: "oval" });
+    expect(isSlotId("host-portrait")).toBe(true);
+    expect(allSlots([]).at(-1)?.id).toBe("host-portrait");
   });
 });

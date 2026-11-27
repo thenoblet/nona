@@ -27,6 +27,7 @@ import jacqueline from "../../public/images/party/jacqueline.jpg";
 import priscilla from "../../public/images/party/priscilla.jpg";
 import rahina from "../../public/images/party/rahina.jpg";
 import homeHero from "../../public/images/home/hero.jpg";
+import mc from "../../public/images/host/mc.jpg";
 
 export type Photo = { src: StaticImageData; alt: string; position?: string };
 
@@ -98,6 +99,9 @@ export const photos = {
  * - It sits under a cocoa wash with the names over it, so it is never read aloud.
  */
 export const homeHeroPhoto: Photo = { src: homeHero, alt: "Noblet and Nancy", position: "center 28%" };
+
+/** The MC on stage, mic in hand: the host card and "Hosted by" on the programme. */
+export const hostPhoto: Photo = { src: mc, alt: "International MC with a microphone", position: "center 30%" };
 
 /** Wedding party portraits, keyed by the member `id` in `party` (src/content/wedding.ts). */
 export const partyPhotos: Partial<Record<string, Photo>> = {

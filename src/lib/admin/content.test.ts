@@ -34,6 +34,7 @@ describe("contentSections", () => {
       ["stays", "Where to stay"],
       ["help", "Help on the day"],
       ["party", "Wedding party"],
+      ["mc", "MC"],
       ["story", "Our story"],
       ["live-stream", "Live stream"],
     ]);

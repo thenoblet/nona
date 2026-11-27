@@ -176,6 +176,9 @@ export function prepareSection(
       );
     case "party":
       return prepareParty(value, context.portraitIds ?? []);
+    case "host":
+      // An unticked "hide" box is left out, as in the built-in text.
+      return isObject(value) ? withOptional(value.hidden === true ? value : without(value, "hidden"), "note") : value;
     case "liveStream":
       return isObject(value) ? { ...value, url: optionalText(value.url, null) } : value;
     default:

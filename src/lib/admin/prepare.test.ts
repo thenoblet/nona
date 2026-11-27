@@ -71,6 +71,14 @@ describe("prepareSection", () => {
     });
   });
 
+  it("leaves out the MC's empty line and an unticked hide box, and keeps a ticked one", () => {
+    const shown = prepareSection("host", { name: "International MC", role: "Master of ceremonies", note: "  ", hidden: undefined });
+    expect(shown).toEqual({ name: "International MC", role: "Master of ceremonies" });
+    expect(sectionSchemas.host.safeParse(shown).success).toBe(true);
+    const hidden = prepareSection("host", { name: "International MC", role: "Master of ceremonies", note: " Guides the reception ", hidden: true });
+    expect(hidden).toEqual({ name: "International MC", role: "Master of ceremonies", note: "Guides the reception", hidden: true });
+  });
+
   it("leaves out a place to stay's empty label, price, phone, map link and note, and trims the rest", () => {
     const prepared = prepareSection("stays", [
       { name: " Guest house ", distance: "About 2 km", tag: " ", price: "", phone: " 024 459 0772 ", mapsUrl: " https://maps.app.goo.gl/abc ", note: "" },

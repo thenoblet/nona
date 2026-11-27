@@ -35,6 +35,7 @@ export const contentSections = [
   { key: "stays", slug: "stays", label: "Where to stay" },
   { key: "helpers", slug: "help", label: "Help on the day" },
   { key: "party", slug: "party", label: "Wedding party" },
+  { key: "host", slug: "mc", label: "MC" },
   { key: "story", slug: "story", label: "Our story" },
   { key: "liveStream", slug: "live-stream", label: "Live stream" },
 ] as const satisfies readonly { key: SectionKey; slug: string; label: string }[];

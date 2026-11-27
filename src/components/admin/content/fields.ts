@@ -302,6 +302,29 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
     hint:
       "Leads (the maid of honour and best man) are shown first, with larger portraits. A new member shows a “coming soon” oval in place of a portrait until photos can be added here; renaming someone keeps their photo.",
   },
+  host: {
+    layout: "groups",
+    groups: [
+      {
+        key: null,
+        legend: "The MC",
+        fields: [
+          { path: ["name"], label: "Name", kind: "text", span: 3 },
+          { path: ["role"], label: "Role", kind: "text", span: 3 },
+          {
+            path: ["note"],
+            label: "What he does",
+            kind: "text",
+            span: 6,
+            placeholder: OPTIONAL,
+            hint: "One line under his name, e.g. “He will guide you through the reception”.",
+          },
+          { path: ["hidden"], label: "Hide him from the site", kind: "checkbox", span: 6 },
+        ],
+      },
+    ],
+    hint: "Guests see him in a card under the wedding party on the home page, and as “Hosted by” on the reception in the order of the day. His photo is in Site photos.",
+  },
   story: {
     layout: "groups",
     groups: [
@@ -330,6 +353,14 @@ export const sectionSpecs: Record<ContentSectionKey, SectionSpec> = {
     ],
   },
 };
+
+/** A section's name inside a sentence: "Wedding party" → "wedding party", while "MC" stays "MC". */
+export function inSentence(label: string): string {
+  return label
+    .split(" ")
+    .map((word) => (word.length > 1 && word === word.toUpperCase() && /[A-Z]/.test(word) ? word : word.toLowerCase()))
+    .join(" ");
+}
 
 /** The fields a list item shows: a field meant only for some items is left out of the rest. */
 export function fieldsFor(spec: ListSpec, item: Item): readonly FieldSpec[] {

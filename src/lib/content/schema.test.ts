@@ -412,3 +412,16 @@ describe("helpers", () => {
     expect(sectionSchemas.helpers.safeParse([]).success).toBe(true);
   });
 });
+
+describe("host", () => {
+  it("keeps the MC's name, role and optional line, and refuses an empty name", () => {
+    expect(sectionSchemas.host.safeParse({ name: "International MC", role: "Master of ceremonies" }).success).toBe(true);
+    expect(sectionSchemas.host.safeParse({ name: "", role: "Master of ceremonies" }).success).toBe(false);
+    expect(sectionSchemas.host.safeParse({ name: "MC", role: "Master of ceremonies", note: "Two\nlines" }).success).toBe(false);
+  });
+
+  it("hides him only with a ticked box: true, or left out", () => {
+    expect(sectionSchemas.host.safeParse({ name: "MC", role: "Host", hidden: true }).success).toBe(true);
+    expect(sectionSchemas.host.safeParse({ name: "MC", role: "Host", hidden: false }).success).toBe(false);
+  });
+});

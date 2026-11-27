@@ -28,6 +28,7 @@ import {
   fieldsInOrder,
   groupEnd,
   groupedIndexes,
+  inSentence,
   sectionSpecs,
   type EditorContext,
   type FieldSpec,
@@ -447,7 +448,7 @@ export function ContentEditor({
                 Discard changes
               </button>
               <button type="submit" className="admin-btn admin-btn-primary" aria-disabled={saving}>
-                {saving ? "Saving…" : `Save ${label.toLowerCase()}`}
+                {saving ? "Saving…" : `Save ${inSentence(label)}`}
               </button>
             </div>
           </div>

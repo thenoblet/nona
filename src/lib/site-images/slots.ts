@@ -2,8 +2,8 @@ import { PREVIEW_CARD_IDS, type PreviewCardId } from "@/content/preview-photos";
 
 /*
  * The site's own photos, by slot (spec §10.5): the landing cover and print, the home hero, the
- * invitation band, each story photo, the gallery, the photo behind each link preview card, and one
- * portrait per wedding-party member (by member id). The couple replace any of them from the admin
+ * invitation band, each story photo, the gallery, the photo behind each link preview card, one
+ * portrait per wedding-party member (by member id) and the MC's. The couple replace any of them from the admin
  * (Site photos); until they do, a slot shows its built-in photo from src/content/images.ts. Pure:
  * the media worker bundles it (it draws the preview cards).
  */
@@ -47,6 +47,9 @@ export type SlotDefinition = {
   /** A photo behind text, which screen readers skip (alt=""): its alt text is kept, never read aloud. */
   decorative?: true;
 };
+
+/** The MC's portrait: the host card under the wedding party, and "Hosted by" on the programme. */
+export const HOST_SLOT_ID = "host-portrait";
 
 const FIXED_SLOTS: SlotDefinition[] = [
   {
@@ -203,7 +206,18 @@ const FIXED_SLOTS: SlotDefinition[] = [
   },
 ];
 
-const FIXED_BY_ID = new Map(FIXED_SLOTS.map((slot) => [slot.id, slot]));
+/** Listed in Site photos after the wedding party's portraits. */
+const HOST_SLOT: SlotDefinition = {
+  id: HOST_SLOT_ID,
+  group: "party",
+  name: "MC",
+  where: "The host card under the wedding party, and beside “Hosted by” in the order of the day.",
+  shape: "oval",
+  // An oval of at most 140 px across.
+  maxWidth: 280,
+};
+
+const FIXED_BY_ID = new Map([...FIXED_SLOTS, HOST_SLOT].map((slot) => [slot.id, slot]));
 
 /** A wedding-party member's portrait slot: `party-<member id>`. */
 export function partySlotId(memberId: string): string {
@@ -216,9 +230,9 @@ export function partySlot(member: { id: string; name: string; role: string }): S
   return { id: partySlotId(member.id), group: "party", name: member.name, where: member.role, shape: "oval", maxWidth: 352 };
 }
 
-/** Every slot: the fixed ones, then one per member of the wedding party as the site text has it now. */
+/** Every slot: the fixed ones, one per member of the wedding party as the site text has it now, then the MC. */
 export function allSlots(party: { id: string; name: string; role: string }[]): SlotDefinition[] {
-  return [...FIXED_SLOTS, ...party.map(partySlot)];
+  return [...FIXED_SLOTS, ...party.map(partySlot), HOST_SLOT];
 }
 
 // A party member's id is a lower-case slug (the site text's own rule).
