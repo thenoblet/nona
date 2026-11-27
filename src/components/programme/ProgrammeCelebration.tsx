@@ -1,5 +1,5 @@
 import Image from "next/image";
-import mcPortrait from "../../../public/images/party/mc.jpg";
+import mcPortrait from "../../../public/images/party/mc-stage.jpg";
 import { TextLink } from "@/components/ui/Button";
 import { stateOf, type ProgrammeNow } from "@/components/today/day";
 import { celebrationPlace } from "@/lib/content/place";

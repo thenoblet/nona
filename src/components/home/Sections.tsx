@@ -14,7 +14,7 @@ import { SwipeRow } from "@/components/ui/SwipeRow";
 import { Eyebrow, Motto, SectionHeading } from "@/components/ui/Typography";
 import { QrCode } from "@/components/ui/QrCode";
 import { TravelText } from "./TravelText";
-import mcPortrait from "../../../public/images/party/mc.jpg";
+import mcPortrait from "../../../public/images/party/mc-stage.jpg";
 import { albumUrl, displayUrl, qrSvg } from "@/lib/qr";
 
 export function Colours() {
@@ -89,7 +89,7 @@ export function partyRowWidth(count: number): string | undefined {
 
 
 /* DESIGN PROTOTYPE: the MC. Variant from the environment so screenshots can switch. */
-const HOST_VARIANT = process.env.NEXT_PUBLIC_HOST_VARIANT ?? "card";
+const HOST_VARIANT: string = "row";
 
 function HostOval({ size }: { size: "card" | "row" }) {
   const box = size === "card" ? "h-[160px] w-[120px] sm:h-[186px] sm:w-[140px]" : "h-[160px] w-[120px] sm:h-[186px] sm:w-[140px]";
