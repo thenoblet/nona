@@ -1,4 +1,4 @@
-import { celebrations, faq, helpers, landmarks, liveStream, party, rsvp, schedule, stays, story, travel, venues } from "@/content/wedding";
+import { celebrations, faq, helpers, host, landmarks, liveStream, party, rsvp, schedule, stays, story, travel, venues } from "@/content/wedding";
 import { sectionSchemas, type SiteContent } from "./schema";
 
 /**
@@ -16,6 +16,7 @@ export const contentDefaults: SiteContent = {
   stays: sectionSchemas.stays.parse(stays),
   helpers: sectionSchemas.helpers.parse(helpers),
   party: sectionSchemas.party.parse(party),
+  host: sectionSchemas.host.parse(host),
   story: sectionSchemas.story.parse(story),
   liveStream: sectionSchemas.liveStream.parse(liveStream),
   rsvp: sectionSchemas.rsvp.parse(rsvp),

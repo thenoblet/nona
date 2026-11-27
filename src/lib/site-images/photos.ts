@@ -1,12 +1,12 @@
 import type { StaticImageData } from "next/image";
 import nancySmile from "../../../public/images/story/nancy-smile.jpg";
-import { homeHeroPhoto, partyPhotos, photos, type Photo } from "@/content/images";
+import { homeHeroPhoto, hostPhoto, partyPhotos, photos, type Photo } from "@/content/images";
 import { previewPhotos, type PreviewCardId } from "@/content/preview-photos";
 import { publicUrl } from "@/lib/storage/keys";
 import { focalFromPosition, objectPosition, type Focal } from "./focal";
 import type { LiveSlot, SiteImages } from "./get";
 import { sizeCandidates } from "./sizes";
-import { allSlots, partySlotId, type SlotDefinition } from "./slots";
+import { allSlots, HOST_SLOT_ID, partySlotId, type SlotDefinition } from "./slots";
 
 /*
  * What each slot shows a guest: the couple's photo when they replaced it (from the worker's own
@@ -45,6 +45,7 @@ const BUILTIN_PHOTOS: Record<string, BuiltinPhoto | null> = {
   "gallery-left": builtin(photos.piggybackSmile),
   "gallery-centre": builtin(photos.embraceGaze),
   "gallery-right": builtin(photos.sofaSmile),
+  [HOST_SLOT_ID]: builtin(hostPhoto),
   ...Object.fromEntries(
     (Object.keys(previewPhotos) as PreviewCardId[]).map((card) => [
       `preview-${card}`,

@@ -277,6 +277,20 @@ const helper = zod.object({
   note: line.optional(),
 });
 
+/**
+ * The MC, who hosts the reception: a card under the wedding party on the home page, and "Hosted by"
+ * on the reception in the order of the day. His photo is in Site photos.
+ */
+const host = zod.object({
+  name: line,
+  /** Under the name, such as "Master of ceremonies". */
+  role: line,
+  /** A line on what he does, such as "He will guide you through the reception". */
+  note: line.optional(),
+  /** Hides him everywhere on the site, if plans change. Left out rather than false, as the box saves it. */
+  hidden: zod.literal(true).optional(),
+});
+
 /** A place guests can stay, on the Where to stay page. */
 const stay = zod.object({
   name: line,
@@ -343,6 +357,7 @@ export const sectionSchemas = {
       seen.add(id);
     });
   }),
+  host,
   story,
   liveStream: zod.object({
     url: zod
@@ -366,6 +381,7 @@ export type ScheduleItem = zod.infer<typeof scheduleItem>;
 export type Venue = zod.infer<typeof venue>;
 export type FaqItem = zod.infer<typeof faqItem>;
 export type PartyMember = zod.infer<typeof partyMember>;
+export type Host = zod.infer<typeof host>;
 export type TravelItem = zod.infer<typeof travelItem>;
 export type Stay = zod.infer<typeof stay>;
 export type Story = zod.infer<typeof story>;

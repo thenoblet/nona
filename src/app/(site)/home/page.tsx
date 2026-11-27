@@ -67,7 +67,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Colours />
-            <Party party={party} photos={photos} />
+            <Party party={party} photos={photos} host={content.host} />
             <Gallery photos={photos} />
             <Travel travel={travel} helpers={content.helpers} />
             <RsvpBand rsvp={rsvp} />
@@ -95,7 +95,7 @@ async function Home({ searchParams }: { searchParams: PageProps<"/home">["search
             <Celebrations celebrations={celebrations} venues={venues} />
             <MapSection venues={venues} landmarks={landmarks} />
             <Story story={story} photos={photos} />
-            <Party party={party} photos={photos} />
+            <Party party={party} photos={photos} host={content.host} />
             <Gallery photos={photos} />
             <Faq faq={faq} />
             <DockItem>

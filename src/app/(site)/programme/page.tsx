@@ -10,6 +10,9 @@ import { inProgrammeOrder, notStarted, programmeNow } from "@/components/today/d
 import { PillAnchor } from "@/components/ui/Button";
 import { Motto } from "@/components/ui/Typography";
 import { getSiteContent } from "@/lib/content/get";
+import { getSiteImages } from "@/lib/site-images/get";
+import { slotPhotos } from "@/lib/site-images/photos";
+import { HOST_SLOT_ID } from "@/lib/site-images/slots";
 import type { Celebration } from "@/lib/content/schema";
 import { resolveMode } from "@/lib/mode";
 
@@ -32,12 +35,14 @@ function weekendLine(celebrations: Celebration[]): string {
 /** Read once per request and shared by every streamed piece, so they agree on the moment and the mode. */
 const loadProgramme = cache(async (searchParams: PageProps<"/programme">["searchParams"]) => {
   await connection();
-  const content = await getSiteContent();
+  const [content, siteImages] = await Promise.all([getSiteContent(), getSiteImages()]);
   const now = new Date();
   const mode = resolveMode(now, (await searchParams).mode);
   const programme = inProgrammeOrder(content.schedule);
   const standing = mode === "day" ? programmeNow(programme, content.celebrations, now) : notStarted;
-  return { ...content, mode, programme, standing };
+  // The MC hosts the reception: "Hosted by" with his photo from Site photos, unless he is hidden.
+  const host = content.host.hidden ? null : { name: content.host.name, photo: slotPhotos(siteImages, [])[HOST_SLOT_ID] ?? null };
+  return { ...content, mode, programme, standing, receptionHost: host };
 });
 
 type Loaded = Awaited<ReturnType<typeof loadProgramme>>;
@@ -93,7 +98,7 @@ export default function ProgrammePage({ searchParams }: PageProps<"/programme">)
 }
 
 /** The index and every celebration's timeline. */
-function Programme({ celebrations, venues, programme, standing }: Loaded) {
+function Programme({ celebrations, venues, programme, standing, receptionHost }: Loaded) {
   const entries = celebrations.map((celebration) => ({ id: celebration.id, name: celebration.name, when: longDate(celebration) }));
   return (
     <>
@@ -110,6 +115,7 @@ function Programme({ celebrations, venues, programme, standing }: Loaded) {
               venues={venues}
               items={programme.flatMap((item, index) => (item.celebration === celebration.id ? [{ item, index }] : []))}
               standing={standing}
+              host={celebration.id === "reception" ? receptionHost : null}
             />
           ))}
         </div>

@@ -1,8 +1,13 @@
 import { TextLink } from "@/components/ui/Button";
+import { SitePhoto } from "@/components/ui/SitePhoto";
 import { stateOf, type ProgrammeNow } from "@/components/today/day";
 import { celebrationPlace } from "@/lib/content/place";
 import type { Celebration, ScheduleItem, SiteContent } from "@/lib/content/schema";
 import { formatClock } from "@/lib/content/times";
+import type { SlotPhoto } from "@/lib/site-images/photos";
+
+/** Who hosts a celebration, for "Hosted by" under its place: the MC, at the reception. */
+export type CelebrationHost = { name: string; photo: SlotPhoto | null };
 
 /** "Saturday 5 December". */
 export function longDate(celebration: Celebration): string {
@@ -23,12 +28,14 @@ export function ProgrammeCelebration({
   venues,
   items,
   standing,
+  host,
 }: {
   celebration: Celebration;
   venues: SiteContent["venues"];
   /** Its items, each with its index in the whole programme, which `standing` counts by. */
   items: { item: ScheduleItem; index: number }[];
   standing: ProgrammeNow;
+  host?: CelebrationHost | null;
 }) {
   const { place, gpsLine, directionsUrl } = celebrationPlace(celebration, venues);
   // The GPS code stays on one line, so a phone never splits "AX-0084-3317".
@@ -62,6 +69,19 @@ export function ProgrammeCelebration({
               </span>
             ))}
           </p>
+          {host ? (
+            <p className="m-0 mt-2 flex items-center gap-2.5 text-[13px] text-mocha lg:text-sm">
+              {host.photo ? (
+                <span className="relative size-8 flex-none overflow-hidden rounded-full bg-tile ring-1 ring-ember ring-offset-2 ring-offset-white">
+                  {/* His name follows, so screen readers skip the photo. */}
+                  <SitePhoto photo={host.photo} fill decorative sizes="32px" className="object-cover" />
+                </span>
+              ) : null}
+              <span>
+                Hosted by <span className="font-serif text-[17px] text-cocoa italic">{host.name}</span>
+              </span>
+            </p>
+          ) : null}
           <div className="mt-0.5 lg:hidden">{directions}</div>
         </div>
         <div className="hidden flex-none lg:block">{directions}</div>

@@ -190,6 +190,13 @@ export const helpers = [
   { name: "Prince Brobbey", phone: "055 151 9910" },
 ] as const;
 
+/** The MC, under the wedding party and on the reception's programme. The couple edit him in Site text, MC. */
+export const host = {
+  name: "International MC",
+  role: "Master of ceremonies",
+  note: "He will guide you through the reception and let you know what comes next.",
+} as const;
+
 export const faq = [
   {
     question: "Can I bring a plus-one?",
